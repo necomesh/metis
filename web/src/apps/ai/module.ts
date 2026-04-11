@@ -17,5 +17,18 @@ registerApp({
         },
       ],
     },
+    {
+      path: "ai/knowledge",
+      children: [
+        {
+          index: true,
+          lazy: () => import("./pages/knowledge/index"),
+        },
+        {
+          path: ":id",
+          lazy: () => import("./pages/knowledge/[id]"),
+        },
+      ],
+    },
   ],
 })

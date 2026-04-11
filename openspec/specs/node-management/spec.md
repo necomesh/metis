@@ -1,13 +1,7 @@
-# Node Management
-
-## Purpose
-
-Manage distributed nodes that run Sidecar agents, including node creation, token-based authentication, status lifecycle, and installation guidance.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Node registration and lifecycle
-The system SHALL allow administrators to create, list, update, and delete nodes. Each node SHALL have a unique name, status (pending | online | offline), labels, and system info. A node's status SHALL transition to "online" upon first successful Sidecar registration and to "offline" when heartbeat is missed for 30 seconds.
+The system SHALL allow administrators to create, list, update, and delete nodes. Each node SHALL have a unique name, status (pending | online | offline), labels, and system info. A node's status SHALL transition to "online" upon first successful Sidecar registration and to "offline" when the SSE connection is lost. Heartbeat timeout (60s) SHALL serve as a secondary offline detection mechanism.
 
 #### Scenario: Create a new node
 - **WHEN** administrator creates a node with name "prod-node-1"
@@ -19,35 +13,17 @@ The system SHALL allow administrators to create, list, update, and delete nodes.
 - **WHEN** administrator views the node list
 - **THEN** system displays all nodes with name, status, labels, last heartbeat time, and running process count
 
-#### Scenario: Node goes offline
-- **WHEN** a node's last heartbeat exceeds 30 seconds ago
-- **THEN** system marks the node status as "offline"
+#### Scenario: Node goes offline via SSE disconnect
+- **WHEN** a Sidecar's SSE connection is closed or lost
+- **THEN** system immediately marks the node status as "offline"
 
-#### Scenario: Delete a node
+#### Scenario: Node goes offline via heartbeat timeout
+- **WHEN** a node's last heartbeat exceeds 60 seconds ago and the node is still marked as online
+- **THEN** system marks the node status as "offline" as a fallback mechanism
+
+#### Scenario: Delete a node with cleanup
 - **WHEN** administrator deletes a node
-- **THEN** system soft-deletes the node record and invalidates its Token
-- **AND** all associated NodeProcess records are marked as stopped
-
-### Requirement: Node Token authentication
-The system SHALL provide a Token-based authentication mechanism for Sidecar communication, independent of the JWT system. Node Tokens SHALL be long-lived machine credentials using `mtk_<32-byte-hex>` format with bcrypt storage.
-
-#### Scenario: Sidecar authenticates with valid Token
-- **WHEN** Sidecar sends a request with `Authorization: Bearer mtk_<hex>` header
-- **THEN** system validates the Token against stored bcrypt hashes
-- **AND** resolves the associated node_id for the request context
-
-#### Scenario: Sidecar authenticates with invalid Token
-- **WHEN** Sidecar sends a request with an invalid or revoked Token
-- **THEN** system responds with HTTP 401 Unauthorized
-
-#### Scenario: Administrator rotates a Node Token
-- **WHEN** administrator triggers Token rotation for a node
-- **THEN** system generates a new Token, displays it once, invalidates the old Token
-- **AND** existing Sidecar connection fails on next request, requiring reconfiguration with the new Token
-
-### Requirement: Node installation guidance
-The system SHALL display an installation guide after node creation, including the one-time Token, download command for the Sidecar binary, sample sidecar.yaml configuration, and startup command.
-
-#### Scenario: View installation guide
-- **WHEN** administrator creates a new node
-- **THEN** system displays a guide page with: Token (shown once), sidecar binary download URL, sidecar.yaml template with server URL and Token fields, and systemd/manual startup command
+- **THEN** system pushes `process.stop` commands for all bound processes via SSE (if node is online)
+- **AND** marks all associated NodeProcess records as stopped
+- **AND** cleans up pending NodeCommand records
+- **AND** soft-deletes the node record and invalidates its Token

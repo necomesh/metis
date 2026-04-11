@@ -67,7 +67,45 @@ func seedAI(db *gorm.DB, enforcer *casbin.Enforcer) error {
 		}
 	}
 
-	// 3. Casbin policies
+	// 3. 知识库管理菜单
+	var kbMenu model.Menu
+	if err := db.Where("permission = ?", "ai:knowledge:list").First(&kbMenu).Error; err != nil {
+		kbMenu = model.Menu{
+			ParentID:   &aiDir.ID,
+			Name:       "知识库",
+			Type:       model.MenuTypeMenu,
+			Path:       "/ai/knowledge",
+			Icon:       "BookOpen",
+			Permission: "ai:knowledge:list",
+			Sort:       1,
+		}
+		if err := db.Create(&kbMenu).Error; err != nil {
+			return err
+		}
+		slog.Info("seed: created menu", "name", kbMenu.Name, "permission", kbMenu.Permission)
+	}
+
+	kbButtons := []model.Menu{
+		{Name: "新增知识库", Type: model.MenuTypeButton, Permission: "ai:knowledge:create", Sort: 0},
+		{Name: "编辑知识库", Type: model.MenuTypeButton, Permission: "ai:knowledge:update", Sort: 1},
+		{Name: "删除知识库", Type: model.MenuTypeButton, Permission: "ai:knowledge:delete", Sort: 2},
+		{Name: "编译知识库", Type: model.MenuTypeButton, Permission: "ai:knowledge:compile", Sort: 3},
+		{Name: "上传原料", Type: model.MenuTypeButton, Permission: "ai:knowledge:source:create", Sort: 4},
+		{Name: "删除原料", Type: model.MenuTypeButton, Permission: "ai:knowledge:source:delete", Sort: 5},
+	}
+	for _, btn := range kbButtons {
+		var existing model.Menu
+		if err := db.Where("permission = ?", btn.Permission).First(&existing).Error; err != nil {
+			btn.ParentID = &kbMenu.ID
+			if err := db.Create(&btn).Error; err != nil {
+				slog.Error("seed: failed to create button menu", "permission", btn.Permission, "error", err)
+				continue
+			}
+			slog.Info("seed: created menu", "name", btn.Name, "permission", btn.Permission)
+		}
+	}
+
+	// 4. Casbin policies
 	policies := [][]string{
 		// Providers
 		{"admin", "/api/v1/ai/providers", "GET"},
@@ -84,6 +122,24 @@ func seedAI(db *gorm.DB, enforcer *casbin.Enforcer) error {
 		{"admin", "/api/v1/ai/models/:id", "PUT"},
 		{"admin", "/api/v1/ai/models/:id", "DELETE"},
 		{"admin", "/api/v1/ai/models/:id/default", "PATCH"},
+		// Knowledge bases
+		{"admin", "/api/v1/ai/knowledge-bases", "GET"},
+		{"admin", "/api/v1/ai/knowledge-bases", "POST"},
+		{"admin", "/api/v1/ai/knowledge-bases/:id", "GET"},
+		{"admin", "/api/v1/ai/knowledge-bases/:id", "PUT"},
+		{"admin", "/api/v1/ai/knowledge-bases/:id", "DELETE"},
+		{"admin", "/api/v1/ai/knowledge-bases/:id/compile", "POST"},
+		{"admin", "/api/v1/ai/knowledge-bases/:id/recompile", "POST"},
+		// Knowledge sources
+		{"admin", "/api/v1/ai/knowledge-bases/:id/sources", "GET"},
+		{"admin", "/api/v1/ai/knowledge-bases/:id/sources", "POST"},
+		{"admin", "/api/v1/ai/knowledge-bases/:id/sources/:sid", "GET"},
+		{"admin", "/api/v1/ai/knowledge-bases/:id/sources/:sid", "DELETE"},
+		// Knowledge nodes & logs
+		{"admin", "/api/v1/ai/knowledge-bases/:id/nodes", "GET"},
+		{"admin", "/api/v1/ai/knowledge-bases/:id/nodes/:nid", "GET"},
+		{"admin", "/api/v1/ai/knowledge-bases/:id/nodes/:nid/graph", "GET"},
+		{"admin", "/api/v1/ai/knowledge-bases/:id/logs", "GET"},
 	}
 
 	menuPerms := [][]string{
@@ -98,6 +154,13 @@ func seedAI(db *gorm.DB, enforcer *casbin.Enforcer) error {
 		{"admin", "ai:model:delete", "read"},
 		{"admin", "ai:model:default", "read"},
 		{"admin", "ai:model:sync", "read"},
+		{"admin", "ai:knowledge:list", "read"},
+		{"admin", "ai:knowledge:create", "read"},
+		{"admin", "ai:knowledge:update", "read"},
+		{"admin", "ai:knowledge:delete", "read"},
+		{"admin", "ai:knowledge:compile", "read"},
+		{"admin", "ai:knowledge:source:create", "read"},
+		{"admin", "ai:knowledge:source:delete", "read"},
 	}
 
 	allPolicies := append(policies, menuPerms...)

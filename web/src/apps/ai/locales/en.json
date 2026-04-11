@@ -103,6 +103,100 @@
     "apiKeyRequired": "API Key is required",
     "modelIdRequired": "Model ID is required",
     "displayNameRequired": "Display name is required",
-    "providerRequired": "Please select a provider"
+    "providerRequired": "Please select a provider",
+    "urlRequired": "URL is required",
+    "urlInvalid": "Please enter a valid URL"
+  },
+  "knowledge": {
+    "title": "Knowledge Bases",
+    "create": "New Knowledge Base",
+    "edit": "Edit Knowledge Base",
+    "searchPlaceholder": "Search knowledge base name",
+    "name": "Name",
+    "namePlaceholder": "e.g. Product Documentation",
+    "description": "Description",
+    "descriptionPlaceholder": "Brief description of this knowledge base",
+    "sourceCount": "Sources",
+    "nodeCount": "Nodes",
+    "compileModel": "Compile Model",
+    "selectCompileModel": "Select LLM model",
+    "autoCompile": "Auto Compile",
+    "crawlEnabled": "Enable Crawling",
+    "crawlSchedule": "Crawl Schedule",
+    "crawlSchedulePlaceholder": "Cron expression, e.g. 0 2 * * *",
+    "compile": "Compile",
+    "recompile": "Recompile",
+    "compileStarted": "Compilation started",
+    "empty": "No knowledge bases",
+    "emptyHint": "Click \"New Knowledge Base\" to create one",
+    "createSuccess": "Knowledge base created",
+    "updateSuccess": "Knowledge base updated",
+    "deleteSuccess": "Knowledge base deleted",
+    "deleteTitle": "Delete Knowledge Base",
+    "deleteDesc": "Are you sure you want to delete \"{{name}}\"? All sources and nodes will be permanently removed.",
+    "confirmDelete": "Delete",
+    "notFound": "Knowledge base not found",
+    "compileStatus": {
+      "label": "Compile Status",
+      "idle": "Idle",
+      "compiling": "Compiling",
+      "completed": "Completed",
+      "error": "Error"
+    },
+    "tabs": {
+      "sources": "Sources",
+      "graph": "Knowledge Graph",
+      "logs": "Compile Logs"
+    },
+    "sources": {
+      "title": "Title",
+      "format": "Format",
+      "extractStatus": "Extract Status",
+      "size": "Size",
+      "empty": "No sources",
+      "uploadFile": "Upload File",
+      "addUrl": "Add URL",
+      "uploadSuccess": "Files uploaded successfully",
+      "addUrlSuccess": "URL source added",
+      "deleteSuccess": "Source deleted",
+      "dropHere": "Drag & drop files here, or click to select",
+      "uploading": "Uploading...",
+      "uploadBtn": "Upload {{count}} file(s)",
+      "url": "URL",
+      "crawlDepth": "Crawl Depth",
+      "crawlDepthDesc": {
+        "0": "Current page only",
+        "1": "Current page + 1 level deep",
+        "2": "Current page + 2 levels deep"
+      },
+      "urlPattern": "URL Filter Pattern",
+      "urlPatternPlaceholder": "Regex pattern, e.g. /docs/.*"
+    },
+    "extractStatus": {
+      "pending": "Pending",
+      "processing": "Processing",
+      "completed": "Completed",
+      "failed": "Failed"
+    },
+    "nodes": {
+      "title": "Node Title",
+      "summary": "Summary",
+      "edgeCount": "Edges",
+      "content": "Content",
+      "hasContent": "Has Content",
+      "empty": "No nodes (not compiled yet)",
+      "loadingContent": "Loading...",
+      "noContent": "(no content)"
+    },
+    "logs": {
+      "action": "Action",
+      "model": "Model",
+      "created": "Created",
+      "updated": "Updated",
+      "edges": "Edges",
+      "lint": "Lint",
+      "error": "Error",
+      "empty": "No compile logs"
+    }
   }
 }

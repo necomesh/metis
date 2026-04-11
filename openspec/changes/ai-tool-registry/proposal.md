@@ -1,40 +1,57 @@
 ## Why
 
-工具是智能体的"手脚"，决定了它能做什么事。需要一个工具注册表来管理内置工具和自定义工具的定义，供智能体绑定使用。工具定义遵循 LLM function calling 的 JSON Schema 标准，确保与各供应商的 tool_use 能力兼容。
+工具是智能体的"手脚"，决定了它能做什么事。需要一个工具注册表来统一管理三类工具来源：Agent 内建工具（Tools）、MCP 服务连接（MCP）、可下发的技能包（Skills）。三者最终都展平为 LLM function calling 的 tools 列表，但管理方式、生命周期和运行机制各不相同，需要独立的数据模型和管理界面。
 
 ## What Changes
 
-- 新增 Tool 数据模型，存储工具的名称、描述、参数 Schema、类型和处理方式
-- 预置内置工具（search_knowledge、read_document、http_request），随模块 seed 自动注册
-- 支持自定义工具（HTTP webhook 方式），管理员通过 UI 创建
-- 预留 MCP（Model Context Protocol）类型字段，未来支持 MCP Server 对接
-- 前端新增工具管理页面：内置工具展示 + 自定义工具 CRUD
+### 三类工具模型
 
-### 数据模型
+**Tools（内建工具）**
+- 编译在 Agent 二进制里的 Go 代码实现
+- seed 注册到 `ai_tools` 表，管理员只能启用/禁用，不可增删
+- 预置工具：search_knowledge、read_document、http_request
+- Coding Agent 的工具（read_file, write_file, execute_code）由 Coding Runtime 内置，不在此注册表管理
 
-**Tool**: name(unique), display_name, description(给 LLM 看的描述), type(builtin | custom | mcp), parameters(JSON Schema, LLM function calling 格式), handler_type(internal | webhook | mcp), handler_config(JSON: webhook_url 或内部函数标识), is_active
+**MCP（Model Context Protocol 服务）**
+- 支持两种传输方式：SSE（远程 HTTP/SSE 连接）和 STDIO（Agent 本地 spawn 子进程）
+- 认证可选，支持 api_key / bearer / oauth / custom_header
+- 整体绑定到 Agent——一个 MCP Server 暴露的所有工具作为整体启用
+- SSE 类型 Agent 运行时直连 MCP Server，STDIO 类型 Agent 在所在节点 spawn 子进程
 
-### 内置工具
+**Skills（技能包）**
+- 通过 HTTP 下发到 Agent workspace 的离线工具包
+- Agent 启动/reload 实例时从 Server 下载，解包注册
+- 包含可选的 instructions（行为指令，注入 system prompt）+ 可选的 tools 定义（function calling schema + HTTP endpoint）
+- 两种形态：prompt-only（纯指令增强）和 endpoint（指令 + 可执行工具）
+- 安装来源：GitHub URL 导入（扫描 repo 中的技能包）或管理员上传 tar.gz
+- 不做版本管理，reload 时重新下载即为更新
+- 认证信息存 DB，Server 下发时注入给 Agent
 
-| name | 说明 | 依赖 |
-|------|------|------|
-| search_knowledge | 在指定知识库中全文检索 | ai-knowledge |
-| read_document | 读取知识库中某篇文档全文 | ai-knowledge |
-| http_request | 发起 HTTP 请求 | 无 |
+### 前端
 
-Coding Agent 的工具（read_file, write_file, execute_code）由 Coding Runtime 内置提供，不在此注册表中管理。
+- 三 Tab 卡片模式管理页面：内建工具 | MCP 服务 | 技能包
+- Agent 编辑页面工具绑定 UI：按三类分组选择
+
+### Agent 工具装配流程
+
+Server 下发 soul_config 时，将三类工具的完整配置组装到请求体中。Agent 实例启动时：
+1. 注册 builtin tools（已编译在二进制里）
+2. 连接 MCP Servers（SSE 直连 / STDIO spawn 子进程），发现并注册工具
+3. 下载 Skills 到 workspace，解包注册（instructions → system prompt，tools → function calling）
 
 ## Capabilities
 
 ### New Capabilities
-- `ai-tool-registry`: 工具注册表 CRUD + 内置工具 seed + JSON Schema 参数定义
+- `ai-tool-registry`: 内建工具管理——seed 注册、启用/禁用、JSON Schema 参数定义
+- `ai-mcp-registry`: MCP 服务管理——SSE/STDIO 双传输、连接配置、认证、工具发现
+- `ai-skill-registry`: 技能包管理——GitHub 导入/上传安装、instructions + tools 打包、认证配置
 
-### Dependencies
-- `ai-knowledge-base` (from ai-knowledge): 内置工具 search_knowledge / read_document 调用知识库
+### Modified Capabilities
+<!-- ai-agent-definition spec 尚未创建（属于 ai-agent-soul change），绑定表需求已包含在三个新 capability 的 soul_config assembly 需求中 -->
 
 ## Impact
 
-- **后端**: `internal/app/ai/` 新增 tool 相关 model/repo/service/handler ~250 行
-- **前端**: 新增 `web/src/apps/ai/pages/tools/` 工具管理页面
-- **数据库**: 新增 1 张表（ai_tools）
-- **Seed**: 预置内置工具记录
+- **后端**: `internal/app/ai/` 新增 tool/mcp/skill 三组 model/repo/service/handler ~800 行
+- **前端**: 新增 `web/src/apps/ai/pages/tools/` 三 Tab 卡片管理页面 + Agent 编辑页工具绑定 UI
+- **数据库**: 新增 6 张表（ai_tools, ai_mcp_servers, ai_skills, ai_agent_tools, ai_agent_mcp_servers, ai_agent_skills）
+- **Seed**: 预置内建工具记录

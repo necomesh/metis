@@ -103,6 +103,100 @@
     "apiKeyRequired": "API Key 不能为空",
     "modelIdRequired": "模型 ID 不能为空",
     "displayNameRequired": "显示名称不能为空",
-    "providerRequired": "请选择供应商"
+    "providerRequired": "请选择供应商",
+    "urlRequired": "URL 不能为空",
+    "urlInvalid": "请输入有效的 URL"
+  },
+  "knowledge": {
+    "title": "知识库管理",
+    "create": "新建知识库",
+    "edit": "编辑知识库",
+    "searchPlaceholder": "搜索知识库名称",
+    "name": "知识库名称",
+    "namePlaceholder": "例如：产品文档",
+    "description": "描述",
+    "descriptionPlaceholder": "知识库的简要描述",
+    "sourceCount": "来源数",
+    "nodeCount": "节点数",
+    "compileModel": "编译模型",
+    "selectCompileModel": "选择 LLM 模型",
+    "autoCompile": "自动编译",
+    "crawlEnabled": "启用爬取",
+    "crawlSchedule": "爬取计划",
+    "crawlSchedulePlaceholder": "Cron 表达式，例如：0 2 * * *",
+    "compile": "编译",
+    "recompile": "重新编译",
+    "compileStarted": "编译已开始",
+    "empty": "暂无知识库",
+    "emptyHint": "点击「新建知识库」创建第一个知识库",
+    "createSuccess": "知识库创建成功",
+    "updateSuccess": "知识库更新成功",
+    "deleteSuccess": "知识库已删除",
+    "deleteTitle": "删除知识库",
+    "deleteDesc": "确定要删除知识库「{{name}}」吗？所有来源和节点将被一并删除。",
+    "confirmDelete": "确定删除",
+    "notFound": "知识库不存在",
+    "compileStatus": {
+      "label": "编译状态",
+      "idle": "未编译",
+      "compiling": "编译中",
+      "completed": "已完成",
+      "error": "编译失败"
+    },
+    "tabs": {
+      "sources": "来源",
+      "graph": "知识图谱",
+      "logs": "编译日志"
+    },
+    "sources": {
+      "title": "标题",
+      "format": "格式",
+      "extractStatus": "抽取状态",
+      "size": "大小",
+      "empty": "暂无来源",
+      "uploadFile": "上传文件",
+      "addUrl": "添加 URL",
+      "uploadSuccess": "文件上传成功",
+      "addUrlSuccess": "URL 来源已添加",
+      "deleteSuccess": "来源已删除",
+      "dropHere": "拖拽文件到这里，或点击选择",
+      "uploading": "上传中...",
+      "uploadBtn": "上传 {{count}} 个文件",
+      "url": "URL",
+      "crawlDepth": "爬取深度",
+      "crawlDepthDesc": {
+        "0": "仅当前页面",
+        "1": "当前页面 + 一层链接",
+        "2": "当前页面 + 两层链接"
+      },
+      "urlPattern": "URL 过滤规则",
+      "urlPatternPlaceholder": "正则表达式，例如：/docs/.*"
+    },
+    "extractStatus": {
+      "pending": "待处理",
+      "processing": "处理中",
+      "completed": "已完成",
+      "failed": "失败"
+    },
+    "nodes": {
+      "title": "节点标题",
+      "summary": "摘要",
+      "edgeCount": "关联数",
+      "content": "内容",
+      "hasContent": "有内容",
+      "empty": "暂无节点（尚未编译）",
+      "loadingContent": "加载中...",
+      "noContent": "（无内容）"
+    },
+    "logs": {
+      "action": "操作",
+      "model": "模型",
+      "created": "新增",
+      "updated": "更新",
+      "edges": "关系",
+      "lint": "Lint",
+      "error": "错误",
+      "empty": "暂无编译日志"
+    }
   }
 }
