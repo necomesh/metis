@@ -18,6 +18,7 @@ var ErrConfigNotFound = errors.New("config file not found")
 type MetisConfig struct {
 	DBDriver         string `yaml:"db_driver"`
 	DBDSN            string `yaml:"db_dsn"`
+	SecretKey        string `yaml:"secret_key"`
 	JWTSecret        string `yaml:"jwt_secret"`
 	LicenseKeySecret string `yaml:"license_key_secret"`
 }
@@ -61,6 +62,12 @@ func DefaultSQLiteConfig() *MetisConfig {
 // cryptographically random 64-character hex strings.
 func (c *MetisConfig) GenerateSecrets() error {
 	b := make([]byte, 32)
+
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Errorf("generate secret_key: %w", err)
+	}
+	c.SecretKey = hex.EncodeToString(b)
+
 	if _, err := rand.Read(b); err != nil {
 		return fmt.Errorf("generate jwt_secret: %w", err)
 	}

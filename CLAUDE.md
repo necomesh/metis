@@ -192,7 +192,7 @@ function MyComponent({ data }) {
 - **API prefix**: `/api/v1/*`
 - **Response format**: `handler.OK(c, data)` / `handler.Fail(c, status, msg)` — returns `{"code":0,"message":"ok","data":...}`
 - **Database**: SQLite (default, pure Go, CGO_ENABLED=0) or PostgreSQL. Default SQLite DSN 使用 `_pragma=journal_mode(WAL)` 开启 WAL 模式。Database driver is selected during the install wizard and stored in `metis.yaml`.
-- **Configuration**: `metis.yaml` stores infrastructure config (db_driver, db_dsn, jwt_secret, license_key_secret). All other settings (server_port, OTel, site.name, etc.) are in DB `SystemConfig` table. No `.env` file is used.
+- **Configuration**: `metis.yaml` stores infrastructure config (db_driver, db_dsn, secret_key, jwt_secret, license_key_secret). All other settings (server_port, OTel, site.name, etc.) are in DB `SystemConfig` table. No `.env` file is used.
 - **Install wizard**: On first run (no `metis.yaml`), the server enters install mode and serves only `/api/v1/install/*` + SPA. The frontend at `/install` guides database selection → site info → admin account creation. After install, the process hot-switches to normal mode.
 - **Seed pattern**: `seed.Install()` runs during first-time installation (full seed). `seed.Sync()` runs on every subsequent startup (incremental — adds missing roles/menus/policies only, never overwrites existing SystemConfig values). 种子数据用 `db.Where("permission = ?", x).First(&existing)` 做幂等检查，只在记录不存在时创建。Casbin 策略用 `enforcer.HasPolicy()` 检查。
 - **New kernel models**: Add struct in `internal/model/`, register in `database.go` AutoMigrate call, create repo → service → handler. Wire into IOC in `main.go` via `do.Provide()`.

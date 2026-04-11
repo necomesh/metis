@@ -1,0 +1,107 @@
+package node
+
+import (
+	"encoding/json"
+	"errors"
+
+	"github.com/samber/do/v2"
+	"gorm.io/gorm"
+)
+
+var (
+	ErrProcessDefNotFound   = errors.New("process definition not found")
+	ErrProcessDefNameExists = errors.New("process definition name already exists")
+)
+
+type ProcessDefService struct {
+	processDefRepo *ProcessDefRepo
+	nodeProcessRepo *NodeProcessRepo
+	commandRepo    *NodeCommandRepo
+}
+
+func NewProcessDefService(i do.Injector) (*ProcessDefService, error) {
+	return &ProcessDefService{
+		processDefRepo:  do.MustInvoke[*ProcessDefRepo](i),
+		nodeProcessRepo: do.MustInvoke[*NodeProcessRepo](i),
+		commandRepo:     do.MustInvoke[*NodeCommandRepo](i),
+	}, nil
+}
+
+func (s *ProcessDefService) Create(pd *ProcessDef) error {
+	if _, err := s.processDefRepo.FindByName(pd.Name); err == nil {
+		return ErrProcessDefNameExists
+	}
+	return s.processDefRepo.Create(pd)
+}
+
+func (s *ProcessDefService) Get(id uint) (*ProcessDef, error) {
+	pd, err := s.processDefRepo.FindByID(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrProcessDefNotFound
+		}
+		return nil, err
+	}
+	return pd, nil
+}
+
+func (s *ProcessDefService) List(params ProcessDefListParams) ([]ProcessDef, int64, error) {
+	return s.processDefRepo.List(params)
+}
+
+func (s *ProcessDefService) Update(id uint, updates map[string]any) (*ProcessDef, error) {
+	pd, err := s.processDefRepo.FindByID(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrProcessDefNotFound
+		}
+		return nil, err
+	}
+
+	if err := s.processDefRepo.Update(id, updates); err != nil {
+		return nil, err
+	}
+
+	// Enqueue config.update for all nodes running this process
+	nodeProcesses, _ := s.nodeProcessRepo.ListByProcessDefID(id)
+	for _, np := range nodeProcesses {
+		payload, _ := json.Marshal(map[string]any{
+			"process_def_id": id,
+			"process_name":   pd.Name,
+		})
+		cmd := &NodeCommand{
+			NodeID:  np.NodeID,
+			Type:    CommandTypeConfigUpdate,
+			Payload: JSONMap(payload),
+			Status:  CommandStatusPending,
+		}
+		_ = s.commandRepo.Create(cmd)
+	}
+
+	return s.processDefRepo.FindByID(id)
+}
+
+func (s *ProcessDefService) Delete(id uint) error {
+	_, err := s.processDefRepo.FindByID(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrProcessDefNotFound
+		}
+		return err
+	}
+
+	// Enqueue stop commands for all nodes running this process
+	nodeProcesses, _ := s.nodeProcessRepo.ListByProcessDefID(id)
+	for _, np := range nodeProcesses {
+		payload, _ := json.Marshal(map[string]any{"process_def_id": id})
+		cmd := &NodeCommand{
+			NodeID:  np.NodeID,
+			Type:    CommandTypeProcessStop,
+			Payload: JSONMap(payload),
+			Status:  CommandStatusPending,
+		}
+		_ = s.commandRepo.Create(cmd)
+	}
+
+	return s.processDefRepo.Delete(id)
+}

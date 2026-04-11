@@ -65,6 +65,7 @@ func main() {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(middleware.Logger(), middleware.Recovery())
+	do.ProvideValue(injector, r)
 
 	if !installed {
 		// ──────────────────────────────────

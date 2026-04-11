@@ -21,8 +21,12 @@
 
 ### Agent Type 决定运行时行为
 
-- `chat / ops / assistant` → LLM Runtime 直接调用，Server 或 metis-ai-agent 执行
-- `coding` → Coding Runtime 管理外部编码工具子进程，仅 metis-ai-agent 执行
+所有类型的 Agent 均由 metis-ai-agent 执行。Server 负责将 Soul 配置完整组装到请求体中下发给 Agent，Agent 根据 type 选择对应 Runtime：
+
+- `chat / ops / assistant` → LLM Runtime（调用 internal/llm 统一客户端）
+- `coding` → Coding Runtime（管理外部编码工具子进程）
+
+Soul 配置是纯数据定义，不涉及运行时状态。Agent 是无状态执行引擎，配置由 Server 每次请求时下发。
 
 ### 常规 Agent Config 结构
 

@@ -11,6 +11,7 @@ VERSION   := $(shell git describe --tags --exact-match 2>/dev/null || echo "nigh
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null)
 BUILD_TIME := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
 LDFLAGS   := -X metis/internal/version.Version=$(VERSION) -X metis/internal/version.GitCommit=$(GIT_COMMIT) -X metis/internal/version.BuildTime=$(BUILD_TIME)
+SIDECAR_LDFLAGS := -X metis/internal/sidecar.Version=$(VERSION)
 
 web-build:
 ifdef APPS
@@ -57,6 +58,18 @@ build-license:
 	APPS=system,license $(MAKE) web-build
 	CGO_ENABLED=0 go build -tags edition_license -ldflags '$(LDFLAGS)' -o metis-license ./cmd/server
 
+build-sidecar:
+	CGO_ENABLED=0 go build -ldflags '$(SIDECAR_LDFLAGS)' -o metis-sidecar ./cmd/sidecar
+
+release-sidecar:
+	@mkdir -p dist
+	CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -ldflags '$(SIDECAR_LDFLAGS)' -o dist/metis-sidecar-linux-amd64   ./cmd/sidecar
+	CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -ldflags '$(SIDECAR_LDFLAGS)' -o dist/metis-sidecar-linux-arm64   ./cmd/sidecar
+	CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build -ldflags '$(SIDECAR_LDFLAGS)' -o dist/metis-sidecar-darwin-amd64  ./cmd/sidecar
+	CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -ldflags '$(SIDECAR_LDFLAGS)' -o dist/metis-sidecar-darwin-arm64  ./cmd/sidecar
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags '$(SIDECAR_LDFLAGS)' -o dist/metis-sidecar-windows-amd64.exe ./cmd/sidecar
+	@ls -lh dist/metis-sidecar-*
+
 run: build
 	./metis
 
@@ -65,4 +78,4 @@ push:
 	git commit -m "Update"
 	git push
 
-.PHONY: web-build web-dev refer-clone dev build release release-license build-license run push
+.PHONY: web-build web-dev refer-clone dev build release release-license build-license build-sidecar release-sidecar run push

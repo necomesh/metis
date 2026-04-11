@@ -11,7 +11,7 @@ dist/
 # Web build output
 web/dist/
 web/node_modules/
-
+sidecar.yaml
 # Go
 vendor/
 
@@ -32,4 +32,6 @@ metis.yaml
 .env
 .env.local
 server
+sidecar
 !cmd/server
+!cmd/sidecar
