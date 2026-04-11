@@ -65,6 +65,7 @@ func (a *NodeApp) Routes(api *gin.RouterGroup) {
 		nodes.PUT("/:id", nodeH.Update)
 		nodes.DELETE("/:id", nodeH.Delete)
 		nodes.POST("/:id/rotate-token", nodeH.RotateToken)
+		nodes.GET("/:id/commands", nodeH.ListCommands)
 	}
 
 	processDefs := api.Group("/process-defs")

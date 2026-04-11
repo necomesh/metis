@@ -13,13 +13,13 @@ const logRetentionDays = 7
 
 type NodeProcessLogService struct {
 	logRepo        *NodeProcessLogRepo
-	nodeProcessRepo *NodeProcessRepo
+	processDefRepo *ProcessDefRepo
 }
 
 func NewNodeProcessLogService(i do.Injector) (*NodeProcessLogService, error) {
 	return &NodeProcessLogService{
 		logRepo:        do.MustInvoke[*NodeProcessLogRepo](i),
-		nodeProcessRepo: do.MustInvoke[*NodeProcessRepo](i),
+		processDefRepo: do.MustInvoke[*ProcessDefRepo](i),
 	}, nil
 }
 
@@ -31,14 +31,24 @@ type UploadLogEntry struct {
 
 func (s *NodeProcessLogService) Ingest(nodeID uint, entries []UploadLogEntry) error {
 	now := time.Now()
+	// Cache ProcessName → ProcessDefID within this batch
+	defIDCache := make(map[string]uint)
 	logs := make([]NodeProcessLog, 0, len(entries))
 	for _, e := range entries {
+		defID, ok := defIDCache[e.ProcessName]
+		if !ok {
+			if pd, err := s.processDefRepo.FindByName(e.ProcessName); err == nil {
+				defID = pd.ID
+			}
+			defIDCache[e.ProcessName] = defID
+		}
 		logs = append(logs, NodeProcessLog{
-			NodeID:      nodeID,
-			ProcessName: e.ProcessName,
-			Stream:      e.Stream,
-			Content:     e.Content,
-			Timestamp:   now,
+			NodeID:       nodeID,
+			ProcessDefID: defID,
+			ProcessName:  e.ProcessName,
+			Stream:       e.Stream,
+			Content:      e.Content,
+			Timestamp:    now,
 		})
 	}
 	return s.logRepo.CreateBatch(logs)

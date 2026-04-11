@@ -1,7 +1,6 @@
 package node
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -13,8 +12,7 @@ import (
 )
 
 type BindProcessRequest struct {
-	ProcessDefID uint            `json:"processDefId" binding:"required"`
-	OverrideVars json.RawMessage `json:"overrideVars"`
+	ProcessDefID uint `json:"processDefId" binding:"required"`
 }
 
 type NodeProcessHandler struct {
@@ -46,7 +44,7 @@ func (h *NodeProcessHandler) Bind(c *gin.Context) {
 	c.Set("audit_resource", "node_process")
 	c.Set("audit_resource_id", c.Param("id"))
 
-	np, err := h.nodeProcessSvc.Bind(nodeID, req.ProcessDefID, JSONMap(req.OverrideVars))
+	np, err := h.nodeProcessSvc.Bind(nodeID, req.ProcessDefID)
 	if err != nil {
 		if errors.Is(err, ErrNodeNotFound) || errors.Is(err, ErrProcessDefNotFound) {
 			handler.Fail(c, http.StatusNotFound, err.Error())

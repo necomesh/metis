@@ -127,6 +127,8 @@
     "reload": "Reload",
     "reloadSuccess": "Reload command sent",
     "refresh": "Refresh",
+    "liveOn": "Live",
+    "liveOff": "Live",
     "viewNodes": "View Nodes",
     "noNodes": "No associated nodes",
     "nodeStatus": "Node Status",

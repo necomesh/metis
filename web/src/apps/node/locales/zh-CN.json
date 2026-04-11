@@ -127,6 +127,8 @@
     "reload": "热加载",
     "reloadSuccess": "热加载指令已下发",
     "refresh": "刷新",
+    "liveOn": "实时追踪中",
+    "liveOff": "实时追踪",
     "viewNodes": "查看节点",
     "noNodes": "暂无关联节点",
     "nodeStatus": "节点状态",

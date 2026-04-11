@@ -53,6 +53,27 @@ func (r *NodeCommandRepo) ListByNodeID(nodeID uint, limit int) ([]NodeCommand, e
 	return cmds, nil
 }
 
+func (r *NodeCommandRepo) ListByNodeIDPaginated(nodeID uint, page, pageSize int) ([]NodeCommand, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	var total int64
+	r.db.Model(&NodeCommand{}).Where("node_id = ?", nodeID).Count(&total)
+
+	var cmds []NodeCommand
+	if err := r.db.Where("node_id = ?", nodeID).
+		Order("created_at DESC").
+		Offset((page - 1) * pageSize).
+		Limit(pageSize).
+		Find(&cmds).Error; err != nil {
+		return nil, 0, err
+	}
+	return cmds, total, nil
+}
+
 func (r *NodeCommandRepo) Ack(id uint, result string) error {
 	now := time.Now()
 	return r.db.Model(&NodeCommand{}).Where("id = ?", id).Updates(map[string]any{

@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useRef, useEffect } from "react"
 import { useParams, useNavigate, useSearchParams } from "react-router"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useTranslation } from "react-i18next"
@@ -20,7 +20,6 @@ import { api } from "@/lib/api"
 import { usePermission } from "@/hooks/use-permission"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
@@ -126,7 +125,6 @@ export function Component() {
   const [editOpen, setEditOpen] = useState(false)
   const [bindDialogOpen, setBindDialogOpen] = useState(false)
   const [selectedProcessDef, setSelectedProcessDef] = useState("")
-  const [overrideVarsText, setOverrideVarsText] = useState("")
   const [tokenDialogOpen, setTokenDialogOpen] = useState(false)
   const [newToken, setNewToken] = useState("")
   const [copied, setCopied] = useState(false)
@@ -134,6 +132,8 @@ export function Component() {
   const [logProcessId, setLogProcessId] = useState("")
   const [logStream, setLogStream] = useState("all")
   const [logPage, setLogPage] = useState(1)
+  const logEndRef = useRef<HTMLDivElement>(null)
+  const [logAutoScroll, setLogAutoScroll] = useState(true)
 
   const canUpdate = usePermission("node:update")
 
@@ -173,13 +173,12 @@ export function Component() {
   })
 
   const bindMutation = useMutation({
-    mutationFn: ({ processDefId, overrideVars }: { processDefId: number; overrideVars?: Record<string, unknown> }) =>
-      api.post(`/api/v1/nodes/${id}/processes`, { processDefId, overrideVars }),
+    mutationFn: ({ processDefId }: { processDefId: number }) =>
+      api.post(`/api/v1/nodes/${id}/processes`, { processDefId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["node-processes", id] })
       setBindDialogOpen(false)
       setSelectedProcessDef("")
-      setOverrideVarsText("")
       toast.success(t("node:nodes.bindSuccess"))
     },
     onError: (err) => toast.error(err.message),
@@ -238,12 +237,21 @@ export function Component() {
   const { data: logsData } = useQuery({
     queryKey: ["node-process-logs", id, logProcessId, logStream, logPage],
     queryFn: () => {
-      let url = `/api/v1/nodes/${id}/processes/${logProcessId}/logs?page=${logPage}&pageSize=50`
+      let url = `/api/v1/nodes/${id}/processes/${logProcessId}/logs?page=${logPage}&pageSize=100`
       if (logStream !== "all") url += `&stream=${logStream}`
       return api.get<{ items: Array<{ id: number; stream: string; content: string; processName: string; timestamp: string }>; total: number }>(url)
     },
     enabled: !!id && !!logProcessId,
+    refetchInterval: 3000,
   })
+
+  const logItems = logsData?.items ? [...logsData.items].reverse() : []
+
+  useEffect(() => {
+    if (logAutoScroll && logEndRef.current) {
+      logEndRef.current.scrollIntoView({ behavior: "smooth" })
+    }
+  }, [logItems.length, logAutoScroll])
 
   const processes = processesData ?? []
   const commands = commandsData?.items ?? []
@@ -653,13 +661,11 @@ export function Component() {
               </SelectContent>
             </Select>
             <Button
-              variant="outline"
+              variant={logAutoScroll ? "default" : "outline"}
               size="sm"
-              onClick={() => queryClient.invalidateQueries({ queryKey: ["node-process-logs", id, logProcessId, logStream, logPage] })}
-              disabled={!logProcessId}
+              onClick={() => setLogAutoScroll(!logAutoScroll)}
             >
-              <RefreshCcw className="mr-1.5 h-3.5 w-3.5" />
-              {t("node:processDefs.refresh")}
+              {logAutoScroll ? t("node:processDefs.liveOn") : t("node:processDefs.liveOff")}
             </Button>
           </div>
 
@@ -667,47 +673,20 @@ export function Component() {
             <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">
               {t("node:nodes.selectProcess")}
             </div>
-          ) : !logsData?.items?.length ? (
+          ) : logItems.length === 0 ? (
             <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">
               {t("node:processDefs.noLogs")}
             </div>
           ) : (
-            <>
-              <div className="overflow-hidden rounded-xl border bg-card">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-[160px]">{t("node:nodes.commandTime")}</TableHead>
-                      <TableHead className="w-[80px]">{t("node:processDefs.stream")}</TableHead>
-                      <TableHead>{t("node:processDefs.logs")}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {logsData.items.map((log) => (
-                      <TableRow key={log.id}>
-                        <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                          {formatDateTime(log.timestamp)}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={log.stream === "stderr" ? "destructive" : "secondary"}>
-                            {log.stream}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="font-mono text-xs whitespace-pre-wrap break-all">
-                          {log.content}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-              <DataTablePagination
-                total={logsData.total ?? 0}
-                page={logPage}
-                totalPages={Math.ceil((logsData.total ?? 0) / 50)}
-                onPageChange={setLogPage}
-              />
-            </>
+            <div className="rounded-lg border bg-zinc-950 text-zinc-100 p-3 max-h-[600px] overflow-y-auto font-mono text-xs leading-5">
+              {logItems.map((log) => (
+                <div key={log.id} className="hover:bg-zinc-900/50">
+                  <span className="text-zinc-500 select-none mr-2">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                  <span className={`whitespace-pre-wrap break-all ${log.stream === "stderr" ? "text-red-400" : "text-zinc-300"}`}>{log.content}</span>
+                </div>
+              ))}
+              <div ref={logEndRef} />
+            </div>
           )}
         </TabsContent>
       </Tabs>
@@ -761,34 +740,13 @@ export function Component() {
                 )}
               </div>
             )}
-
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium">{t("node:nodes.overrideVars")}</label>
-              <Textarea
-                placeholder={t("node:nodes.overrideVarsPlaceholder")}
-                rows={4}
-                className="font-mono text-sm"
-                value={overrideVarsText}
-                onChange={(e) => setOverrideVarsText(e.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">{t("node:nodes.overrideVarsHint")}</p>
-            </div>
           </div>
           <SheetFooter>
             <Button
               size="sm"
               disabled={!selectedProcessDef || bindMutation.isPending}
               onClick={() => {
-                let overrideVars: Record<string, unknown> | undefined
-                if (overrideVarsText.trim()) {
-                  try {
-                    overrideVars = JSON.parse(overrideVarsText)
-                  } catch {
-                    toast.error(t("node:nodes.overrideVarsInvalid"))
-                    return
-                  }
-                }
-                bindMutation.mutate({ processDefId: Number(selectedProcessDef), overrideVars })
+                bindMutation.mutate({ processDefId: Number(selectedProcessDef) })
               }}
             >
               {bindMutation.isPending && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}

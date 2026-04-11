@@ -23,12 +23,14 @@ type UpdateNodeRequest struct {
 }
 
 type NodeHandler struct {
-	nodeSvc *NodeService
+	nodeSvc    *NodeService
+	commandRepo *NodeCommandRepo
 }
 
 func NewNodeHandler(i do.Injector) (*NodeHandler, error) {
 	return &NodeHandler{
-		nodeSvc: do.MustInvoke[*NodeService](i),
+		nodeSvc:    do.MustInvoke[*NodeService](i),
+		commandRepo: do.MustInvoke[*NodeCommandRepo](i),
 	}, nil
 }
 
@@ -202,6 +204,35 @@ func (h *NodeHandler) RotateToken(c *gin.Context) {
 
 	c.Set("audit_summary", "rotated node token")
 	handler.OK(c, gin.H{"token": token})
+}
+
+func (h *NodeHandler) ListCommands(c *gin.Context) {
+	id, err := parseID(c)
+	if err != nil {
+		handler.Fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
+
+	cmds, total, err := h.commandRepo.ListByNodeIDPaginated(id, page, pageSize)
+	if err != nil {
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	result := make([]NodeCommandResponse, len(cmds))
+	for i, cmd := range cmds {
+		result[i] = cmd.ToResponse()
+	}
+
+	handler.OK(c, gin.H{
+		"items":    result,
+		"total":    total,
+		"page":     page,
+		"pageSize": pageSize,
+	})
 }
 
 func parseID(c *gin.Context) (uint, error) {

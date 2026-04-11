@@ -47,7 +47,6 @@ func (s *NodeProcessService) buildStartPayload(np *NodeProcess, pd *ProcessDef) 
 	payload, _ := json.Marshal(map[string]any{
 		"process_def_id":  pd.ID,
 		"node_process_id": np.ID,
-		"override_vars":   json.RawMessage(np.OverrideVars),
 		"process_def": map[string]any{
 			"id":            pd.ID,
 			"name":          pd.Name,
@@ -65,7 +64,7 @@ func (s *NodeProcessService) buildStartPayload(np *NodeProcess, pd *ProcessDef) 
 	return JSONMap(payload)
 }
 
-func (s *NodeProcessService) Bind(nodeID, processDefID uint, overrideVars JSONMap) (*NodeProcess, error) {
+func (s *NodeProcessService) Bind(nodeID, processDefID uint) (*NodeProcess, error) {
 	if _, err := s.nodeRepo.FindByID(nodeID); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNodeNotFound
@@ -89,7 +88,6 @@ func (s *NodeProcessService) Bind(nodeID, processDefID uint, overrideVars JSONMa
 		NodeID:       nodeID,
 		ProcessDefID: processDefID,
 		Status:       ProcessStatusPendingConfig,
-		OverrideVars: overrideVars,
 	}
 	if err := s.nodeProcessRepo.Create(np); err != nil {
 		return nil, err

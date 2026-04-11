@@ -117,12 +117,16 @@ func seedNode(db *gorm.DB, enforcer *casbin.Enforcer) error {
 		{"admin", "/api/v1/nodes/:id/processes/:processId/start", "POST"},
 		{"admin", "/api/v1/nodes/:id/processes/:processId/stop", "POST"},
 		{"admin", "/api/v1/nodes/:id/processes/:processId/restart", "POST"},
+		{"admin", "/api/v1/nodes/:id/processes/:processId/reload", "POST"},
+		{"admin", "/api/v1/nodes/:id/processes/:processId/logs", "GET"},
+		{"admin", "/api/v1/nodes/:id/commands", "GET"},
 		// Process definitions
 		{"admin", "/api/v1/process-defs", "POST"},
 		{"admin", "/api/v1/process-defs", "GET"},
 		{"admin", "/api/v1/process-defs/:id", "GET"},
 		{"admin", "/api/v1/process-defs/:id", "PUT"},
 		{"admin", "/api/v1/process-defs/:id", "DELETE"},
+		{"admin", "/api/v1/process-defs/:id/nodes", "GET"},
 	}
 
 	menuPerms := [][]string{
