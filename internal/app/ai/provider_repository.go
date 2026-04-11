@@ -68,6 +68,15 @@ func (r *ProviderRepo) Delete(id uint) error {
 	return r.db.Delete(&Provider{}, id).Error
 }
 
+func (r *ProviderRepo) DeleteWithModels(id uint) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("provider_id = ?", id).Delete(&AIModel{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&Provider{}, id).Error
+	})
+}
+
 func (r *ProviderRepo) CountModelsByProviderID(providerID uint) (int64, error) {
 	var count int64
 	if err := r.db.Model(&AIModel{}).Where("provider_id = ?", providerID).Count(&count).Error; err != nil {

@@ -20,6 +20,7 @@ type AckCommandRequest struct {
 type SidecarHandler struct {
 	nodeRepo   *NodeRepo
 	sidecarSvc *SidecarService
+	logSvc     *NodeProcessLogService
 	hub        *NodeHub
 }
 
@@ -27,6 +28,7 @@ func NewSidecarHandler(i do.Injector) (*SidecarHandler, error) {
 	return &SidecarHandler{
 		nodeRepo:   do.MustInvoke[*NodeRepo](i),
 		sidecarSvc: do.MustInvoke[*SidecarService](i),
+		logSvc:     do.MustInvoke[*NodeProcessLogService](i),
 		hub:        do.MustInvoke[*NodeHub](i),
 	}, nil
 }
@@ -168,4 +170,23 @@ func (h *SidecarHandler) DownloadConfig(c *gin.Context) {
 
 	c.Header("X-Config-Hash", hash)
 	c.String(http.StatusOK, rendered)
+}
+
+func (h *SidecarHandler) UploadLogs(c *gin.Context) {
+	nodeID := GetNodeID(c)
+
+	var req struct {
+		Logs []UploadLogEntry `json:"logs"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		handler.Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := h.logSvc.Ingest(nodeID, req.Logs); err != nil {
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	handler.OK(c, nil)
 }

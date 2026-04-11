@@ -21,7 +21,7 @@ type NodeApp struct {
 func (a *NodeApp) Name() string { return "node" }
 
 func (a *NodeApp) Models() []any {
-	return []any{&Node{}, &ProcessDef{}, &NodeProcess{}, &NodeCommand{}}
+	return []any{&Node{}, &ProcessDef{}, &NodeProcess{}, &NodeCommand{}, &NodeProcessLog{}}
 }
 
 func (a *NodeApp) Seed(db *gorm.DB, enforcer *casbin.Enforcer) error {
@@ -34,6 +34,7 @@ func (a *NodeApp) Providers(i do.Injector) {
 	do.Provide(i, NewProcessDefRepo)
 	do.Provide(i, NewNodeProcessRepo)
 	do.Provide(i, NewNodeCommandRepo)
+	do.Provide(i, NewNodeProcessLogRepo)
 	do.Provide(i, func(i do.Injector) (*NodeHub, error) {
 		nodeRepo := do.MustInvoke[*NodeRepo](i)
 		return NewNodeHub(nodeRepo), nil
@@ -42,6 +43,7 @@ func (a *NodeApp) Providers(i do.Injector) {
 	do.Provide(i, NewProcessDefService)
 	do.Provide(i, NewNodeProcessService)
 	do.Provide(i, NewSidecarService)
+	do.Provide(i, NewNodeProcessLogService)
 	do.Provide(i, NewNodeHandler)
 	do.Provide(i, NewProcessDefHandler)
 	do.Provide(i, NewNodeProcessHandler)
@@ -82,6 +84,7 @@ func (a *NodeApp) Routes(api *gin.RouterGroup) {
 		nodeProcesses.POST("/:processId/start", nodeProcessH.Start)
 		nodeProcesses.POST("/:processId/stop", nodeProcessH.Stop)
 		nodeProcesses.POST("/:processId/restart", nodeProcessH.Restart)
+		nodeProcesses.GET("/:processId/logs", nodeProcessH.Logs)
 	}
 
 	// Sidecar routes (Node Token auth, bypass JWT+Casbin)
@@ -95,11 +98,13 @@ func (a *NodeApp) Routes(api *gin.RouterGroup) {
 		sidecar.GET("/commands", sidecarH.PollCommands)
 		sidecar.POST("/commands/:id/ack", sidecarH.AckCommand)
 		sidecar.GET("/configs/:name", sidecarH.DownloadConfig)
+		sidecar.POST("/logs", sidecarH.UploadLogs)
 	}
 }
 
 func (a *NodeApp) Tasks() []scheduler.TaskDef {
 	sidecarSvc := do.MustInvoke[*SidecarService](a.injector)
+	logSvc := do.MustInvoke[*NodeProcessLogService](a.injector)
 	return []scheduler.TaskDef{
 		{
 			Name:        "node-offline-detection",
@@ -114,6 +119,13 @@ func (a *NodeApp) Tasks() []scheduler.TaskDef {
 			Description: "Clean up expired pending commands",
 			CronExpr:    "*/5 * * * *",
 			Handler:     sidecarSvc.CleanupExpiredCommands,
+		},
+		{
+			Name:        "node-log-cleanup",
+			Type:        scheduler.TypeScheduled,
+			Description: "Clean up old node process logs",
+			CronExpr:    "0 3 * * *",
+			Handler:     logSvc.CleanupOldLogs,
 		},
 	}
 }

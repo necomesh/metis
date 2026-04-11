@@ -10,9 +10,8 @@ import (
 )
 
 var (
-	ErrProviderNotFound    = errors.New("provider not found")
-	ErrProviderHasModels   = errors.New("cannot delete provider with active models")
-	ErrProviderNameExists  = errors.New("provider name already exists")
+	ErrProviderNotFound   = errors.New("provider not found")
+	ErrProviderNameExists = errors.New("provider name already exists")
 )
 
 type ProviderService struct {
@@ -82,14 +81,7 @@ func (s *ProviderService) Update(id uint, name, providerType, baseURL, apiKey st
 }
 
 func (s *ProviderService) Delete(id uint) error {
-	count, err := s.repo.CountModelsByProviderID(id)
-	if err != nil {
-		return err
-	}
-	if count > 0 {
-		return ErrProviderHasModels
-	}
-	return s.repo.Delete(id)
+	return s.repo.DeleteWithModels(id)
 }
 
 func (s *ProviderService) DecryptAPIKey(p *Provider) (string, error) {

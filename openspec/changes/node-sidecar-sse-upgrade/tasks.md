@@ -50,43 +50,43 @@
 
 ## 8. Sidecar 端 SSE 客户端
 
-- [ ] 8.1 创建 `internal/sidecar/sse_client.go`：SSE 客户端，解析 `event:` + `data:` 字段，返回结构化事件
-- [ ] 8.2 实现重连逻辑：随机 jitter（1-5s）+ 指数退避（max 60s）+ 重连成功后重置退避
-- [ ] 8.3 修改 `agent.go`：将 `commandPollLoop()` 替换为 `sseLoop()`，从 SSE 读取事件分发给 ProcessManager / ConfigManager
-- [ ] 8.4 处理 `config` 事件：收到后调用 `ConfigManager.SyncConfig()` 触发配置同步
-- [ ] 8.5 移除 `client.go` 中 `PollCommands()` 方法（不再需要）
-- [ ] 8.6 验证 `go build ./cmd/sidecar/` 编译通过
+- [x] 8.1 创建 `internal/sidecar/sse_client.go`：SSE 客户端，解析 `event:` + `data:` 字段，返回结构化事件
+- [x] 8.2 实现重连逻辑：随机 jitter（1-5s）+ 指数退避（max 60s）+ 重连成功后重置退避
+- [x] 8.3 修改 `agent.go`：将 `commandPollLoop()` 替换为 `sseLoop()`，从 SSE 读取事件分发给 ProcessManager / ConfigManager
+- [x] 8.4 处理 `config` 事件：收到后调用 `ConfigManager.SyncConfig()` 触发配置同步
+- [x] 8.5 移除 `client.go` 中 `PollCommands()` 方法（不再需要）
+- [x] 8.6 验证 `go build ./cmd/sidecar/` 编译通过
 
 ## 9. Sidecar 端探针集成
 
-- [ ] 9.1 修改 `agent.go`：新增 `probeLoop()` goroutine，为每个已启动进程按 `probe_interval` 执行探针
-- [ ] 9.2 修改 `process_manager.go`：`HandleCommand()` 处理 `process.start` 时提取 `probe_type`、`probe_config` 存入 `ManagedProcess`
-- [ ] 9.3 修改 `process_manager.go`：`GetStatus()` 返回每个进程的 `last_probe` 结果
-- [ ] 9.4 修改 heartbeat 上报：将探针结果包含在进程状态中
-- [ ] 9.5 验证 `go build ./cmd/sidecar/` 编译通过
+- [x] 9.1 修改 `agent.go`：新增 `probeLoop()` goroutine，为每个已启动进程按 `probe_interval` 执行探针
+- [x] 9.2 修改 `process_manager.go`：`HandleCommand()` 处理 `process.start` 时提取 `probe_type`、`probe_config` 存入 `ManagedProcess`
+- [x] 9.3 修改 `process_manager.go`：`GetStatus()` 返回每个进程的 `last_probe` 结果
+- [x] 9.4 修改 heartbeat 上报：将探针结果包含在进程状态中
+- [x] 9.5 验证 `go build ./cmd/sidecar/` 编译通过
 
 ## 10. Sidecar 端多配置文件
 
-- [ ] 10.1 修改 `config_manager.go`：`SyncConfig()` 遍历 `ProcessDef.ConfigFiles[]`，逐个调用 `client.DownloadConfig(name, filename)` 下载
-- [ ] 10.2 修改 `config_manager.go`：每个文件写入 `generate/<process_name>/<filename>`，hash 按文件名分别追踪
-- [ ] 10.3 修改 `client.go`：`DownloadConfig()` 支持 `file` query parameter
-- [ ] 10.4 修改 `process_manager.go`：`HandleCommand()` 处理 `process.start` 时提取 `override_vars` 存入 `ManagedProcess`
-- [ ] 10.5 验证 `go build ./cmd/sidecar/` 编译通过
+- [x] 10.1 修改 `config_manager.go`：`SyncConfig()` 遍历 `ProcessDef.ConfigFiles[]`，逐个调用 `client.DownloadConfig(name, filename)` 下载
+- [x] 10.2 修改 `config_manager.go`：每个文件写入 `generate/<process_name>/<filename>`，hash 按文件名分别追踪
+- [x] 10.3 修改 `client.go`：`DownloadConfig()` 支持 `file` query parameter
+- [x] 10.4 修改 `process_manager.go`：`HandleCommand()` 处理 `process.start` 时提取 `override_vars` 存入 `ManagedProcess`
+- [x] 10.5 验证 `go build ./cmd/sidecar/` 编译通过
 
 ## 11. Sidecar 端重启计数优化
 
-- [ ] 11.1 修改 `process_manager.go` 中 `monitor()`：进程稳定运行超过 5 分钟后重置 `RestartCount` 为 0
-- [ ] 11.2 修复 `Reload()` 中的锁逻辑：避免持锁调用 `Restart()` 导致的脆弱解锁模式
+- [x] 11.1 修改 `process_manager.go` 中 `monitor()`：进程稳定运行超过 5 分钟后重置 `RestartCount` 为 0
+- [x] 11.2 修复 `Reload()` 中的锁逻辑：避免持锁调用 `Restart()` 导致的脆弱解锁模式
 
 ## 12. 日志捕获与上报（Sidecar 端）
 
-- [ ] 12.1 创建 `internal/sidecar/log_writer.go`：`LogWriter` 结构体，实现 `io.Writer` 接口，写入本地日志文件 + 内存环形缓冲区
-- [ ] 12.2 实现日志文件轮转：单文件超过 10MB 时轮转，保留最多 3 个备份
-- [ ] 12.3 修改 `process_manager.go`：进程启动时 `cmd.Stdout` / `cmd.Stderr` 设置为 `LogWriter`（通过 `io.MultiWriter` 同时输出到原始 stdout 和 LogWriter）
-- [ ] 12.4 创建 `internal/sidecar/log_uploader.go`：每 10s 或缓冲区满时批量 POST `/api/v1/nodes/sidecar/logs`
-- [ ] 12.5 修改 `client.go`：新增 `UploadLogs()` 方法
-- [ ] 12.6 修改 `agent.go`：新增 `logUploadLoop()` goroutine
-- [ ] 12.7 验证 `go build ./cmd/sidecar/` 编译通过
+- [x] 12.1 创建 `internal/sidecar/log_writer.go`：`LogWriter` 结构体，实现 `io.Writer` 接口，写入本地日志文件 + 内存环形缓冲区
+- [x] 12.2 实现日志文件轮转：单文件超过 10MB 时轮转，保留最多 3 个备份
+- [x] 12.3 修改 `process_manager.go`：进程启动时 `cmd.Stdout` / `cmd.Stderr` 设置为 `LogWriter`（通过 `io.MultiWriter` 同时输出到原始 stdout 和 LogWriter）
+- [x] 12.4 创建 `internal/sidecar/log_uploader.go`：每 10s 或缓冲区满时批量 POST `/api/v1/nodes/sidecar/logs`
+- [x] 12.5 修改 `client.go`：新增 `UploadLogs()` 方法
+- [x] 12.6 修改 `agent.go`：新增 `logUploadLoop()` goroutine
+- [x] 12.7 验证 `go build ./cmd/sidecar/` 编译通过
 
 ## 13. 日志存储与查询（Server 端）
 

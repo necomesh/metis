@@ -6,11 +6,19 @@ Frontend authentication UI and state management, including login page, auth stor
 ## Requirements
 
 ### Requirement: Login page
-The frontend SHALL provide a login page at `/login` with username and password fields, rendered full-screen without DashboardLayout. Below the password field, a captcha area SHALL be conditionally rendered: on page load, call `GET /api/v1/captcha` -- if `enabled=true`, display the captcha image, a text input for the answer, and a refresh button; if `enabled=false`, hide the captcha area. Below the login form, a divider "或" SHALL separate the local login form from dynamically rendered OAuth provider buttons. Below the OAuth section (or below the form if no OAuth), a registration link SHALL be conditionally shown: call `GET /api/v1/auth/registration-status` -- if `registrationOpen=true`, display "还没有账号？立即注册" linking to `/register`. On login failure with captcha enabled, the captcha SHALL auto-refresh. The login form SHALL send `X-Captcha-Id` and `X-Captcha-Answer` headers when captcha is enabled. The OAuth buttons SHALL be fetched from `GET /api/v1/auth/providers` on page load and only displayed when enabled providers exist. If the user is already authenticated, the page SHALL redirect to `/` using a `<Navigate>` component instead of calling `navigate()` during render. **The login page SHALL additionally include an optional email field for domain detection.** On email blur, it SHALL call `GET /api/v1/auth/check-domain?email=xxx` -- if the endpoint returns 404 (no identity App) or no match, the page SHALL behave as current (username+password + OAuth buttons). If a match is returned, the page SHALL display an SSO button. If forceSso=true, the page SHALL hide the password form.
+The frontend SHALL provide a login page at `/login` with username and password fields, rendered full-screen without DashboardLayout. All user-facing text on the login page SHALL use translation keys from the `auth` namespace. This includes: page title, subtitle, input labels, input placeholders, button labels, error messages, links (register, forgot password), and OAuth provider labels. Below the password field, a captcha area SHALL be conditionally rendered: on page load, call `GET /api/v1/captcha` -- if `enabled=true`, display the captcha image, a text input for the answer, and a refresh button; if `enabled=false`, hide the captcha area. Below the login form, a divider "或" SHALL separate the local login form from dynamically rendered OAuth provider buttons. Below the OAuth section (or below the form if no OAuth), a registration link SHALL be conditionally shown: call `GET /api/v1/auth/registration-status` -- if `registrationOpen=true`, display "还没有账号？立即注册" linking to `/register`. On login failure with captcha enabled, the captcha SHALL auto-refresh. The login form SHALL send `X-Captcha-Id` and `X-Captcha-Answer` headers when captcha is enabled. The OAuth buttons SHALL be fetched from `GET /api/v1/auth/providers` on page load and only displayed when enabled providers exist. If the user is already authenticated, the page SHALL redirect to `/` using a `<Navigate>` component instead of calling `navigate()` during render. **The login page SHALL additionally include an optional email field for domain detection.** On email blur, it SHALL call `GET /api/v1/auth/check-domain?email=xxx` -- if the endpoint returns 404 (no identity App) or no match, the page SHALL behave as current (username+password + OAuth buttons). If a match is returned, the page SHALL display an SSO button. If forceSso=true, the page SHALL hide the password form.
 
 #### Scenario: Successful login
 - **WHEN** user enters valid credentials (and valid captcha if enabled) and submits the login form
 - **THEN** the system SHALL call POST /api/v1/auth/login (with captcha headers if enabled), store the returned token pair, and redirect to /
+
+#### Scenario: Login page in English
+- **WHEN** the active locale is `en`
+- **THEN** the login page shows "Sign in to {appName}", "Enter your credentials to continue", "Username", "Password", "Continue", "Don't have an account? Create one"
+
+#### Scenario: Login page in Chinese
+- **WHEN** the active locale is `zh-CN`
+- **THEN** the login page shows "登录到 {appName}", "输入你的账号继续", "用户名", "密码", "继续", "没有账号？创建账号"
 
 #### Scenario: Failed login
 - **WHEN** user enters invalid credentials and submits
@@ -203,7 +211,11 @@ The DashboardLayout SHALL display the current user's username and a dropdown men
 
 #### Scenario: Change password
 - **WHEN** user clicks "change password" in the dropdown
-- **THEN** a dialog SHALL appear with old password, new password, and confirm password fields
+- **THEN** a dialog SHALL appear with old password, new password, and confirm password fields. All text in the change password dialog SHALL use translation keys from the `auth` namespace.
+
+#### Scenario: Change password dialog in English
+- **WHEN** the active locale is `en` and the change password dialog opens
+- **THEN** it shows "Change Password", "Current Password", "New Password", "Confirm New Password", "Save"
 
 #### Scenario: Logout
 - **WHEN** user clicks "logout" in the dropdown
@@ -235,8 +247,21 @@ The identity App frontend SHALL register a route at `/sso/callback` via `registe
 - **WHEN** /sso/callback accessed without code or state
 - **THEN** SHALL redirect to /login with error
 
+### Requirement: Language switcher on unauthenticated pages
+The login, registration, and 2FA pages SHALL display a language switcher (e.g., a dropdown or toggle) that allows users to switch the UI language before authenticating. The selected locale MUST be persisted in localStorage so it survives page refreshes.
+
+#### Scenario: Switch to English on login page
+- **WHEN** a user selects "English" from the language switcher on the login page
+- **THEN** the login page immediately re-renders in English
+- **AND** the locale choice is saved to localStorage
+- **AND** subsequent visits to the login page default to English
+
 ### Requirement: Registration page
-The frontend SHALL provide a registration page at `/register` rendered full-screen without DashboardLayout. The form SHALL include: username, email (optional), password, confirm password. On submit, call `POST /api/v1/auth/register`. On success, store the returned token pair and redirect to /. On error, display the error message. If registration is closed, the page SHALL show a notice "注册未开放" with a link back to login.
+The frontend SHALL provide a registration page at `/register` rendered full-screen without DashboardLayout. All user-facing text on the registration page SHALL use translation keys from the `auth` namespace. The form SHALL include: username, email (optional), password, confirm password. On submit, call `POST /api/v1/auth/register`. On success, store the returned token pair and redirect to /. On error, display the error message. If registration is closed, the page SHALL show a notice "注册未开放" with a link back to login.
+
+#### Scenario: Registration page in English
+- **WHEN** the active locale is `en`
+- **THEN** the page shows "Create Account", "Username", "Email (optional)", "Password", "Confirm Password", "Register", "Already have an account? Sign in"
 
 #### Scenario: Successful registration
 - **WHEN** user fills the form with valid data and submits
@@ -255,7 +280,11 @@ The frontend SHALL provide a registration page at `/register` rendered full-scre
 - **THEN** the frontend SHALL display a client-side validation error before submitting
 
 ### Requirement: 2FA verification page
-The frontend SHALL provide a 2FA verification page at `/2fa` that accepts a 6-digit TOTP code or an 8-character backup code. The page SHALL receive the twoFactorToken from the login redirect. On submit, call `POST /api/v1/auth/2fa/login` with {twoFactorToken, code}. On success, store the token pair and redirect to /. The page SHALL include a toggle to switch between "验证码" and "恢复码" input modes.
+The frontend SHALL provide a 2FA verification page at `/2fa` that accepts a 6-digit TOTP code or an 8-character backup code. All 2FA-related text (verification page, setup dialog, backup codes display) SHALL use translation keys from the `auth` namespace. The page SHALL receive the twoFactorToken from the login redirect. On submit, call `POST /api/v1/auth/2fa/login` with {twoFactorToken, code}. On success, store the token pair and redirect to /. The page SHALL include a toggle to switch between "验证码" and "恢复码" input modes.
+
+#### Scenario: 2FA verification page in English
+- **WHEN** the active locale is `en` and user is on `/2fa`
+- **THEN** the page shows "Two-Factor Authentication", "Enter the 6-digit code from your authenticator app", "Use recovery code" toggle
 
 #### Scenario: Successful TOTP verification
 - **WHEN** user enters a valid 6-digit TOTP code

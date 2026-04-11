@@ -135,10 +135,6 @@ func (h *ProviderHandler) Update(c *gin.Context) {
 func (h *ProviderHandler) Delete(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 	if err := h.svc.Delete(uint(id)); err != nil {
-		if errors.Is(err, ErrProviderHasModels) {
-			handler.Fail(c, http.StatusConflict, err.Error())
-			return
-		}
 		handler.Fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}

@@ -315,3 +315,15 @@ func (nc *NodeCommand) ToResponse() NodeCommandResponse {
 		CreatedAt: nc.CreatedAt,
 	}
 }
+
+type NodeProcessLog struct {
+	ID           uint      `json:"id" gorm:"primaryKey;autoIncrement"`
+	NodeID       uint      `json:"nodeId" gorm:"not null;index:idx_npl_query"`
+	ProcessDefID uint      `json:"processDefId" gorm:"index:idx_npl_query"`
+	ProcessName  string    `json:"processName" gorm:"size:128"`
+	Stream       string    `json:"stream" gorm:"size:8"` // stdout, stderr
+	Content      string    `json:"content" gorm:"type:text"`
+	Timestamp    time.Time `json:"timestamp" gorm:"not null;index"`
+}
+
+func (NodeProcessLog) TableName() string { return "node_process_logs" }

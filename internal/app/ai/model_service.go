@@ -165,10 +165,20 @@ func guessModelType(modelID string) string {
 		return ModelTypeSTT
 	case strings.Contains(id, "dall-e"), strings.Contains(id, "gpt-image"):
 		return ModelTypeImage
-	default:
-		// Don't guess — let user classify manually
-		return ""
 	}
+	// Known LLM prefixes/keywords
+	llmPatterns := []string{
+		"gpt", "o1", "o3", "o4",
+		"claude", "llama", "qwen", "mistral", "gemma", "phi-",
+		"deepseek", "glm", "yi-", "baichuan", "internlm",
+		"codex", "chatglm", "command",
+	}
+	for _, p := range llmPatterns {
+		if strings.Contains(id, p) {
+			return ModelTypeLLM
+		}
+	}
+	return ""
 }
 
 func decryptAPIKey(encrypted []byte, key crypto.EncryptionKey) (string, error) {

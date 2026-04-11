@@ -19,11 +19,13 @@ type BindProcessRequest struct {
 
 type NodeProcessHandler struct {
 	nodeProcessSvc *NodeProcessService
+	logSvc         *NodeProcessLogService
 }
 
 func NewNodeProcessHandler(i do.Injector) (*NodeProcessHandler, error) {
 	return &NodeProcessHandler{
 		nodeProcessSvc: do.MustInvoke[*NodeProcessService](i),
+		logSvc:         do.MustInvoke[*NodeProcessLogService](i),
 	}, nil
 }
 
@@ -208,4 +210,37 @@ func (h *NodeProcessHandler) Restart(c *gin.Context) {
 
 	c.Set("audit_summary", "restarted process on node")
 	handler.OK(c, nil)
+}
+
+func (h *NodeProcessHandler) Logs(c *gin.Context) {
+	nodeID, err := parseID(c)
+	if err != nil {
+		handler.Fail(c, http.StatusBadRequest, "invalid node id")
+		return
+	}
+
+	processIDStr := c.Param("processId")
+	processDefID, err := strconv.ParseUint(processIDStr, 10, 64)
+	if err != nil {
+		handler.Fail(c, http.StatusBadRequest, "invalid process id")
+		return
+	}
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "50"))
+	stream := c.Query("stream")
+
+	result, err := h.logSvc.List(LogListParams{
+		NodeID:       nodeID,
+		ProcessDefID: uint(processDefID),
+		Stream:       stream,
+		Page:         page,
+		PageSize:     pageSize,
+	})
+	if err != nil {
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	handler.OK(c, result)
 }
