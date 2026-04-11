@@ -21,7 +21,7 @@ The frontend SHALL provide an `/install` route that displays the installation wi
 - **THEN** the frontend SHALL redirect to `/login`
 
 ### Requirement: Database selection step
-The install wizard SHALL display a database selection step as the first step, allowing the user to choose between SQLite (default) and PostgreSQL.
+The install wizard SHALL display a database selection step, allowing the user to choose between SQLite (default) and PostgreSQL.
 
 #### Scenario: SQLite selected (default)
 - **WHEN** the user selects SQLite (pre-selected by default)
@@ -79,6 +79,36 @@ The install wizard SHALL use the same visual language as the login page -- AuthS
 - **WHEN** the install wizard is displayed
 - **THEN** it SHALL use the AuthShell gradient background with a centered glass-morphism card containing a step indicator and form content
 
+#### Scenario: Step indicator shows 5 steps
+- **WHEN** the install wizard loads
+- **THEN** the step indicator shows 5 steps: Language, Database, Site Info, Admin, Complete
+
+#### Scenario: Language step is first and active on initial load
+- **WHEN** the user opens `/install` for the first time
+- **THEN** the first step "Language & Timezone" is active
+
 #### Scenario: Step indicator
 - **WHEN** the wizard is on any step
-- **THEN** a horizontal step indicator SHALL show all steps with the current step highlighted using the primary color, completed steps with a checkmark, and future steps in muted color
+- **THEN** a horizontal step indicator SHALL show all steps with the current step highlighted using the primary color, completed steps with a checkmark, and future steps in muted color. Step labels MUST be translated using the active locale.
+
+### Requirement: Language and timezone selection step
+The install wizard SHALL have a first step for selecting the system language and timezone. This step is purely frontend -- it does not require database connectivity. The language selector MUST list all supported locales with their native names (e.g., "简体中文", "English"). The timezone selector MUST default to the browser's detected timezone and allow selection from a list of IANA timezones grouped by region.
+
+#### Scenario: Language selection changes wizard language
+- **WHEN** the user selects "English" in the language step
+- **THEN** all subsequent wizard steps display in English immediately
+
+#### Scenario: Timezone defaults to browser timezone
+- **WHEN** the language step loads and the browser reports `Asia/Shanghai`
+- **THEN** the timezone selector defaults to `Asia/Shanghai`
+
+#### Scenario: Proceed to database step
+- **WHEN** the user clicks "Next" on the language step
+- **THEN** the wizard advances to the database selection step with the chosen language active
+
+### Requirement: All install wizard text is translatable
+All user-facing text in the install wizard (labels, placeholders, helper text, error messages, button text) SHALL use i18n translation keys from the `install` namespace. No hardcoded Chinese or English text in the install wizard components.
+
+#### Scenario: Database step displays in selected language
+- **WHEN** the user selected "English" in step 1 and is on the database step
+- **THEN** "SQLite" description shows "Zero-config, suitable for small deployments" instead of "零配置，适合小型部署"

@@ -32,7 +32,15 @@ The system SHALL provide `POST /api/v1/install/check-db` that tests a database c
 - **THEN** the system SHALL return HTTP 403
 
 ### Requirement: Execute installation endpoint
-The system SHALL provide `POST /api/v1/install/execute` that performs the full installation. This endpoint SHALL only be available when the system is not installed. Admin user creation SHALL use the kernel `UserService.Create` method (after kernel providers are registered via hot-switch) to ensure consistent password hashing, `PasswordChangedAt` initialization, and password policy validation.
+The system SHALL provide `POST /api/v1/install/execute` that performs the full installation. This endpoint SHALL only be available when the system is not installed. Admin user creation SHALL use the kernel `UserService.Create` method (after kernel providers are registered via hot-switch) to ensure consistent password hashing, `PasswordChangedAt` initialization, and password policy validation. The endpoint SHALL accept additional fields `locale` (string, optional) and `timezone` (string, optional) in the request body. During installation, these values MUST be saved as SystemConfig entries: `system.locale` and `system.timezone`. If omitted, `system.locale` defaults to `"zh-CN"` and `system.timezone` defaults to `"UTC"`.
+
+#### Scenario: Install with locale and timezone
+- **WHEN** the install request includes `{"locale": "en", "timezone": "America/New_York", ...}`
+- **THEN** SystemConfig entries `system.locale = "en"` and `system.timezone = "America/New_York"` are created
+
+#### Scenario: Install without locale and timezone
+- **WHEN** the install request omits locale and timezone fields
+- **THEN** SystemConfig entries `system.locale = "zh-CN"` and `system.timezone = "UTC"` are created
 
 #### Scenario: SQLite installation
 - **WHEN** `POST /api/v1/install/execute` is called with `{"db_driver":"sqlite","site_name":"My Metis","admin_username":"admin","admin_password":"Pass1234","admin_email":"admin@example.com"}`

@@ -251,10 +251,10 @@ export function ModelSheet({ open, onOpenChange, model, defaultProviderId }: Mod
                 render={({ field }) => (
                   <FormItem className="flex-1">
                     <FormLabel>{t("ai:models.type")}</FormLabel>
-                    <Select value={field.value} onValueChange={field.onChange}>
+                    <Select value={field.value || undefined} onValueChange={field.onChange}>
                       <FormControl>
                         <SelectTrigger>
-                          <SelectValue />
+                          <SelectValue placeholder={t("ai:models.selectType")} />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
