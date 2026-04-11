@@ -18,7 +18,6 @@ import (
 	"metis/internal/config"
 	"metis/internal/database"
 	"metis/internal/model"
-	"metis/internal/pkg/oauth"
 	"metis/internal/pkg/token"
 	"metis/internal/repository"
 	"metis/internal/scheduler"
@@ -31,14 +30,15 @@ import (
 
 // InstallHandler handles the installation wizard API.
 type InstallHandler struct {
-	db       *database.DB
-	injector do.Injector
-	engine   *gin.Engine
+	db                *database.DB
+	injector          do.Injector
+	engine            *gin.Engine
+	overrideProviders func(do.Injector)
 }
 
 // NewInstall creates an InstallHandler.
-func NewInstall(db *database.DB, injector do.Injector, engine *gin.Engine) *InstallHandler {
-	return &InstallHandler{db: db, injector: injector, engine: engine}
+func NewInstall(db *database.DB, injector do.Injector, engine *gin.Engine, overrideProviders func(do.Injector)) *InstallHandler {
+	return &InstallHandler{db: db, injector: injector, engine: engine, overrideProviders: overrideProviders}
 }
 
 // RegisterInstallRoutes registers install-only routes on the Gin engine.
@@ -234,27 +234,26 @@ func (h *InstallHandler) Execute(c *gin.Context) {
 		}
 	}
 
-	// 8. Create admin user
+	// 8. Register IOC providers (needed for UserService)
+	do.OverrideValue(h.injector, cfg)
+	if db != h.db {
+		do.OverrideValue(h.injector, db)
+	}
+	h.overrideProviders(h.injector)
+
+	// 9. Create admin user via UserService
 	adminRole, err := findAdminRole(db.DB)
 	if err != nil {
 		Fail(c, http.StatusInternalServerError, "admin role not found: "+err.Error())
 		return
 	}
 
-	hashedPassword, err := token.HashPassword(req.AdminPassword)
+	userSvc, err := do.Invoke[*service.UserService](h.injector)
 	if err != nil {
-		Fail(c, http.StatusInternalServerError, "failed to hash password: "+err.Error())
+		Fail(c, http.StatusInternalServerError, "failed to initialize user service: "+err.Error())
 		return
 	}
-
-	admin := &model.User{
-		Username: req.AdminUsername,
-		Password: hashedPassword,
-		Email:    req.AdminEmail,
-		RoleID:   adminRole.ID,
-		IsActive: true,
-	}
-	if err := db.DB.Create(admin).Error; err != nil {
+	if _, err := userSvc.Create(req.AdminUsername, req.AdminPassword, req.AdminEmail, "", adminRole.ID); err != nil {
 		Fail(c, http.StatusInternalServerError, "failed to create admin: "+err.Error())
 		return
 	}
@@ -285,12 +284,7 @@ func (h *InstallHandler) Execute(c *gin.Context) {
 func (h *InstallHandler) hotSwitch(cfg *config.MetisConfig, db *database.DB, enforcer *casbin.Enforcer) error {
 	injector := h.injector
 
-	// Provide the config and new DB to IOC (use Override to be safe against retries)
-	do.OverrideValue(injector, cfg)
-	if db != h.db {
-		// PostgreSQL: override the DB in the container
-		do.OverrideValue(injector, db)
-	}
+	// Config, DB, and kernel providers already registered in Execute
 
 	// JWT secret from config
 	jwtSecret, err := hex.DecodeString(cfg.JWTSecret)
@@ -300,38 +294,6 @@ func (h *InstallHandler) hotSwitch(cfg *config.MetisConfig, db *database.DB, enf
 	do.OverrideValue(injector, jwtSecret)
 
 	blacklist := do.MustInvoke[*token.TokenBlacklist](injector)
-
-	// Register remaining kernel providers (Override to handle retries safely)
-	do.Override(injector, casbinpkg.NewEnforcer)
-	do.Override(injector, repository.NewUser)
-	do.Override(injector, repository.NewRefreshToken)
-	do.Override(injector, repository.NewRole)
-	do.Override(injector, repository.NewMenu)
-	do.Override(injector, repository.NewNotification)
-	do.Override(injector, repository.NewMessageChannel)
-	do.Override(injector, repository.NewAuthProvider)
-	do.Override(injector, repository.NewUserConnection)
-	do.Override(injector, repository.NewAuditLog)
-	do.Override(injector, repository.NewTwoFactorSecret)
-	do.Override(injector, service.NewCasbin)
-	do.Override(injector, service.NewRole)
-	do.Override(injector, service.NewMenu)
-	do.Override(injector, service.NewAuth)
-	do.Override(injector, service.NewUser)
-	do.Override(injector, service.NewNotification)
-	do.Override(injector, service.NewMessageChannel)
-	do.Override(injector, service.NewSession)
-	do.Override(injector, service.NewSettings)
-	do.Override(injector, service.NewAuthProvider)
-	do.Override(injector, service.NewUserConnection)
-	do.Override(injector, service.NewAuditLog)
-	do.Override(injector, service.NewCaptcha)
-	do.Override(injector, service.NewTwoFactor)
-	do.Override(injector, repository.NewIdentitySource)
-	do.Override(injector, service.NewIdentitySource)
-	do.OverrideValue(injector, oauth.NewStateManager())
-	do.Override(injector, New)
-	do.Override(injector, scheduler.New)
 
 	// Boot apps
 	for _, a := range app.All() {

@@ -244,11 +244,12 @@ export function PermissionDialog({ open, onOpenChange, role }: PermissionDialogP
                 {sections.map((section) => {
               const dir = section.directory
               const isExpanded = dir ? expandedDirs.has(dir.id) : true
+              const DirIcon = dir ? getIcon(dir.icon, dir.type) : null
 
               return (
                 <div key={dir?.id ?? "top"}>
                   {/* Directory header */}
-                  {dir && (
+                  {dir && DirIcon && (
                     <div
                       className="flex items-center gap-2 mb-2 cursor-pointer select-none group"
                       onClick={() => toggleDir(dir.id)}
@@ -265,10 +266,7 @@ export function PermissionDialog({ open, onOpenChange, role }: PermissionDialogP
                         />
                       </span>
                       <span className="text-[13px] font-semibold text-foreground flex items-center gap-1.5">
-                        {(() => {
-                          const DirIcon = getIcon(dir.icon, dir.type)
-                          return <DirIcon className="h-3.5 w-3.5 text-muted-foreground" />
-                        })()}
+                        <DirIcon className="h-3.5 w-3.5 text-muted-foreground" />
                         {dir.name}
                       </span>
                     </div>
@@ -277,7 +275,9 @@ export function PermissionDialog({ open, onOpenChange, role }: PermissionDialogP
                   {/* Permission matrix table */}
                   {isExpanded && section.rows.length > 0 && (
                     <div className="rounded-lg border border-border/60 overflow-hidden ml-6">
-                      {section.rows.map((row, idx) => (
+                      {section.rows.map((row, idx) => {
+                        const MenuIcon = getIcon(row.menu.icon, row.menu.type)
+                        return (
                         <div
                           key={row.menu.id}
                           className={
@@ -292,10 +292,7 @@ export function PermissionDialog({ open, onOpenChange, role }: PermissionDialogP
                               checked={getCheckState(row.menu)}
                               onCheckedChange={(checked) => toggleMenu(row.menu, !!checked)}
                             />
-                            {(() => {
-                              const MenuIcon = getIcon(row.menu.icon, row.menu.type)
-                              return <MenuIcon className="h-3.5 w-3.5 text-muted-foreground/60 shrink-0" />
-                            })()}
+                            <MenuIcon className="h-3.5 w-3.5 text-muted-foreground/60 shrink-0" />
                             <span className="text-[13px] font-medium text-foreground leading-tight">
                               {row.menu.name}
                             </span>
@@ -320,7 +317,8 @@ export function PermissionDialog({ open, onOpenChange, role }: PermissionDialogP
                             ))}
                           </div>
                         </div>
-                      ))}
+                        )
+                      })}
                     </div>
                   )}
                 </div>

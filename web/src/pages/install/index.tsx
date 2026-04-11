@@ -961,60 +961,62 @@ export default function InstallPage() {
   })
 
   // Step order: 0=language, 1=db, 2=site, 3=admin, 4=complete
-  const stepContent = (() => {
-    switch (step) {
-      case 0:
-        return (
-          <LanguageStep
-            config={localeConfig}
-            onChange={setLocaleConfig}
-            onNext={() => setStep(1)}
-          />
-        )
-      case 1:
-        return (
-          <DatabaseStep
-            config={dbConfig}
-            onChange={setDBConfig}
-            onNext={() => setStep(2)}
-            onBack={() => setStep(0)}
-          />
-        )
-      case 2:
-        return (
-          <SiteInfoStep
-            config={siteConfig}
-            onChange={setSiteConfig}
-            otelConfig={otelConfig}
-            onOTelChange={setOTelConfig}
-            onNext={() => setStep(3)}
-            onBack={() => setStep(1)}
-          />
-        )
-      case 3:
-        return (
-          <AdminStep
-            config={adminConfig}
-            onChange={setAdminConfig}
-            onNext={() => setStep(4)}
-            onBack={() => setStep(2)}
-          />
-        )
-      case 4:
-        return (
-          <CompleteStep
-            localeConfig={localeConfig}
-            dbConfig={dbConfig}
-            siteConfig={siteConfig}
-            adminConfig={adminConfig}
-            otelConfig={otelConfig}
-            onBack={() => setStep(3)}
-          />
-        )
-      default:
-        return null
-    }
-  })()
+  let stepContent: React.ReactNode = null
+  switch (step) {
+    case 0:
+      stepContent = (
+        <LanguageStep
+          config={localeConfig}
+          onChange={setLocaleConfig}
+          onNext={() => setStep(1)}
+        />
+      )
+      break
+    case 1:
+      stepContent = (
+        <DatabaseStep
+          config={dbConfig}
+          onChange={setDBConfig}
+          onNext={() => setStep(2)}
+          onBack={() => setStep(0)}
+        />
+      )
+      break
+    case 2:
+      stepContent = (
+        <SiteInfoStep
+          config={siteConfig}
+          onChange={setSiteConfig}
+          otelConfig={otelConfig}
+          onOTelChange={setOTelConfig}
+          onNext={() => setStep(3)}
+          onBack={() => setStep(1)}
+        />
+      )
+      break
+    case 3:
+      stepContent = (
+        <AdminStep
+          config={adminConfig}
+          onChange={setAdminConfig}
+          onNext={() => setStep(4)}
+          onBack={() => setStep(2)}
+        />
+      )
+      break
+    case 4:
+      stepContent = (
+        <CompleteStep
+          localeConfig={localeConfig}
+          dbConfig={dbConfig}
+          siteConfig={siteConfig}
+          adminConfig={adminConfig}
+          otelConfig={otelConfig}
+          onBack={() => setStep(3)}
+        />
+      )
+      break
+  }
 
   return (
     <AuthShell>

@@ -31,6 +31,128 @@ var (
 	ErrDefaultRoleNotFound = errors.New("error.auth.default_role_not_found")
 )
 
+// ExternalUserParams contains information from an external identity provider
+// needed to find or create a local user account (JIT provisioning).
+type ExternalUserParams struct {
+	Provider         string // e.g. "github", "google", "oidc_3", "ldap_1"
+	ExternalID       string // unique identifier from the provider (sub, DN, etc.)
+	Email            string
+	DisplayName      string
+	AvatarURL        string
+	DefaultRoleID    uint   // 0 = fall back to the "user" role
+	ConflictStrategy string // "link" = link existing user by email; "" = reject conflict
+	PreferredUsername string // if empty, uses "{Provider}_{ExternalID}"
+}
+
+// ProvisionExternalUser finds or creates a local user for an external identity.
+// It handles connection lookup, email-conflict resolution, and user+connection creation.
+func (s *AuthService) ProvisionExternalUser(params ExternalUserParams) (*model.User, error) {
+	// 1. Check if connection already exists (returning user)
+	conn, err := s.connRepo.FindByProviderAndExternalID(params.Provider, params.ExternalID)
+	if err == nil {
+		user, err := s.userRepo.FindByID(conn.UserID)
+		if err != nil {
+			return nil, err
+		}
+		if !user.IsActive {
+			return nil, ErrAccountDisabled
+		}
+
+		// Update external info if changed
+		changed := false
+		if conn.ExternalName != params.DisplayName {
+			conn.ExternalName = params.DisplayName
+			changed = true
+		}
+		if conn.ExternalEmail != params.Email {
+			conn.ExternalEmail = params.Email
+			changed = true
+		}
+		if conn.AvatarURL != params.AvatarURL {
+			conn.AvatarURL = params.AvatarURL
+			changed = true
+		}
+		if changed {
+			_ = s.connRepo.Update(conn)
+		}
+		return user, nil
+	}
+
+	// 2. New connection — check email conflict
+	if params.Email != "" {
+		if existing, err := s.userRepo.FindByEmail(params.Email); err == nil && existing != nil {
+			if params.ConflictStrategy == "link" {
+				newConn := &model.UserConnection{
+					UserID:        existing.ID,
+					Provider:      params.Provider,
+					ExternalID:    params.ExternalID,
+					ExternalName:  params.DisplayName,
+					ExternalEmail: params.Email,
+					AvatarURL:     params.AvatarURL,
+				}
+				if err := s.connRepo.Create(newConn); err != nil {
+					return nil, fmt.Errorf("create connection: %w", err)
+				}
+				return existing, nil
+			}
+			return nil, ErrEmailConflict
+		}
+	}
+
+	// 3. Resolve role
+	roleID := params.DefaultRoleID
+	if roleID == 0 {
+		role, err := s.roleRepo.FindByCode(model.RoleUser)
+		if err != nil {
+			return nil, fmt.Errorf("find default role: %w", err)
+		}
+		roleID = role.ID
+	}
+
+	// 4. Resolve username
+	username := params.PreferredUsername
+	fallback := fmt.Sprintf("%s_%s", params.Provider, params.ExternalID)
+	if username == "" {
+		username = fallback
+	} else if _, err := s.userRepo.FindByUsername(username); err == nil {
+		// Preferred username taken, use fallback
+		username = fallback
+	}
+
+	// 5. Create user
+	user := &model.User{
+		Username: username,
+		Email:    params.Email,
+		Avatar:   params.AvatarURL,
+		RoleID:   roleID,
+		IsActive: true,
+	}
+	if err := s.userRepo.Create(user); err != nil {
+		return nil, fmt.Errorf("create user: %w", err)
+	}
+
+	// Reload with Role association
+	user, err = s.userRepo.FindByID(user.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 6. Create connection
+	newConn := &model.UserConnection{
+		UserID:        user.ID,
+		Provider:      params.Provider,
+		ExternalID:    params.ExternalID,
+		ExternalName:  params.DisplayName,
+		ExternalEmail: params.Email,
+		AvatarURL:     params.AvatarURL,
+	}
+	if err := s.connRepo.Create(newConn); err != nil {
+		return nil, fmt.Errorf("create connection: %w", err)
+	}
+
+	return user, nil
+}
+
 type AuthService struct {
 	userRepo         *repository.UserRepo
 	refreshTokenRepo *repository.RefreshTokenRepo
@@ -170,10 +292,25 @@ func (s *AuthService) Login(username, password, captchaID, captchaAnswer, ip, ua
 
 // tryExternalAuth attempts authentication via an ExternalAuthenticator (e.g., LDAP).
 func (s *AuthService) tryExternalAuth(username, password, ip, ua string) (*TokenPair, error) {
-	user, err := s.identitySvc.AuthenticateByPassword(username, password)
+	extResult, err := s.identitySvc.AuthenticateByPassword(username, password)
 	if err != nil {
 		return nil, ErrInvalidCredentials
 	}
+
+	user, err := s.ProvisionExternalUser(ExternalUserParams{
+		Provider:         extResult.Provider,
+		ExternalID:       extResult.ExternalID,
+		Email:            extResult.Email,
+		DisplayName:      extResult.DisplayName,
+		AvatarURL:        extResult.AvatarURL,
+		DefaultRoleID:    extResult.DefaultRoleID,
+		ConflictStrategy: extResult.ConflictStrategy,
+		PreferredUsername: extResult.Username,
+	})
+	if err != nil {
+		return nil, ErrInvalidCredentials
+	}
+
 	if !user.IsActive {
 		return nil, ErrAccountDisabled
 	}
@@ -235,85 +372,18 @@ func (s *AuthService) GetUserConnections(userID uint) ([]model.UserConnection, e
 
 // OAuthLogin handles OAuth login: find existing connection or create new user.
 func (s *AuthService) OAuthLogin(provider, externalID, externalName, externalEmail, avatarURL, ip, ua string) (*TokenPair, error) {
-	// Check if connection already exists
-	conn, err := s.connRepo.FindByProviderAndExternalID(provider, externalID)
-	if err == nil {
-		// Existing connection — load user
-		user, err := s.userRepo.FindByID(conn.UserID)
-		if err != nil {
-			return nil, err
-		}
-		if !user.IsActive {
-			return nil, ErrAccountDisabled
-		}
-
-		// Update external info if changed
-		changed := false
-		if conn.ExternalName != externalName {
-			conn.ExternalName = externalName
-			changed = true
-		}
-		if conn.ExternalEmail != externalEmail {
-			conn.ExternalEmail = externalEmail
-			changed = true
-		}
-		if conn.AvatarURL != avatarURL {
-			conn.AvatarURL = avatarURL
-			changed = true
-		}
-		if changed {
-			_ = s.connRepo.Update(conn)
-		}
-
-		s.enforceConcurrentLimit(user.ID)
-		return s.GenerateTokenPair(user, ip, ua)
-	}
-
-	// New connection — check email conflict
-	if externalEmail != "" {
-		if existing, err := s.userRepo.FindByEmail(externalEmail); err == nil && existing != nil {
-			return nil, ErrEmailConflict
-		}
-	}
-
-	// Find default "user" role
-	userRole, err := s.roleRepo.FindByCode(model.RoleUser)
-	if err != nil {
-		return nil, fmt.Errorf("find default role: %w", err)
-	}
-
-	// Create new user with auto-generated username
-	username := fmt.Sprintf("%s_%s", provider, externalID)
-	user := &model.User{
-		Username: username,
-		Email:    externalEmail,
-		Avatar:   avatarURL,
-		RoleID:   userRole.ID,
-		IsActive: true,
-	}
-	if err := s.userRepo.Create(user); err != nil {
-		return nil, fmt.Errorf("create oauth user: %w", err)
-	}
-
-	// Reload user with role preloaded
-	user, err = s.userRepo.FindByID(user.ID)
+	user, err := s.ProvisionExternalUser(ExternalUserParams{
+		Provider:    provider,
+		ExternalID:  externalID,
+		Email:       externalEmail,
+		DisplayName: externalName,
+		AvatarURL:   avatarURL,
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	// Create connection
-	newConn := &model.UserConnection{
-		UserID:        user.ID,
-		Provider:      provider,
-		ExternalID:    externalID,
-		ExternalName:  externalName,
-		ExternalEmail: externalEmail,
-		AvatarURL:     avatarURL,
-	}
-	if err := s.connRepo.Create(newConn); err != nil {
-		return nil, fmt.Errorf("create connection: %w", err)
-	}
-
+	s.enforceConcurrentLimit(user.ID)
 	return s.GenerateTokenPair(user, ip, ua)
 }
 

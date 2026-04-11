@@ -69,49 +69,35 @@ func (r *LicenseRepo) List(params LicenseListParams) ([]LicenseListItem, int64, 
 		params.PageSize = 20
 	}
 
-	query := r.db.Model(&License{}).
-		Select("license_licenses.*, "+
-			"license_products.name as product_name, "+
-			"license_licensees.name as licensee_name").
+	base := r.db.Model(&License{}).
 		Joins("LEFT JOIN license_products ON license_products.id = license_licenses.product_id AND license_products.deleted_at IS NULL").
 		Joins("LEFT JOIN license_licensees ON license_licensees.id = license_licenses.licensee_id AND license_licensees.deleted_at IS NULL")
 
 	if params.ProductID > 0 {
-		query = query.Where("license_licenses.product_id = ?", params.ProductID)
+		base = base.Where("license_licenses.product_id = ?", params.ProductID)
 	}
 	if params.LicenseeID > 0 {
-		query = query.Where("license_licenses.licensee_id = ?", params.LicenseeID)
+		base = base.Where("license_licenses.licensee_id = ?", params.LicenseeID)
 	}
 	if params.Status != "" {
-		query = query.Where("license_licenses.status = ?", params.Status)
+		base = base.Where("license_licenses.status = ?", params.Status)
 	}
 	if params.Keyword != "" {
 		like := "%" + params.Keyword + "%"
-		query = query.Where("(license_licenses.plan_name LIKE ? OR license_licenses.registration_code LIKE ?)", like, like)
+		base = base.Where("(license_licenses.plan_name LIKE ? OR license_licenses.registration_code LIKE ?)", like, like)
 	}
 
 	var total int64
-	countQuery := r.db.Model(&License{})
-	if params.ProductID > 0 {
-		countQuery = countQuery.Where("product_id = ?", params.ProductID)
-	}
-	if params.LicenseeID > 0 {
-		countQuery = countQuery.Where("licensee_id = ?", params.LicenseeID)
-	}
-	if params.Status != "" {
-		countQuery = countQuery.Where("status = ?", params.Status)
-	}
-	if params.Keyword != "" {
-		like := "%" + params.Keyword + "%"
-		countQuery = countQuery.Where("(plan_name LIKE ? OR registration_code LIKE ?)", like, like)
-	}
-	if err := countQuery.Count(&total).Error; err != nil {
+	if err := base.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
 	var items []LicenseListItem
 	offset := (params.Page - 1) * params.PageSize
-	if err := query.Offset(offset).Limit(params.PageSize).
+	if err := base.Select("license_licenses.*, "+
+		"license_products.name as product_name, "+
+		"license_licensees.name as licensee_name").
+		Offset(offset).Limit(params.PageSize).
 		Order("license_licenses.created_at DESC").
 		Find(&items).Error; err != nil {
 		return nil, 0, err

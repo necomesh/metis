@@ -55,8 +55,6 @@ func New(i do.Injector) (*Handler, error) {
 	captchaSvc := do.MustInvoke[*service.CaptchaService](i)
 	tfSvc := do.MustInvoke[*service.TwoFactorService](i)
 	identitySvc := do.MustInvoke[*service.IdentitySourceService](i)
-	userRepo := do.MustInvoke[*repository.UserRepo](i)
-	roleRepo := do.MustInvoke[*repository.RoleRepo](i)
 	jwtSecret := do.MustInvoke[[]byte](i)
 
 	return &Handler{
@@ -88,9 +86,6 @@ func New(i do.Injector) (*Handler, error) {
 		sso: &SSOHandler{
 			svc:      identitySvc,
 			authSvc:  authSvc,
-			userRepo: userRepo,
-			connRepo: connRepo,
-			roleRepo: roleRepo,
 			stateMgr: identity.NewSSOStateManager(),
 		},
 	}, nil

@@ -23,6 +23,20 @@ var (
 	ErrSourceNotFound  = errors.New("error.identity.not_found")
 )
 
+// ExternalAuthResult contains the external identity info from a successful
+// external authentication (e.g. LDAP). It is returned to the caller so that
+// JIT provisioning can be handled by AuthService.ProvisionExternalUser.
+type ExternalAuthResult struct {
+	Provider         string // e.g. "ldap_3"
+	ExternalID       string // e.g. DN for LDAP
+	Email            string
+	DisplayName      string
+	AvatarURL        string
+	Username         string
+	DefaultRoleID    uint
+	ConflictStrategy string
+}
+
 // DomainCheckResult is the result of checking an email domain against identity sources.
 type DomainCheckResult struct {
 	SourceID uint   `json:"id"`
@@ -32,20 +46,14 @@ type DomainCheckResult struct {
 }
 
 type IdentitySourceService struct {
-	repo     *repository.IdentitySourceRepo
-	db       *database.DB
-	userRepo *repository.UserRepo
-	connRepo *repository.UserConnectionRepo
-	roleRepo *repository.RoleRepo
+	repo *repository.IdentitySourceRepo
+	db   *database.DB
 }
 
 func NewIdentitySource(i do.Injector) (*IdentitySourceService, error) {
 	return &IdentitySourceService{
-		repo:     do.MustInvoke[*repository.IdentitySourceRepo](i),
-		db:       do.MustInvoke[*database.DB](i),
-		userRepo: do.MustInvoke[*repository.UserRepo](i),
-		connRepo: do.MustInvoke[*repository.UserConnectionRepo](i),
-		roleRepo: do.MustInvoke[*repository.RoleRepo](i),
+		repo: do.MustInvoke[*repository.IdentitySourceRepo](i),
+		db:   do.MustInvoke[*database.DB](i),
 	}, nil
 }
 
@@ -302,6 +310,9 @@ func (s *IdentitySourceService) encryptConfigPreserving(sourceType string, raw j
 func (s *IdentitySourceService) GetDecryptedConfig(id uint) (*model.IdentitySource, any, error) {
 	source, err := s.repo.FindByID(id)
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil, ErrSourceNotFound
+		}
 		return nil, nil, err
 	}
 
@@ -349,8 +360,8 @@ func (s *IdentitySourceService) FindByDomain(domain string) (*model.IdentitySour
 // ---------------------------------------------------------------------------
 
 // AuthenticateByPassword tries LDAP bind authentication for the given credentials.
-// Called by AuthService when local password check fails.
-func (s *IdentitySourceService) AuthenticateByPassword(username, password string) (*model.User, error) {
+// Returns an ExternalAuthResult that the caller can pass to AuthService.ProvisionExternalUser.
+func (s *IdentitySourceService) AuthenticateByPassword(username, password string) (*ExternalAuthResult, error) {
 	sources, err := s.repo.List()
 	if err != nil {
 		return nil, err
@@ -383,13 +394,21 @@ func (s *IdentitySourceService) AuthenticateByPassword(username, password string
 		}
 
 		providerName := fmt.Sprintf("ldap_%d", source.ID)
-		user, err := s.jitProvisionLDAP(&source, providerName, result)
-		if err != nil {
-			slog.Error("identity: LDAP JIT provision failed", "sourceId", source.ID, "error", err)
-			continue
+		preferredUsername := result.Username
+		if preferredUsername == "" {
+			preferredUsername = fmt.Sprintf("%s_%s", providerName, result.DN)
 		}
 
-		return user, nil
+		return &ExternalAuthResult{
+			Provider:         providerName,
+			ExternalID:       result.DN,
+			Email:            result.Email,
+			DisplayName:      result.DisplayName,
+			AvatarURL:        result.Avatar,
+			Username:         preferredUsername,
+			DefaultRoleID:    source.DefaultRoleID,
+			ConflictStrategy: source.ConflictStrategy,
+		}, nil
 	}
 
 	return nil, errors.New("error.identity.ldap_auth_failed")
@@ -427,98 +446,6 @@ func (s *IdentitySourceService) IsForcedSSO(email string) bool {
 		return false
 	}
 	return source.ForceSso
-}
-
-// jitProvisionLDAP creates or updates a local user from LDAP auth result.
-func (s *IdentitySourceService) jitProvisionLDAP(source *model.IdentitySource, providerName string, result *identity.LDAPAuthResult) (*model.User, error) {
-	conn, err := s.connRepo.FindByProviderAndExternalID(providerName, result.DN)
-	if err == nil {
-		user, err := s.userRepo.FindByID(conn.UserID)
-		if err != nil {
-			return nil, err
-		}
-
-		changed := false
-		if conn.ExternalName != result.DisplayName {
-			conn.ExternalName = result.DisplayName
-			changed = true
-		}
-		if conn.ExternalEmail != result.Email {
-			conn.ExternalEmail = result.Email
-			changed = true
-		}
-		if changed {
-			_ = s.connRepo.Update(conn)
-		}
-		return user, nil
-	}
-
-	// New user — check email conflict
-	if result.Email != "" {
-		existing, err := s.userRepo.FindByEmail(result.Email)
-		if err == nil && existing != nil {
-			if source.ConflictStrategy == "link" {
-				newConn := &model.UserConnection{
-					UserID:        existing.ID,
-					Provider:      providerName,
-					ExternalID:    result.DN,
-					ExternalName:  result.DisplayName,
-					ExternalEmail: result.Email,
-				}
-				if err := s.connRepo.Create(newConn); err != nil {
-					return nil, fmt.Errorf("create connection: %w", err)
-				}
-				return existing, nil
-			}
-			return nil, ErrEmailConflict
-		}
-	}
-
-	roleID := source.DefaultRoleID
-	if roleID == 0 {
-		role, err := s.roleRepo.FindByCode(model.RoleUser)
-		if err != nil {
-			return nil, fmt.Errorf("find default role: %w", err)
-		}
-		roleID = role.ID
-	}
-
-	username := result.Username
-	if username == "" {
-		username = fmt.Sprintf("%s_%s", providerName, result.DN)
-	}
-	if _, err := s.userRepo.FindByUsername(username); err == nil {
-		username = fmt.Sprintf("%s_%s", providerName, result.DN)
-	}
-
-	user := &model.User{
-		Username: username,
-		Email:    result.Email,
-		Avatar:   result.Avatar,
-		RoleID:   roleID,
-		IsActive: true,
-	}
-	if err := s.userRepo.Create(user); err != nil {
-		return nil, fmt.Errorf("create user: %w", err)
-	}
-
-	user, err = s.userRepo.FindByID(user.ID)
-	if err != nil {
-		return nil, err
-	}
-
-	newConn := &model.UserConnection{
-		UserID:        user.ID,
-		Provider:      providerName,
-		ExternalID:    result.DN,
-		ExternalName:  result.DisplayName,
-		ExternalEmail: result.Email,
-	}
-	if err := s.connRepo.Create(newConn); err != nil {
-		return nil, fmt.Errorf("create connection: %w", err)
-	}
-
-	return user, nil
 }
 
 // ExtractDomain extracts the domain part from an email address.

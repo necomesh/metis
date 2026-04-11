@@ -6,14 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 
 	"metis/internal/model"
 	"metis/internal/pkg/identity"
-	"metis/internal/repository"
 	"metis/internal/service"
 )
 
@@ -21,9 +18,6 @@ import (
 type SSOHandler struct {
 	svc      *service.IdentitySourceService
 	authSvc  *service.AuthService
-	userRepo *repository.UserRepo
-	connRepo *repository.UserConnectionRepo
-	roleRepo *repository.RoleRepo
 	stateMgr *identity.SSOStateManager
 }
 
@@ -67,7 +61,7 @@ func (h *SSOHandler) InitiateSSO(c *gin.Context) {
 
 	source, cfg, err := h.svc.GetDecryptedConfig(id)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, service.ErrSourceNotFound) {
 			Fail(c, http.StatusNotFound, "identity source not found")
 		} else {
 			Fail(c, http.StatusInternalServerError, err.Error())
@@ -187,7 +181,16 @@ func (h *SSOHandler) SSOCallback(c *gin.Context) {
 	}
 
 	providerName := fmt.Sprintf("oidc_%d", source.ID)
-	user, err := h.jitProvision(source, providerName, claims.Sub, claims.Email, claims.Name, claims.Picture)
+	user, err := h.authSvc.ProvisionExternalUser(service.ExternalUserParams{
+		Provider:         providerName,
+		ExternalID:       claims.Sub,
+		Email:            claims.Email,
+		DisplayName:      claims.Name,
+		AvatarURL:        claims.Picture,
+		DefaultRoleID:    source.DefaultRoleID,
+		ConflictStrategy: source.ConflictStrategy,
+		PreferredUsername: claims.Name,
+	})
 	if err != nil {
 		if errors.Is(err, service.ErrEmailConflict) {
 			Fail(c, http.StatusConflict, err.Error())
@@ -207,112 +210,4 @@ func (h *SSOHandler) SSOCallback(c *gin.Context) {
 	}
 
 	OK(c, tokenPair)
-}
-
-// jitProvision handles JIT user provisioning for SSO flows.
-func (h *SSOHandler) jitProvision(source *model.IdentitySource, providerName, externalID, email, name, avatar string) (*model.User, error) {
-	conn, err := h.connRepo.FindByProviderAndExternalID(providerName, externalID)
-	if err == nil {
-		user, err := h.userRepo.FindByID(conn.UserID)
-		if err != nil {
-			return nil, err
-		}
-		if !user.IsActive {
-			return nil, service.ErrAccountDisabled
-		}
-
-		changed := false
-		if conn.ExternalName != name {
-			conn.ExternalName = name
-			changed = true
-		}
-		if conn.ExternalEmail != email {
-			conn.ExternalEmail = email
-			changed = true
-		}
-		if conn.AvatarURL != avatar {
-			conn.AvatarURL = avatar
-			changed = true
-		}
-		if changed {
-			_ = h.connRepo.Update(conn)
-		}
-		return user, nil
-	}
-
-	if email != "" {
-		existing, err := h.userRepo.FindByEmail(email)
-		if err == nil && existing != nil {
-			if source.ConflictStrategy == "link" {
-				newConn := &model.UserConnection{
-					UserID:        existing.ID,
-					Provider:      providerName,
-					ExternalID:    externalID,
-					ExternalName:  name,
-					ExternalEmail: email,
-					AvatarURL:     avatar,
-				}
-				if err := h.connRepo.Create(newConn); err != nil {
-					return nil, fmt.Errorf("create connection: %w", err)
-				}
-				return existing, nil
-			}
-			return nil, service.ErrEmailConflict
-		}
-	}
-
-	roleID := source.DefaultRoleID
-	if roleID == 0 {
-		role, err := h.roleRepo.FindByCode(model.RoleUser)
-		if err != nil {
-			return nil, fmt.Errorf("find default role: %w", err)
-		}
-		roleID = role.ID
-	}
-
-	username := fmt.Sprintf("%s_%s", providerName, externalID)
-	if name != "" {
-		username = name
-	}
-	if _, err := h.userRepo.FindByUsername(username); err == nil {
-		username = fmt.Sprintf("%s_%s", providerName, externalID)
-	}
-
-	user := &model.User{
-		Username: username,
-		Email:    email,
-		Avatar:   avatar,
-		RoleID:   roleID,
-		IsActive: true,
-	}
-	if err := h.userRepo.Create(user); err != nil {
-		return nil, fmt.Errorf("create user: %w", err)
-	}
-
-	user, err = h.userRepo.FindByID(user.ID)
-	if err != nil {
-		return nil, err
-	}
-
-	newConn := &model.UserConnection{
-		UserID:        user.ID,
-		Provider:      providerName,
-		ExternalID:    externalID,
-		ExternalName:  name,
-		ExternalEmail: email,
-		AvatarURL:     avatar,
-	}
-	if err := h.connRepo.Create(newConn); err != nil {
-		return nil, fmt.Errorf("create connection: %w", err)
-	}
-
-	return user, nil
-}
-
-func extractDomain(email string) string {
-	at := strings.LastIndex(email, "@")
-	if at < 0 || at == len(email)-1 {
-		return ""
-	}
-	return strings.ToLower(email[at+1:])
 }

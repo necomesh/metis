@@ -1,4 +1,5 @@
 import { create } from "zustand"
+import { TOKEN_KEY, REFRESH_KEY } from "@/lib/constants"
 import { useMenuStore } from "./menu"
 
 export interface RoleInfo {
@@ -66,9 +67,6 @@ interface AuthState {
   logout: () => Promise<void>
   refresh: () => Promise<boolean>
 }
-
-const TOKEN_KEY = "metis_access_token"
-const REFRESH_KEY = "metis_refresh_token"
 
 export const useAuthStore = create<AuthState>((set, get) => ({
   accessToken: null,

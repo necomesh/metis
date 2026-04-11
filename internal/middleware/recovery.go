@@ -13,7 +13,8 @@ func Recovery() gin.HandlerFunc {
 			if err := recover(); err != nil {
 				slog.Error("panic recovered", "error", err)
 				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-					"error": "internal server error",
+					"code":    -1,
+					"message": "internal server error",
 				})
 			}
 		}()

@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"log/slog"
 
 	"github.com/samber/do/v2"
 	"gorm.io/gorm"
@@ -122,8 +123,12 @@ func (s *RoleService) Update(id uint, params UpdateRoleParams) (*model.Role, err
 		for _, p := range policies {
 			newPolicies = append(newPolicies, []string{role.Code, p[1], p[2]})
 		}
-		_ = s.casbinSvc.SetPoliciesForRole(oldCode, nil)
-		_ = s.casbinSvc.SetPoliciesForRole(role.Code, newPolicies)
+		if err := s.casbinSvc.SetPoliciesForRole(oldCode, nil); err != nil {
+			slog.Error("failed to remove old casbin policies", "role", oldCode, "error", err)
+		}
+		if err := s.casbinSvc.SetPoliciesForRole(role.Code, newPolicies); err != nil {
+			slog.Error("failed to set new casbin policies", "role", role.Code, "error", err)
+		}
 	}
 
 	return role, nil
@@ -155,7 +160,9 @@ func (s *RoleService) Delete(id uint) error {
 	}
 
 	// Clean up Casbin policies
-	_ = s.casbinSvc.SetPoliciesForRole(role.Code, nil)
+	if err := s.casbinSvc.SetPoliciesForRole(role.Code, nil); err != nil {
+		slog.Error("failed to clean up casbin policies on role delete", "role", role.Code, "error", err)
+	}
 
 	return nil
 }

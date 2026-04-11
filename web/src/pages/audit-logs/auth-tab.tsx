@@ -1,8 +1,7 @@
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { useTranslation } from "react-i18next"
-import { useQuery } from "@tanstack/react-query"
 import { Search, ShieldAlert } from "lucide-react"
-import { api, type PaginatedResponse } from "@/lib/api"
+import { useListPage } from "@/hooks/use-list-page"
 import { parseUserAgent } from "@/lib/ua-parser"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -53,39 +52,33 @@ const actionVariants: Record<string, "default" | "secondary" | "destructive" | "
 
 export function AuthTab() {
   const { t } = useTranslation(["audit", "common"])
-  const [keyword, setKeyword] = useState("")
-  const [searchKeyword, setSearchKeyword] = useState("")
   const [action, setAction] = useState("")
   const [dateFrom, setDateFrom] = useState("")
   const [dateTo, setDateTo] = useState("")
-  const [page, setPage] = useState(1)
-  const pageSize = 20
 
-  const { data, isLoading } = useQuery({
-    queryKey: ["audit-logs", "auth", searchKeyword, action, dateFrom, dateTo, page],
-    queryFn: () => {
-      const params = new URLSearchParams({
-        category: "auth",
-        page: String(page),
-        pageSize: String(pageSize),
-      })
-      if (searchKeyword) params.set("keyword", searchKeyword)
-      if (action) params.set("action", action)
-      if (dateFrom) params.set("dateFrom", dateFrom)
-      if (dateTo) params.set("dateTo", dateTo)
-      return api.get<PaginatedResponse<AuditLog>>(`/api/v1/audit-logs?${params}`)
-    },
+  const extraParams = useMemo(() => {
+    const params: Record<string, string> = { category: "auth" }
+    if (action) params.action = action
+    if (dateFrom) params.dateFrom = dateFrom
+    if (dateTo) params.dateTo = dateTo
+    return params
+  }, [action, dateFrom, dateTo])
+
+  const {
+    keyword,
+    setKeyword,
+    page,
+    setPage,
+    items,
+    total,
+    totalPages,
+    isLoading,
+    handleSearch,
+  } = useListPage<AuditLog>({
+    queryKey: "audit-logs-auth",
+    endpoint: "/api/v1/audit-logs",
+    extraParams,
   })
-
-  const items = data?.items ?? []
-  const total = data?.total ?? 0
-  const totalPages = Math.ceil(total / pageSize)
-
-  function handleSearch(e: React.FormEvent) {
-    e.preventDefault()
-    setSearchKeyword(keyword)
-    setPage(1)
-  }
 
   return (
     <div className="space-y-4 pt-4">

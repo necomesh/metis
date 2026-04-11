@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/samber/do/v2"
@@ -199,7 +200,8 @@ func (s *UserService) Activate(id uint) (*model.User, error) {
 	if err := s.userRepo.Update(user); err != nil {
 		return nil, err
 	}
-	return user, nil
+	// Reload to get updated Role association
+	return s.userRepo.FindByID(user.ID)
 }
 
 func (s *UserService) UnlockUser(id uint) error {
@@ -230,8 +232,11 @@ func (s *UserService) Deactivate(id, currentUserID uint) (*model.User, error) {
 		return nil, err
 	}
 
-	_ = s.refreshTokenRepo.RevokeAllForUser(id)
-	return user, nil
+	if err := s.refreshTokenRepo.RevokeAllForUser(id); err != nil {
+		slog.Error("failed to revoke tokens on user deactivation", "userId", id, "error", err)
+	}
+	// Reload to get updated Role association
+	return s.userRepo.FindByID(id)
 }
 
 // UpdateProfile updates only profile fields (locale, timezone) for self-service.

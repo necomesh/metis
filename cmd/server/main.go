@@ -15,13 +15,11 @@ import (
 	"github.com/samber/do/v2"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
-	casbinpkg "metis/internal/casbin"
 	"metis/internal/config"
 	"metis/internal/database"
 	"metis/internal/handler"
 	"metis/internal/locales"
 	"metis/internal/middleware"
-	"metis/internal/pkg/oauth"
 	"metis/internal/pkg/token"
 	"metis/internal/repository"
 	"metis/internal/scheduler"
@@ -77,7 +75,7 @@ func main() {
 		// Token blacklist (needed for hot switch)
 		do.ProvideValue(injector, token.NewBlacklist())
 
-		installHandler := handler.NewInstall(db, injector, r)
+		installHandler := handler.NewInstall(db, injector, r, overrideKernelProviders)
 		installHandler.RegisterInstallRoutes(r)
 		handler.RegisterStatic(r)
 
@@ -105,36 +103,7 @@ func main() {
 		do.ProvideValue(injector, token.NewBlacklist())
 
 		// Register all kernel providers
-		do.Provide(injector, casbinpkg.NewEnforcer)
-		do.Provide(injector, repository.NewUser)
-		do.Provide(injector, repository.NewRefreshToken)
-		do.Provide(injector, repository.NewRole)
-		do.Provide(injector, repository.NewMenu)
-		do.Provide(injector, repository.NewNotification)
-		do.Provide(injector, repository.NewMessageChannel)
-		do.Provide(injector, repository.NewAuthProvider)
-		do.Provide(injector, repository.NewUserConnection)
-		do.Provide(injector, repository.NewAuditLog)
-		do.Provide(injector, repository.NewTwoFactorSecret)
-		do.Provide(injector, service.NewCasbin)
-		do.Provide(injector, service.NewRole)
-		do.Provide(injector, service.NewMenu)
-		do.Provide(injector, service.NewAuth)
-		do.Provide(injector, service.NewUser)
-		do.Provide(injector, service.NewNotification)
-		do.Provide(injector, service.NewMessageChannel)
-		do.Provide(injector, service.NewSession)
-		do.Provide(injector, service.NewSettings)
-		do.Provide(injector, service.NewAuthProvider)
-		do.Provide(injector, service.NewUserConnection)
-		do.Provide(injector, service.NewAuditLog)
-		do.Provide(injector, service.NewCaptcha)
-		do.Provide(injector, service.NewTwoFactor)
-		do.Provide(injector, repository.NewIdentitySource)
-		do.Provide(injector, service.NewIdentitySource)
-		do.ProvideValue(injector, oauth.NewStateManager())
-		do.Provide(injector, handler.New)
-		do.Provide(injector, scheduler.New)
+		registerKernelProviders(injector)
 
 		// Resolve DB and enforcer
 		enforcer := do.MustInvoke[*casbin.Enforcer](injector)

@@ -214,17 +214,6 @@ func (h *AuthHandler) GetMe(c *gin.Context) {
 
 	// Attach connections
 	conns, _ := h.auth.GetUserConnections(userID)
-	if conns != nil {
-		connResps := make([]any, 0, len(conns))
-		for _, c := range conns {
-			connResps = append(connResps, gin.H{
-				"provider":     c.Provider,
-				"externalName": c.ExternalName,
-			})
-		}
-		resp.Connections = nil // clear the default
-		_ = connResps         // we'll use the gin.H approach below
-	}
 
 	permissions := h.menuSvc.GetUserPermissions(user.Role.Code)
 
@@ -477,13 +466,11 @@ func (h *AuthHandler) InitiateBind(c *gin.Context) {
 	}
 
 	// Check if already bound
-	if _, err := h.connSvc.ListByUser(userID); err == nil {
-		conns, _ := h.connSvc.ListByUser(userID)
-		for _, conn := range conns {
-			if conn.Provider == providerKey {
-				Fail(c, http.StatusBadRequest, "already bound to this provider")
-				return
-			}
+	conns, _ := h.connSvc.ListByUser(userID)
+	for _, conn := range conns {
+		if conn.Provider == providerKey {
+			Fail(c, http.StatusBadRequest, "already bound to this provider")
+			return
 		}
 	}
 

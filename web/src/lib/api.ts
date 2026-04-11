@@ -41,22 +41,24 @@ let refreshQueue: Array<{
   reject: (err: Error) => void;
 }> = [];
 
+import { TOKEN_KEY, REFRESH_KEY } from './constants';
+
 function getAccessToken(): string | null {
-  return localStorage.getItem('metis_access_token');
+  return localStorage.getItem(TOKEN_KEY);
 }
 
 function getRefreshToken(): string | null {
-  return localStorage.getItem('metis_refresh_token');
+  return localStorage.getItem(REFRESH_KEY);
 }
 
 function setTokens(accessToken: string, refreshToken: string) {
-  localStorage.setItem('metis_access_token', accessToken);
-  localStorage.setItem('metis_refresh_token', refreshToken);
+  localStorage.setItem(TOKEN_KEY, accessToken);
+  localStorage.setItem(REFRESH_KEY, refreshToken);
 }
 
 function clearTokens() {
-  localStorage.removeItem('metis_access_token');
-  localStorage.removeItem('metis_refresh_token');
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(REFRESH_KEY);
 }
 
 async function tryRefresh(): Promise<string> {
@@ -154,9 +156,7 @@ async function authorizedFetch(
   return res;
 }
 
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await authorizedFetch(url, init);
-
+async function handleErrorResponse(res: Response): Promise<never> {
   // Password expired — redirect to change password
   if (res.status === 409) {
     let message = '密码已过期，请修改密码';
@@ -172,15 +172,21 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     throw new ApiError(message, 409, -1);
   }
 
+  let message = res.statusText;
+  try {
+    const body = (await res.json()) as ApiResponse<unknown>;
+    message = body.message || message;
+  } catch {
+    // ignore parse errors
+  }
+  throw new ApiError(message, res.status, -1);
+}
+
+async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await authorizedFetch(url, init);
+
   if (!res.ok) {
-    let message = res.statusText;
-    try {
-      const body = (await res.json()) as ApiResponse<unknown>;
-      message = body.message || message;
-    } catch {
-      // ignore parse errors
-    }
-    throw new ApiError(message, res.status, -1);
+    await handleErrorResponse(res);
   }
 
   const body = (await res.json()) as ApiResponse<T>;
@@ -194,29 +200,8 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 async function download(url: string): Promise<Blob> {
   const res = await authorizedFetch(url, { method: 'GET' });
 
-  if (res.status === 409) {
-    let message = '密码已过期，请修改密码';
-    try {
-      const body = (await res.json()) as ApiResponse<unknown>;
-      message = body.message || message;
-    } catch {
-      // ignore
-    }
-    window.dispatchEvent(
-      new CustomEvent('password-expired', { detail: { message } }),
-    );
-    throw new ApiError(message, 409, -1);
-  }
-
   if (!res.ok) {
-    let message = res.statusText;
-    try {
-      const body = (await res.json()) as ApiResponse<unknown>;
-      message = body.message || message;
-    } catch {
-      // ignore parse errors
-    }
-    throw new ApiError(message, res.status, -1);
+    await handleErrorResponse(res);
   }
 
   return res.blob();
