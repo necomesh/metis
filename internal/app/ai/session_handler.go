@@ -1,11 +1,14 @@
 package ai
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/samber/do/v2"
@@ -126,7 +129,8 @@ func (h *SessionHandler) Delete(c *gin.Context) {
 }
 
 type sendMessageReq struct {
-	Content string `json:"content" binding:"required"`
+	Content string   `json:"content" binding:"required"`
+	Images  []string `json:"images"` // base64 encoded images or URLs
 }
 
 func (h *SessionHandler) SendMessage(c *gin.Context) {
@@ -147,8 +151,13 @@ func (h *SessionHandler) SendMessage(c *gin.Context) {
 		return
 	}
 
-	// Store user message
-	msg, err := h.svc.StoreMessage(session.ID, MessageRoleUser, req.Content, nil, 0)
+	// Store user message with images metadata if provided
+	var metadata json.RawMessage
+	if len(req.Images) > 0 {
+		meta := map[string]interface{}{"images": req.Images}
+		metadata, _ = json.Marshal(meta)
+	}
+	msg, err := h.svc.StoreMessage(session.ID, MessageRoleUser, req.Content, metadata, 0)
 	if err != nil {
 		handler.Fail(c, http.StatusInternalServerError, err.Error())
 		return
@@ -305,4 +314,61 @@ func (h *SessionHandler) Continue(c *gin.Context) {
 	}
 
 	handler.OK(c, nil)
+}
+
+const maxImageSize = 5 * 1024 * 1024 // 5MB
+
+func (h *SessionHandler) UploadImage(c *gin.Context) {
+	sid, _ := strconv.Atoi(c.Param("sid"))
+
+	// Verify session exists
+	_, err := h.svc.Get(uint(sid))
+	if err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			handler.Fail(c, http.StatusNotFound, err.Error())
+			return
+		}
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		handler.Fail(c, http.StatusBadRequest, "file is required")
+		return
+	}
+
+	// Validate file size
+	if file.Size > maxImageSize {
+		handler.Fail(c, http.StatusBadRequest, "image exceeds 5MB limit")
+		return
+	}
+
+	// Validate file type
+	contentType := file.Header.Get("Content-Type")
+	if !strings.HasPrefix(contentType, "image/") {
+		handler.Fail(c, http.StatusBadRequest, "invalid file type, must be an image")
+		return
+	}
+
+	// Open and read file
+	f, err := file.Open()
+	if err != nil {
+		handler.Fail(c, http.StatusInternalServerError, "failed to read file")
+		return
+	}
+	defer f.Close()
+
+	data, err := io.ReadAll(f)
+	if err != nil {
+		handler.Fail(c, http.StatusInternalServerError, "failed to read file")
+		return
+	}
+
+	// Convert to base64 data URL
+	base64Data := base64.StdEncoding.EncodeToString(data)
+	dataURL := fmt.Sprintf("data:%s;base64,%s", contentType, base64Data)
+
+	// Store image reference in session storage (or return directly for client use)
+	handler.OK(c, gin.H{"url": dataURL})
 }

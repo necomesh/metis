@@ -124,7 +124,7 @@ function buildHeaders(init?: RequestInit): Record<string, string> {
   const hasContentType = Object.keys(headers).some(
     (k) => k.toLowerCase() === 'content-type',
   );
-  if (init?.body !== undefined && !hasContentType) {
+  if (init?.body !== undefined && !hasContentType && !(init.body instanceof FormData)) {
     headers['Content-Type'] = 'application/json';
   }
 
@@ -428,8 +428,15 @@ export const sessionApi = {
   update: (sid: number, data: { title?: string; pinned?: boolean }) =>
     api.put<AgentSession>(`/api/v1/ai/sessions/${sid}`, data),
 
-  sendMessage: (sid: number, content: string) =>
-    api.post<SessionMessage>(`/api/v1/ai/sessions/${sid}/messages`, { content }),
+  sendMessage: (sid: number, content: string, images?: string[]) =>
+    api.post<SessionMessage>(`/api/v1/ai/sessions/${sid}/messages`, { content, images }),
+
+  uploadMessageImage: (sid: number, file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    // 不设置 Content-Type，让浏览器自动设置（包含 boundary）
+    return api.post<{ url: string }>(`/api/v1/ai/sessions/${sid}/images`, formData);
+  },
 
   cancel: (sid: number) => api.post<null>(`/api/v1/ai/sessions/${sid}/cancel`),
 

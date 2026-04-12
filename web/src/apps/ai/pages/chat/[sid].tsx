@@ -2,7 +2,7 @@ import { useCallback, useMemo, useRef, useState, useEffect } from "react"
 import { useParams, useNavigate } from "react-router"
 import { useTranslation } from "react-i18next"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { Square, Trash2, Brain, PanelLeft, PanelLeftClose, Paperclip, AlertTriangle, RotateCcw, Play } from "lucide-react"
+import { Square, Trash2, Brain, PanelLeft, PanelLeftClose, Paperclip, AlertTriangle, RotateCcw, Play, X } from "lucide-react"
 import { sessionApi, type SessionMessage as SessionMsg } from "@/lib/api"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -43,6 +43,12 @@ const INITIAL_STREAM_STATE: StreamState = {
   doneMetrics: null,
   cancelled: false,
   error: null,
+}
+
+interface PendingImage {
+  file: File
+  preview: string
+  uploading?: boolean
 }
 
 export function Component() {
@@ -95,6 +101,7 @@ export function Component() {
     const saved = localStorage.getItem(SIDEBAR_COLLAPSED_KEY)
     return saved ? saved === "true" : false
   })
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -179,11 +186,27 @@ export function Component() {
     onError: handleStreamError,
   })
 
+  const uploadImageMutation = useMutation({
+    mutationFn: (file: File) => sessionApi.uploadMessageImage(sessionId, file),
+    onError: (err) => toast.error(err.message),
+  })
+
   const sendMutation = useMutation({
-    mutationFn: (content: string) => sessionApi.sendMessage(sessionId, content),
+    mutationFn: async (content: string) => {
+      // Upload pending images first
+      const imageUrls: string[] = []
+      for (const img of pendingImages) {
+        if (!img.uploading) {
+          const res = await uploadImageMutation.mutateAsync(img.file)
+          imageUrls.push(res.url)
+        }
+      }
+      return sessionApi.sendMessage(sessionId, content, imageUrls)
+    },
     onSuccess: (msg) => {
       setPendingMessages(prev => [...prev, msg])
       setInput("")
+      setPendingImages([]) // Clear pending images after sending
       setStream(INITIAL_STREAM_STATE)
       connect(sessionId)
       scrollToBottom()
@@ -250,7 +273,8 @@ export function Component() {
 
   function handleSend(content?: string) {
     const text = (content ?? input).trim()
-    if (!text || isStreaming || sendMutation.isPending) return
+    // Allow sending if there's text or pending images
+    if ((!text && pendingImages.length === 0) || isStreaming || sendMutation.isPending) return
     sendMutation.mutate(text)
   }
 
@@ -259,6 +283,43 @@ export function Component() {
       e.preventDefault()
       handleSend()
     }
+  }
+
+  function handlePaste(e: React.ClipboardEvent) {
+    const items = e.clipboardData.items
+    const imageFiles: File[] = []
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      if (item.type.startsWith("image/")) {
+        const file = item.getAsFile()
+        if (file) {
+          imageFiles.push(file)
+        }
+      }
+    }
+
+    if (imageFiles.length > 0) {
+      e.preventDefault()
+      for (const file of imageFiles) {
+        const reader = new FileReader()
+        reader.onload = (event) => {
+          const preview = event.target?.result as string
+          setPendingImages(prev => [...prev, { file, preview }])
+        }
+        reader.readAsDataURL(file)
+      }
+    }
+  }
+
+  function removePendingImage(index: number) {
+    setPendingImages(prev => {
+      const newImages = [...prev]
+      // Revoke object URL if created (for memory cleanup)
+      // Note: data URLs don't need revocation, but blob URLs would
+      newImages.splice(index, 1)
+      return newImages
+    })
   }
 
   function handleRetry() {
@@ -467,11 +528,33 @@ export function Component() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
                 placeholder={t("ai:chat.inputPlaceholder")}
                 rows={1}
                 className="w-full min-h-[44px] max-h-[200px] resize-none bg-transparent px-4 pt-3 pb-1 text-base leading-relaxed placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
                 disabled={isStreaming}
               />
+              {/* Pending images preview */}
+              {pendingImages.length > 0 && (
+                <div className="flex gap-2 px-4 pb-2 overflow-x-auto">
+                  {pendingImages.map((img, idx) => (
+                    <div key={idx} className="relative group shrink-0">
+                      <img
+                        src={img.preview}
+                        alt={`Pending ${idx}`}
+                        className="h-16 w-16 object-cover rounded-md border"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removePendingImage(idx)}
+                        className="absolute -top-1.5 -right-1.5 h-5 w-5 rounded-full bg-destructive text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
               {/* Toolbar */}
               <div className="flex items-center justify-between px-3 pb-2">
                 <div className="flex items-center gap-1">
@@ -485,7 +568,7 @@ export function Component() {
                       size="icon"
                       className="h-8 w-8 rounded-full"
                       onClick={() => handleSend()}
-                      disabled={!input.trim() || sendMutation.isPending}
+                      disabled={(!input.trim() && pendingImages.length === 0) || sendMutation.isPending}
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
                         <path d="m22 2-7 20-4-9-9-4Z" />

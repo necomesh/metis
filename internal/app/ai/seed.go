@@ -416,6 +416,7 @@ func seedAI(db *gorm.DB, enforcer *casbin.Enforcer) error {
 		{"admin", "/api/v1/ai/sessions/:sid/messages", "POST"},
 		{"admin", "/api/v1/ai/sessions/:sid/stream", "GET"},
 		{"admin", "/api/v1/ai/sessions/:sid/cancel", "POST"},
+		{"admin", "/api/v1/ai/sessions/:sid/images", "POST"},
 	}
 
 	menuPerms := [][]string{

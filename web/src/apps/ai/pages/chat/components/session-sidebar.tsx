@@ -133,7 +133,19 @@ export function SessionSidebar({ agentId, currentSessionId, collapsed = false }:
       queryClient.invalidateQueries({ queryKey: ["ai-sessions"] })
       toast.success(t("ai:chat.sessionDeleted"))
       setDeleteTarget(null)
-      if (sid === currentSessionId) navigate("/ai/chat")
+      if (sid === currentSessionId) {
+        // 获取同 Agent 的其他会话（排除被删除的）
+        const currentData = queryClient.getQueryData<{ items: AgentSession[] }>(
+          ["ai-sessions", agentId]
+        )
+        const otherSession = currentData?.items.find(s => s.id !== sid)
+
+        if (otherSession) {
+          navigate(`/ai/chat/${otherSession.id}`)
+        } else {
+          navigate("/ai/chat")
+        }
+      }
     },
     onError: (err) => toast.error(err.message),
   })

@@ -201,6 +201,7 @@ func (a *AIApp) Routes(api *gin.RouterGroup) {
 		sessions.GET("/:sid/stream", sessionH.Stream)
 		sessions.POST("/:sid/cancel", sessionH.Cancel)
 		sessions.POST("/:sid/continue", sessionH.Continue)
+		sessions.POST("/:sid/images", sessionH.UploadImage)
 	}
 
 	memoryH := do.MustInvoke[*MemoryHandler](a.injector)
