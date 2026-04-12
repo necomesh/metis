@@ -146,7 +146,123 @@ func seedAI(db *gorm.DB, enforcer *casbin.Enforcer) error {
 		}
 	}
 
-	// 5. Builtin tools seed
+	// 5. Agent 管理菜单
+	var agentMenu model.Menu
+	if err := db.Where("permission = ?", "ai:agent:list").First(&agentMenu).Error; err != nil {
+		agentMenu = model.Menu{
+			ParentID:   &aiDir.ID,
+			Name:       "Agent",
+			Type:       model.MenuTypeMenu,
+			Path:       "/ai/agents",
+			Icon:       "Bot",
+			Permission: "ai:agent:list",
+			Sort:       3,
+		}
+		if err := db.Create(&agentMenu).Error; err != nil {
+			return err
+		}
+		slog.Info("seed: created menu", "name", agentMenu.Name, "permission", agentMenu.Permission)
+	}
+
+	agentButtons := []model.Menu{
+		{Name: "新增 Agent", Type: model.MenuTypeButton, Permission: "ai:agent:create", Sort: 0},
+		{Name: "编辑 Agent", Type: model.MenuTypeButton, Permission: "ai:agent:update", Sort: 1},
+		{Name: "删除 Agent", Type: model.MenuTypeButton, Permission: "ai:agent:delete", Sort: 2},
+	}
+	for _, btn := range agentButtons {
+		var existing model.Menu
+		if err := db.Where("permission = ?", btn.Permission).First(&existing).Error; err != nil {
+			btn.ParentID = &agentMenu.ID
+			if err := db.Create(&btn).Error; err != nil {
+				slog.Error("seed: failed to create button menu", "permission", btn.Permission, "error", err)
+				continue
+			}
+			slog.Info("seed: created menu", "name", btn.Name, "permission", btn.Permission)
+		}
+	}
+
+	// 6. 对话菜单
+	var chatMenu model.Menu
+	if err := db.Where("permission = ?", "ai:chat").First(&chatMenu).Error; err != nil {
+		chatMenu = model.Menu{
+			ParentID:   &aiDir.ID,
+			Name:       "对话",
+			Type:       model.MenuTypeMenu,
+			Path:       "/ai/chat",
+			Icon:       "MessageSquare",
+			Permission: "ai:chat",
+			Sort:       4,
+		}
+		if err := db.Create(&chatMenu).Error; err != nil {
+			return err
+		}
+		slog.Info("seed: created menu", "name", chatMenu.Name, "permission", chatMenu.Permission)
+	}
+
+	// 7. Agent templates seed
+	agentTemplates := []AgentTemplate{
+		{
+			Name:        "通用助手",
+			Description: "通用 AI 助手，可回答问题、调用工具完成任务",
+			Icon:        "Bot",
+			Type:        AgentTypeAssistant,
+			Config: json.RawMessage(`{
+				"strategy": "react",
+				"systemPrompt": "你是一个通用 AI 助手，能够回答各种问题并帮助用户完成任务。",
+				"temperature": 0.7,
+				"maxTokens": 4096,
+				"maxTurns": 10
+			}`),
+		},
+		{
+			Name:        "客服助手",
+			Description: "面向客户的智能客服，挂载知识库回答产品问题",
+			Icon:        "Headphones",
+			Type:        AgentTypeAssistant,
+			Config: json.RawMessage(`{
+				"strategy": "react",
+				"systemPrompt": "你是一个专业的客服助手。请根据知识库中的信息回答客户问题，保持友好、专业的态度。如果不确定答案，请坦诚告知。",
+				"temperature": 0.3,
+				"maxTokens": 2048,
+				"maxTurns": 5
+			}`),
+		},
+		{
+			Name:        "运维助手",
+			Description: "运维 AI 助手，帮助排查故障、分析日志、调用监控工具",
+			Icon:        "Terminal",
+			Type:        AgentTypeAssistant,
+			Config: json.RawMessage(`{
+				"strategy": "plan_and_execute",
+				"systemPrompt": "你是一个运维助手，擅长排查线上故障、分析日志、查看监控数据。先制定排查计划，再逐步执行。",
+				"temperature": 0.5,
+				"maxTokens": 4096,
+				"maxTurns": 15
+			}`),
+		},
+		{
+			Name:        "编程助手",
+			Description: "编程 AI 助手，在代码仓库中读写文件、执行命令",
+			Icon:        "Code",
+			Type:        AgentTypeCoding,
+			Config: json.RawMessage(`{
+				"runtime": "claude-code",
+				"execMode": "local"
+			}`),
+		},
+	}
+	for _, tmpl := range agentTemplates {
+		var existing AgentTemplate
+		if err := db.Where("name = ?", tmpl.Name).First(&existing).Error; err != nil {
+			if err := db.Create(&tmpl).Error; err != nil {
+				slog.Error("seed: failed to create agent template", "name", tmpl.Name, "error", err)
+				continue
+			}
+			slog.Info("seed: created agent template", "name", tmpl.Name)
+		}
+	}
+
+	// 8. Builtin tools seed
 	builtinTools := []Tool{
 		{
 			Toolkit:     "knowledge",
@@ -280,6 +396,24 @@ func seedAI(db *gorm.DB, enforcer *casbin.Enforcer) error {
 		{"admin", "/api/v1/ai/skills/:id", "PUT"},
 		{"admin", "/api/v1/ai/skills/:id/active", "PATCH"},
 		{"admin", "/api/v1/ai/skills/:id", "DELETE"},
+		// Agents
+		{"admin", "/api/v1/ai/agents", "GET"},
+		{"admin", "/api/v1/ai/agents", "POST"},
+		{"admin", "/api/v1/ai/agents/templates", "GET"},
+		{"admin", "/api/v1/ai/agents/:id", "GET"},
+		{"admin", "/api/v1/ai/agents/:id", "PUT"},
+		{"admin", "/api/v1/ai/agents/:id", "DELETE"},
+		{"admin", "/api/v1/ai/agents/:id/memories", "GET"},
+		{"admin", "/api/v1/ai/agents/:id/memories", "POST"},
+		{"admin", "/api/v1/ai/agents/:id/memories/:mid", "DELETE"},
+		// Sessions
+		{"admin", "/api/v1/ai/sessions", "GET"},
+		{"admin", "/api/v1/ai/sessions", "POST"},
+		{"admin", "/api/v1/ai/sessions/:sid", "GET"},
+		{"admin", "/api/v1/ai/sessions/:sid", "DELETE"},
+		{"admin", "/api/v1/ai/sessions/:sid/messages", "POST"},
+		{"admin", "/api/v1/ai/sessions/:sid/stream", "GET"},
+		{"admin", "/api/v1/ai/sessions/:sid/cancel", "POST"},
 	}
 
 	menuPerms := [][]string{
@@ -311,6 +445,12 @@ func seedAI(db *gorm.DB, enforcer *casbin.Enforcer) error {
 		{"admin", "ai:skill:create", "read"},
 		{"admin", "ai:skill:update", "read"},
 		{"admin", "ai:skill:delete", "read"},
+		// Agent
+		{"admin", "ai:agent:list", "read"},
+		{"admin", "ai:agent:create", "read"},
+		{"admin", "ai:agent:update", "read"},
+		{"admin", "ai:agent:delete", "read"},
+		{"admin", "ai:chat", "read"},
 	}
 
 	allPolicies := append(policies, menuPerms...)

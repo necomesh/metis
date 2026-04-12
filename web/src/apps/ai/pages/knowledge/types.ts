@@ -38,6 +38,7 @@ export interface NodeItem {
   edgeCount: number
   content?: string
   sourceIds?: number[]
+  score?: number
 }
 
 export interface EdgeItem {

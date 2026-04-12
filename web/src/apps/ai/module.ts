@@ -39,5 +39,31 @@ registerApp({
         },
       ],
     },
+    {
+      path: "ai/agents",
+      children: [
+        {
+          index: true,
+          lazy: () => import("./pages/agents/index"),
+        },
+        {
+          path: ":id",
+          lazy: () => import("./pages/agents/[id]"),
+        },
+      ],
+    },
+    {
+      path: "ai/chat",
+      children: [
+        {
+          index: true,
+          lazy: () => import("./pages/chat/index"),
+        },
+        {
+          path: ":sid",
+          lazy: () => import("./pages/chat/[sid]"),
+        },
+      ],
+    },
   ],
 })

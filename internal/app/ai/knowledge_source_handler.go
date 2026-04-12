@@ -2,6 +2,7 @@ package ai
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -93,7 +94,9 @@ func (h *KnowledgeSourceHandler) Create(c *gin.Context) {
 		}
 
 		if src.ExtractStatus == ExtractStatusPending {
-			h.extractSvc.EnqueueExtract(src.ID)
+			if err := h.extractSvc.EnqueueExtract(src.ID); err != nil {
+				slog.Error("failed to enqueue source extract", "source_id", src.ID, "error", err)
+			}
 		}
 
 		c.Set("audit_action", "knowledgeSource.create")
@@ -151,7 +154,9 @@ func (h *KnowledgeSourceHandler) Create(c *gin.Context) {
 	}
 
 	if src.ExtractStatus == ExtractStatusPending {
-		h.extractSvc.EnqueueExtract(src.ID)
+		if err := h.extractSvc.EnqueueExtract(src.ID); err != nil {
+			slog.Error("failed to enqueue source extract", "source_id", src.ID, "error", err)
+		}
 	}
 
 	c.Set("audit_action", "knowledgeSource.create")

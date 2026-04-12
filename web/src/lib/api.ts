@@ -295,3 +295,149 @@ export const taskApi = {
   trigger: (name: string) =>
     api.post<{ executionId: number }>(`/api/v1/tasks/${name}/trigger`),
 };
+
+// --- AI Agent types ---
+
+export interface AgentInfo {
+  id: number;
+  name: string;
+  description: string;
+  avatar: string;
+  type: 'assistant' | 'coding';
+  isActive: boolean;
+  visibility: 'private' | 'team' | 'public';
+  createdBy: number;
+  // assistant fields
+  strategy?: string;
+  modelId?: number;
+  systemPrompt?: string;
+  temperature: number;
+  maxTokens: number;
+  maxTurns: number;
+  // coding fields
+  runtime?: string;
+  runtimeConfig?: Record<string, unknown>;
+  execMode?: string;
+  nodeId?: number;
+  workspace?: string;
+  // common
+  instructions?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentWithBindings extends AgentInfo {
+  toolIds: number[];
+  skillIds: number[];
+  mcpServerIds: number[];
+  knowledgeBaseIds: number[];
+}
+
+export interface AgentTemplate {
+  id: number;
+  name: string;
+  description: string;
+  icon: string;
+  type: string;
+  config: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface AgentSession {
+  id: number;
+  agentId: number;
+  userId: number;
+  status: 'running' | 'completed' | 'cancelled' | 'error';
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SessionMessage {
+  id: number;
+  sessionId: number;
+  role: 'user' | 'assistant' | 'tool_call' | 'tool_result';
+  content: string;
+  metadata?: Record<string, unknown>;
+  tokenCount: number;
+  sequence: number;
+  createdAt: string;
+}
+
+export interface AgentMemory {
+  id: number;
+  agentId: number;
+  key: string;
+  content: string;
+  source: 'agent_generated' | 'user_set' | 'system';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const agentApi = {
+  list: (params?: { page?: number; pageSize?: number; keyword?: string; type?: string }) => {
+    const p = new URLSearchParams();
+    if (params?.page) p.set('page', String(params.page));
+    if (params?.pageSize) p.set('pageSize', String(params.pageSize));
+    if (params?.keyword) p.set('keyword', params.keyword);
+    if (params?.type) p.set('type', params.type);
+    return api.get<PaginatedResponse<AgentInfo>>(`/api/v1/ai/agents?${p}`);
+  },
+
+  get: (id: number) => api.get<AgentWithBindings>(`/api/v1/ai/agents/${id}`),
+
+  create: (data: Partial<AgentInfo> & {
+    toolIds?: number[];
+    skillIds?: number[];
+    mcpServerIds?: number[];
+    knowledgeBaseIds?: number[];
+    templateId?: number;
+  }) => api.post<AgentInfo>('/api/v1/ai/agents', data),
+
+  update: (id: number, data: Partial<AgentInfo> & {
+    toolIds?: number[];
+    skillIds?: number[];
+    mcpServerIds?: number[];
+    knowledgeBaseIds?: number[];
+  }) => api.put<AgentInfo>(`/api/v1/ai/agents/${id}`, data),
+
+  delete: (id: number) => api.delete<null>(`/api/v1/ai/agents/${id}`),
+
+  templates: () => api.get<AgentTemplate[]>('/api/v1/ai/agents/templates'),
+};
+
+export const sessionApi = {
+  list: (params?: { page?: number; pageSize?: number; agentId?: number }) => {
+    const p = new URLSearchParams();
+    if (params?.page) p.set('page', String(params.page));
+    if (params?.pageSize) p.set('pageSize', String(params.pageSize));
+    if (params?.agentId) p.set('agentId', String(params.agentId));
+    return api.get<{ items: AgentSession[]; total: number }>(`/api/v1/ai/sessions?${p}`);
+  },
+
+  create: (agentId: number) =>
+    api.post<AgentSession>('/api/v1/ai/sessions', { agentId }),
+
+  get: (sid: number) =>
+    api.get<{ session: AgentSession; messages: SessionMessage[] }>(`/api/v1/ai/sessions/${sid}`),
+
+  delete: (sid: number) => api.delete<null>(`/api/v1/ai/sessions/${sid}`),
+
+  sendMessage: (sid: number, content: string) =>
+    api.post<SessionMessage>(`/api/v1/ai/sessions/${sid}/messages`, { content }),
+
+  cancel: (sid: number) => api.post<null>(`/api/v1/ai/sessions/${sid}/cancel`),
+
+  streamUrl: (sid: number) => `/api/v1/ai/sessions/${sid}/stream`,
+};
+
+export const memoryApi = {
+  list: (agentId: number) =>
+    api.get<AgentMemory[]>(`/api/v1/ai/agents/${agentId}/memories`),
+
+  create: (agentId: number, data: { key: string; content: string }) =>
+    api.post<AgentMemory>(`/api/v1/ai/agents/${agentId}/memories`, data),
+
+  delete: (agentId: number, memoryId: number) =>
+    api.delete<null>(`/api/v1/ai/agents/${agentId}/memories/${memoryId}`),
+};

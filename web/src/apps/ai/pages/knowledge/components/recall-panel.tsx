@@ -30,9 +30,16 @@ function RecallCard({
     <div className="rounded-md border p-2.5 text-sm">
       <div className="flex items-start justify-between gap-2">
         <h4 className="font-medium leading-snug">{node.title}</h4>
-        <span className="text-xs text-muted-foreground whitespace-nowrap">
-          {node.edgeCount} {t("ai:knowledge.recall.edgeCount")}
-        </span>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {node.score != null && node.score > 0 && (
+            <span className="text-[10px] text-primary font-medium bg-primary/10 rounded px-1 py-0.5">
+              {(node.score * 100).toFixed(1)}%
+            </span>
+          )}
+          <span className="text-xs text-muted-foreground whitespace-nowrap">
+            {node.edgeCount} {t("ai:knowledge.recall.edgeCount")}
+          </span>
+        </div>
       </div>
       <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{node.summary || "—"}</p>
       {nodeSources.length > 0 && (

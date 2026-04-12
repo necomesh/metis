@@ -1,0 +1,312 @@
+package ai
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"sync"
+
+	"github.com/samber/do/v2"
+
+	"metis/internal/llm"
+	"metis/internal/pkg/crypto"
+)
+
+// AgentGateway orchestrates the full agent execution flow.
+type AgentGateway struct {
+	agentSvc   *AgentService
+	sessionSvc *SessionService
+	memorySvc  *MemoryService
+	agentRepo  *AgentRepo
+	modelRepo  *ModelRepo
+	providerRepo *ProviderRepo
+	encKey     crypto.EncryptionKey
+
+	// Active execution contexts, keyed by session ID
+	mu         sync.Mutex
+	executions map[uint]context.CancelFunc
+}
+
+func NewAgentGateway(i do.Injector) (*AgentGateway, error) {
+	return &AgentGateway{
+		agentSvc:     do.MustInvoke[*AgentService](i),
+		sessionSvc:   do.MustInvoke[*SessionService](i),
+		memorySvc:    do.MustInvoke[*MemoryService](i),
+		agentRepo:    do.MustInvoke[*AgentRepo](i),
+		modelRepo:    do.MustInvoke[*ModelRepo](i),
+		providerRepo: do.MustInvoke[*ProviderRepo](i),
+		encKey:       do.MustInvoke[crypto.EncryptionKey](i),
+		executions:   make(map[uint]context.CancelFunc),
+	}, nil
+}
+
+// Run executes an agent for a given session. Returns a channel of events.
+func (gw *AgentGateway) Run(ctx context.Context, sessionID uint) (<-chan Event, error) {
+	session, err := gw.sessionSvc.Get(sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	agent, err := gw.agentSvc.Get(session.AgentID)
+	if err != nil {
+		return nil, err
+	}
+
+	if !agent.IsActive {
+		return nil, errors.New("agent is inactive")
+	}
+
+	// Load message history
+	messages, err := gw.sessionSvc.GetMessages(sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("load messages: %w", err)
+	}
+
+	// Build system prompt with memory injection
+	systemPrompt := agent.SystemPrompt
+	if agent.Instructions != "" {
+		systemPrompt += "\n\n" + agent.Instructions
+	}
+
+	// Inject memories
+	userID := session.UserID
+	memoryBlock, _ := gw.memorySvc.FormatForPrompt(agent.ID, userID)
+	if memoryBlock != "" {
+		systemPrompt += "\n\n" + memoryBlock
+	}
+
+	// Convert messages to ExecuteMessage format
+	execMessages := make([]ExecuteMessage, 0, len(messages))
+	for _, m := range messages {
+		if m.Role == MessageRoleUser || m.Role == MessageRoleAssistant {
+			execMessages = append(execMessages, ExecuteMessage{Role: m.Role, Content: m.Content})
+		}
+	}
+
+	// Build tool definitions from bindings
+	tools, err := gw.buildToolDefinitions(agent.ID)
+	if err != nil {
+		return nil, fmt.Errorf("build tools: %w", err)
+	}
+
+	execReq := ExecuteRequest{
+		SessionID: sessionID,
+		AgentConfig: AgentExecuteConfig{
+			Type:          agent.Type,
+			Strategy:      agent.Strategy,
+			Temperature:   agent.Temperature,
+			MaxTokens:     agent.MaxTokens,
+			Runtime:       agent.Runtime,
+			RuntimeConfig: agent.RuntimeConfig,
+			ExecMode:      agent.ExecMode,
+			NodeID:        agent.NodeID,
+			Workspace:     agent.Workspace,
+			Instructions:  agent.Instructions,
+		},
+		Messages:     execMessages,
+		SystemPrompt: systemPrompt,
+		Tools:        tools,
+		MaxTurns:     agent.MaxTurns,
+	}
+
+	// Select executor
+	executor, err := gw.selectExecutor(agent)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create cancellable context
+	execCtx, cancel := context.WithCancel(ctx)
+	gw.mu.Lock()
+	gw.executions[sessionID] = cancel
+	gw.mu.Unlock()
+
+	// Execute
+	eventCh, err := executor.Execute(execCtx, execReq)
+	if err != nil {
+		cancel()
+		gw.mu.Lock()
+		delete(gw.executions, sessionID)
+		gw.mu.Unlock()
+		return nil, err
+	}
+
+	// Wrap the event channel to handle post-processing
+	outCh := make(chan Event, 64)
+	go func() {
+		defer close(outCh)
+		defer func() {
+			gw.mu.Lock()
+			delete(gw.executions, sessionID)
+			gw.mu.Unlock()
+		}()
+
+		var assistantContent string
+
+		for evt := range eventCh {
+			// Forward event
+			outCh <- evt
+
+			// Post-process: store results
+			switch evt.Type {
+			case EventTypeContentDelta:
+				assistantContent += evt.Text
+
+			case EventTypeToolCall:
+				meta, _ := json.Marshal(map[string]any{
+					"tool_name": evt.ToolName,
+					"tool_args": evt.ToolArgs,
+				})
+				_, _ = gw.sessionSvc.StoreMessage(sessionID, MessageRoleToolCall, "", meta, 0)
+
+			case EventTypeToolResult:
+				meta, _ := json.Marshal(map[string]any{
+					"tool_call_id": evt.ToolCallID,
+					"duration_ms":  evt.DurationMs,
+				})
+				_, _ = gw.sessionSvc.StoreMessage(sessionID, MessageRoleToolResult, evt.ToolOutput, meta, 0)
+
+			case EventTypeMemoryUpdate:
+				_ = gw.memorySvc.Upsert(&AgentMemory{
+					AgentID: session.AgentID,
+					UserID:  userID,
+					Key:     evt.MemoryKey,
+					Content: evt.MemoryContent,
+					Source:  MemorySourceAgentGenerated,
+				})
+
+			case EventTypeDone:
+				if assistantContent != "" {
+					_, _ = gw.sessionSvc.StoreMessage(sessionID, MessageRoleAssistant, assistantContent, nil, evt.OutputTokens)
+				}
+				_ = gw.sessionSvc.UpdateStatus(sessionID, SessionStatusCompleted)
+
+			case EventTypeError:
+				if assistantContent != "" {
+					_, _ = gw.sessionSvc.StoreMessage(sessionID, MessageRoleAssistant, assistantContent, nil, 0)
+				}
+				_ = gw.sessionSvc.UpdateStatus(sessionID, SessionStatusError)
+
+			case EventTypeCancelled:
+				if assistantContent != "" {
+					_, _ = gw.sessionSvc.StoreMessage(sessionID, MessageRoleAssistant, assistantContent, nil, 0)
+				}
+				_ = gw.sessionSvc.UpdateStatus(sessionID, SessionStatusCancelled)
+			}
+		}
+	}()
+
+	return outCh, nil
+}
+
+// Cancel cancels an active execution for the given session.
+func (gw *AgentGateway) Cancel(sessionID uint) {
+	gw.mu.Lock()
+	cancel, ok := gw.executions[sessionID]
+	gw.mu.Unlock()
+	if ok {
+		cancel()
+	}
+}
+
+func (gw *AgentGateway) selectExecutor(agent *Agent) (Executor, error) {
+	switch agent.Type {
+	case AgentTypeAssistant:
+		client, err := gw.buildLLMClient(agent)
+		if err != nil {
+			return nil, fmt.Errorf("build LLM client: %w", err)
+		}
+		// TODO: inject real ToolExecutor
+		var toolExec ToolExecutor
+		switch agent.Strategy {
+		case AgentStrategyPlanAndExecute:
+			return NewPlanAndExecuteExecutor(client, toolExec), nil
+		default:
+			return NewReactExecutor(client, toolExec), nil
+		}
+
+	case AgentTypeCoding:
+		switch agent.ExecMode {
+		case AgentExecModeRemote:
+			return NewRemoteCodingExecutor(), nil
+		default:
+			return NewLocalCodingExecutor(), nil
+		}
+
+	default:
+		return nil, fmt.Errorf("unsupported agent type: %s", agent.Type)
+	}
+}
+
+func (gw *AgentGateway) buildLLMClient(agent *Agent) (llm.Client, error) {
+	if agent.ModelID == nil {
+		return nil, errors.New("agent has no model configured")
+	}
+	model, err := gw.modelRepo.FindByID(*agent.ModelID)
+	if err != nil {
+		return nil, fmt.Errorf("model not found: %w", err)
+	}
+	provider, err := gw.providerRepo.FindByID(model.ProviderID)
+	if err != nil {
+		return nil, fmt.Errorf("provider not found: %w", err)
+	}
+	apiKey, err := decryptAPIKey(provider.APIKeyEncrypted, gw.encKey)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt API key: %w", err)
+	}
+	return llm.NewClient(provider.Protocol, provider.BaseURL, apiKey)
+}
+
+func (gw *AgentGateway) buildToolDefinitions(agentID uint) ([]ToolDefinition, error) {
+	var defs []ToolDefinition
+
+	// Builtin tools
+	toolIDs, err := gw.agentRepo.GetToolIDs(agentID)
+	if err != nil {
+		return nil, err
+	}
+	for _, tid := range toolIDs {
+		var tool Tool
+		if err := gw.agentRepo.db.First(&tool, tid).Error; err != nil {
+			slog.Warn("tool not found for binding", "toolId", tid)
+			continue
+		}
+		if !tool.IsActive {
+			continue
+		}
+		defs = append(defs, ToolDefinition{
+			Type:        "builtin",
+			Name:        tool.Name,
+			Description: tool.Description,
+			Parameters:  tool.ParametersSchema,
+			SourceID:    tool.ID,
+		})
+	}
+
+	// MCP servers — add all tools from each server
+	mcpIDs, err := gw.agentRepo.GetMCPServerIDs(agentID)
+	if err != nil {
+		return nil, err
+	}
+	for _, mid := range mcpIDs {
+		var mcp MCPServer
+		if err := gw.agentRepo.db.First(&mcp, mid).Error; err != nil {
+			continue
+		}
+		if !mcp.IsActive {
+			continue
+		}
+		// MCP tools are discovered at runtime from the server
+		// For now, register the server as a single meta-tool
+		defs = append(defs, ToolDefinition{
+			Type:        "mcp",
+			Name:        "mcp_" + mcp.Name,
+			Description: mcp.Description,
+			SourceID:    mcp.ID,
+		})
+	}
+
+	return defs, nil
+}

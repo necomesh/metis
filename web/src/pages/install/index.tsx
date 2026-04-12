@@ -43,6 +43,13 @@ interface OTelConfig {
   sampleRate: string
 }
 
+interface FalkorDBConfig {
+  enabled: boolean
+  addr: string
+  password: string
+  database: string
+}
+
 interface StepDef {
   id: string
   label: string
@@ -476,6 +483,8 @@ function SiteInfoStep({
   onChange,
   otelConfig,
   onOTelChange,
+  falkordbConfig,
+  onFalkorDBChange,
   onNext,
   onBack,
 }: {
@@ -483,6 +492,8 @@ function SiteInfoStep({
   onChange: (c: SiteConfig) => void
   otelConfig: OTelConfig
   onOTelChange: (c: OTelConfig) => void
+  falkordbConfig: FalkorDBConfig
+  onFalkorDBChange: (c: FalkorDBConfig) => void
   onNext: () => void
   onBack: () => void
 }) {
@@ -580,6 +591,67 @@ function SiteInfoStep({
                     placeholder="1.0"
                     value={otelConfig.sampleRate}
                     onChange={(e) => onOTelChange({ ...otelConfig, sampleRate: e.target.value })}
+                    className="auth-input"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {showAdvanced && (
+        <div className="space-y-3 rounded-xl border border-slate-200/60 bg-white/60 p-4">
+          <div className="mb-2 text-[12px] font-medium text-slate-400 uppercase tracking-wide">
+            {t("site.falkordb")}
+          </div>
+
+          {/* FalkorDB enabled toggle */}
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-[13px] font-medium text-slate-600">{t("site.enableFalkorDB")}</div>
+              <div className="text-[11px] text-slate-400">{t("site.enableFalkorDBDesc")}</div>
+            </div>
+            <Switch
+              checked={falkordbConfig.enabled}
+              onCheckedChange={(checked) => onFalkorDBChange({ ...falkordbConfig, enabled: checked })}
+            />
+          </div>
+
+          {falkordbConfig.enabled && (
+            <div className="space-y-3 pt-1">
+              <div>
+                <Label className="mb-1.5 block text-[13px] font-medium text-slate-500">
+                  {t("site.falkordbAddr")}
+                </Label>
+                <Input
+                  placeholder={t("site.falkordbAddrPlaceholder")}
+                  value={falkordbConfig.addr}
+                  onChange={(e) => onFalkorDBChange({ ...falkordbConfig, addr: e.target.value })}
+                  className="auth-input"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="mb-1.5 block text-[13px] font-medium text-slate-500">
+                    {t("site.falkordbPassword")}
+                  </Label>
+                  <Input
+                    type="password"
+                    placeholder={t("site.falkordbPasswordPlaceholder")}
+                    value={falkordbConfig.password}
+                    onChange={(e) => onFalkorDBChange({ ...falkordbConfig, password: e.target.value })}
+                    className="auth-input"
+                  />
+                </div>
+                <div>
+                  <Label className="mb-1.5 block text-[13px] font-medium text-slate-500">
+                    {t("site.falkordbDatabase")}
+                  </Label>
+                  <Input
+                    placeholder="0"
+                    value={falkordbConfig.database}
+                    onChange={(e) => onFalkorDBChange({ ...falkordbConfig, database: e.target.value })}
                     className="auth-input"
                   />
                 </div>
@@ -755,6 +827,7 @@ function CompleteStep({
   siteConfig,
   adminConfig,
   otelConfig,
+  falkordbConfig,
   onBack,
 }: {
   localeConfig: LocaleConfig
@@ -762,6 +835,7 @@ function CompleteStep({
   siteConfig: SiteConfig
   adminConfig: AdminConfig
   otelConfig: OTelConfig
+  falkordbConfig: FalkorDBConfig
   onBack: () => void
 }) {
   const { t } = useTranslation("install")
@@ -792,6 +866,9 @@ function CompleteStep({
         otel_exporter_endpoint: otelConfig.exporterEndpoint,
         otel_service_name: otelConfig.serviceName,
         otel_sample_rate: otelConfig.sampleRate,
+        falkordb_addr: falkordbConfig.enabled ? falkordbConfig.addr : undefined,
+        falkordb_password: falkordbConfig.enabled ? falkordbConfig.password : undefined,
+        falkordb_database: falkordbConfig.enabled ? parseInt(falkordbConfig.database, 10) || 0 : undefined,
       })
       setDone(true)
     } catch (err) {
@@ -799,7 +876,7 @@ function CompleteStep({
     } finally {
       setInstalling(false)
     }
-  }, [dbConfig, siteConfig, adminConfig, otelConfig, localeConfig, t])
+  }, [dbConfig, siteConfig, adminConfig, otelConfig, falkordbConfig, localeConfig, t])
 
   if (done) {
     return (
@@ -877,6 +954,15 @@ function CompleteStep({
             <div className="flex justify-between">
               <span className="text-slate-400">OpenTelemetry</span>
               <span className="font-medium text-slate-700">{otelConfig.exporterEndpoint}</span>
+            </div>
+          </>
+        )}
+        {falkordbConfig.enabled && (
+          <>
+            <div className="border-t border-slate-100" />
+            <div className="flex justify-between">
+              <span className="text-slate-400">{t("confirm.falkordb")}</span>
+              <span className="font-medium text-slate-700">{falkordbConfig.addr}</span>
             </div>
           </>
         )}
@@ -959,6 +1045,12 @@ export default function InstallPage() {
     serviceName: "metis",
     sampleRate: "1.0",
   })
+  const [falkordbConfig, setFalkorDBConfig] = useState<FalkorDBConfig>({
+    enabled: false,
+    addr: "localhost:6379",
+    password: "",
+    database: "0",
+  })
 
   // Step order: 0=language, 1=db, 2=site, 3=admin, 4=complete
   let stepContent: React.ReactNode = null
@@ -989,6 +1081,8 @@ export default function InstallPage() {
           onChange={setSiteConfig}
           otelConfig={otelConfig}
           onOTelChange={setOTelConfig}
+          falkordbConfig={falkordbConfig}
+          onFalkorDBChange={setFalkorDBConfig}
           onNext={() => setStep(3)}
           onBack={() => setStep(1)}
         />
@@ -1012,6 +1106,7 @@ export default function InstallPage() {
           siteConfig={siteConfig}
           adminConfig={adminConfig}
           otelConfig={otelConfig}
+          falkordbConfig={falkordbConfig}
           onBack={() => setStep(3)}
         />
       )

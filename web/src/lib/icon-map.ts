@@ -1,9 +1,11 @@
 import {
   BookOpen,
+  Bot,
   Brain,
   Building2,
   Cog,
   Home,
+  MessageSquare,
   Settings,
   Server,
   Users,
@@ -36,9 +38,11 @@ import {
 
 const icons = {
   BookOpen,
+  Bot,
   Brain,
   Cog,
   Home,
+  MessageSquare,
   Settings,
   Server,
   Users,

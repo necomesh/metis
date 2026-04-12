@@ -127,7 +127,7 @@ export function KnowledgeBaseForm({ open, onOpenChange, knowledgeBase }: Knowled
     queryKey: ["ai-models-embedding", selectedEmbeddingProviderId],
     queryFn: () =>
       api.get<PaginatedResponse<ModelOption>>(
-        `/api/v1/ai/models?type=embedding&providerId=${selectedEmbeddingProviderId}&pageSize=100`,
+        `/api/v1/ai/models?type=embed&providerId=${selectedEmbeddingProviderId}&pageSize=100`,
       ),
     enabled: open && selectedEmbeddingProviderId !== "",
   })

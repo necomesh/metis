@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/FalkorDB/falkordb-go/v2"
@@ -58,11 +60,16 @@ func (r *KnowledgeGraphRepo) CreateNode(kbID uint, node *KnowledgeNode) error {
 SET n.title = $title, n.summary = $summary, n.content = $content,
     n.node_type = $nodeType, n.source_ids = $sourceIds, n.compiled_at = $compiledAt`
 
+	var content string
+	if node.Content != nil {
+		content = *node.Content
+	}
+
 	params := map[string]interface{}{
 		"id":         node.ID,
 		"title":      node.Title,
 		"summary":    node.Summary,
-		"content":    node.Content,
+		"content":    content,
 		"nodeType":   node.NodeType,
 		"sourceIds":  node.SourceIDs,
 		"compiledAt": node.CompiledAt,
@@ -89,11 +96,16 @@ ON MATCH SET  n.summary = $summary, n.content = CASE WHEN $content IS NOT NULL T
               n.source_ids = $sourceIds, n.compiled_at = $compiledAt
 RETURN n.id`
 
+	var content string
+	if node.Content != nil {
+		content = *node.Content
+	}
+
 	params := map[string]interface{}{
 		"id":         node.ID,
 		"title":      node.Title,
 		"summary":    node.Summary,
-		"content":    node.Content,
+		"content":    content,
 		"nodeType":   node.NodeType,
 		"sourceIds":  node.SourceIDs,
 		"compiledAt": node.CompiledAt,
@@ -511,11 +523,15 @@ RETURN a.id AS from_id, b.id AS to_id, type(r) AS rel, r.description AS desc`,
 // VectorSearch returns the top-K nodes by cosine similarity.
 func (r *KnowledgeGraphRepo) VectorSearch(kbID uint, queryVec []float32, topK int) ([]KnowledgeNode, []float64, error) {
 	g := r.client.GraphFor(kbID)
+	vec := make([]interface{}, len(queryVec))
+	for i, v := range queryVec {
+		vec[i] = float64(v)
+	}
 	result, err := g.Query(
 		`CALL db.idx.vector.queryNodes('KnowledgeNode', 'embedding', $topK, vecf32($vec))
 YIELD node, score
 RETURN node, score`,
-		map[string]interface{}{"topK": topK, "vec": queryVec}, nil,
+		map[string]interface{}{"topK": topK, "vec": vec}, nil,
 	)
 	if err != nil {
 		return nil, nil, err
@@ -548,7 +564,12 @@ func (r *KnowledgeGraphRepo) VectorSearchWithExpand(kbID uint, queryVec []float3
 		return seeds, nil, scores, nil
 	}
 
-	// Expand seed nodes via graph
+	allNodes, edges := r.expandSeeds(kbID, seeds, hops)
+	return allNodes, edges, scores, nil
+}
+
+// expandSeeds performs N-hop graph traversal from seed nodes and collects all edges between them.
+func (r *KnowledgeGraphRepo) expandSeeds(kbID uint, seeds []KnowledgeNode, hops int) ([]KnowledgeNode, []KnowledgeEdge) {
 	nodeMap := make(map[string]*KnowledgeNode)
 	for i := range seeds {
 		nodeMap[seeds[i].ID] = &seeds[i]
@@ -572,7 +593,6 @@ RETURN DISTINCT neighbor`, hops)
 		}
 	}
 
-	// Collect all edges between found nodes
 	nodeIDs := make([]interface{}, 0, len(nodeMap))
 	for id := range nodeMap {
 		nodeIDs = append(nodeIDs, id)
@@ -583,33 +603,153 @@ RETURN DISTINCT neighbor`, hops)
 	for _, n := range nodeMap {
 		allNodes = append(allNodes, *n)
 	}
+	return allNodes, edges
+}
 
-	return allNodes, edges, scores, nil
+// HybridSearchResult holds the merged results from hybrid search.
+type HybridSearchResult struct {
+	Nodes  []KnowledgeNode
+	Edges  []KnowledgeEdge
+	Scores map[string]float64 // nodeID -> RRF score (seed nodes only)
+}
+
+// HybridSearch runs vector + fulltext concurrently, merges via RRF, then expands via graph.
+// queryVec may be nil if embedding is not configured (degrades to fulltext-only).
+func (r *KnowledgeGraphRepo) HybridSearch(kbID uint, queryVec []float32, queryText string, topK, hops int) (*HybridSearchResult, error) {
+	const rrfK = 60
+	fetchK := topK * 3
+
+	type rankedResult struct {
+		nodes  []KnowledgeNode
+		scores []float64
+		err    error
+	}
+
+	var vecRes, ftRes rankedResult
+	var wg sync.WaitGroup
+
+	// Concurrent vector search
+	if queryVec != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			nodes, scores, err := r.VectorSearch(kbID, queryVec, fetchK)
+			vecRes = rankedResult{nodes, scores, err}
+		}()
+	}
+
+	// Concurrent fulltext search
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		nodes, scores, err := r.SearchFullText(kbID, queryText, fetchK)
+		ftRes = rankedResult{nodes, scores, err}
+	}()
+
+	wg.Wait()
+
+	// If both failed, return error
+	if (queryVec == nil || vecRes.err != nil) && ftRes.err != nil {
+		errMsg := "fulltext search failed"
+		if vecRes.err != nil {
+			errMsg = fmt.Sprintf("vector: %v, fulltext: %v", vecRes.err, ftRes.err)
+		}
+		return nil, fmt.Errorf("hybrid search: %s", errMsg)
+	}
+
+	// RRF merge
+	rrfScores := make(map[string]float64)
+	nodeByID := make(map[string]*KnowledgeNode)
+
+	if vecRes.err == nil {
+		for i, n := range vecRes.nodes {
+			rrfScores[n.ID] += 1.0 / float64(rrfK+i+1)
+			if _, exists := nodeByID[n.ID]; !exists {
+				cp := n
+				nodeByID[n.ID] = &cp
+			}
+		}
+	}
+
+	if ftRes.err == nil {
+		for i, n := range ftRes.nodes {
+			rrfScores[n.ID] += 1.0 / float64(rrfK+i+1)
+			if _, exists := nodeByID[n.ID]; !exists {
+				cp := n
+				nodeByID[n.ID] = &cp
+			}
+		}
+	}
+
+	// Sort by RRF score descending, take topK
+	type scored struct {
+		id    string
+		score float64
+	}
+	ranked := make([]scored, 0, len(rrfScores))
+	for id, s := range rrfScores {
+		ranked = append(ranked, scored{id, s})
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		return ranked[i].score > ranked[j].score
+	})
+	if len(ranked) > topK {
+		ranked = ranked[:topK]
+	}
+
+	seeds := make([]KnowledgeNode, 0, len(ranked))
+	seedScores := make(map[string]float64, len(ranked))
+	for _, r := range ranked {
+		if n, ok := nodeByID[r.id]; ok {
+			seeds = append(seeds, *n)
+			seedScores[r.id] = r.score
+		}
+	}
+
+	if hops < 1 || len(seeds) == 0 {
+		return &HybridSearchResult{Nodes: seeds, Scores: seedScores}, nil
+	}
+
+	allNodes, edges := r.expandSeeds(kbID, seeds, hops)
+	return &HybridSearchResult{Nodes: allNodes, Edges: edges, Scores: seedScores}, nil
 }
 
 // --- Full-text search ---
 
 // SearchFullText searches nodes via FalkorDB full-text index.
-func (r *KnowledgeGraphRepo) SearchFullText(kbID uint, keyword string, limit int) ([]KnowledgeNode, error) {
+func (r *KnowledgeGraphRepo) SearchFullText(kbID uint, keyword string, limit int) ([]KnowledgeNode, []float64, error) {
 	if limit < 1 {
 		limit = 20
 	}
 	g := r.client.GraphFor(kbID)
 	result, err := g.Query(
-		`CALL db.idx.fulltext.queryNodes('node_ft_idx', $keyword)
-YIELD node
-RETURN node LIMIT $limit`,
+		`CALL db.idx.fulltext.queryNodes('KnowledgeNode', $keyword)
+YIELD node, score
+RETURN node, score LIMIT $limit`,
 		map[string]interface{}{"keyword": keyword, "limit": limit}, nil,
 	)
 	if err != nil {
 		// Fallback to CONTAINS if full-text index doesn't exist
 		return r.searchContains(kbID, keyword, limit)
 	}
-	return collectNodes(result, "node")
+	var nodes []KnowledgeNode
+	var scores []float64
+	for result.Next() {
+		rec := result.Record()
+		n, err := recordToNode(rec, "node")
+		if err != nil {
+			continue
+		}
+		nodes = append(nodes, *n)
+		if v, ok := rec.Get("score"); ok {
+			scores = append(scores, toFloat64(v))
+		}
+	}
+	return nodes, scores, nil
 }
 
 // searchContains is a fallback when full-text index is not available.
-func (r *KnowledgeGraphRepo) searchContains(kbID uint, keyword string, limit int) ([]KnowledgeNode, error) {
+func (r *KnowledgeGraphRepo) searchContains(kbID uint, keyword string, limit int) ([]KnowledgeNode, []float64, error) {
 	g := r.client.GraphFor(kbID)
 	result, err := g.Query(
 		`MATCH (n:KnowledgeNode)
@@ -618,9 +758,17 @@ RETURN n LIMIT $limit`,
 		map[string]interface{}{"keyword": keyword, "limit": limit}, nil,
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return collectNodes(result, "n")
+	nodes, err := collectNodes(result, "n")
+	if err != nil {
+		return nil, nil, err
+	}
+	scores := make([]float64, len(nodes))
+	for i := range scores {
+		scores[i] = 1.0 - float64(i)*0.01
+	}
+	return nodes, scores, nil
 }
 
 // --- Index management ---
@@ -641,7 +789,7 @@ func (r *KnowledgeGraphRepo) CreateFullTextIndex(kbID uint) error {
 // DropFullTextIndex drops the full-text index.
 func (r *KnowledgeGraphRepo) DropFullTextIndex(kbID uint) error {
 	g := r.client.GraphFor(kbID)
-	_, err := g.Query(`DROP INDEX ON :KnowledgeNode(title, summary)`, nil, nil)
+	_, err := g.Query(`DROP INDEX FOR (n:KnowledgeNode) ON (n.title, n.summary)`, nil, nil)
 	if err != nil && !strings.Contains(err.Error(), "does not exist") && !strings.Contains(err.Error(), "Unable to drop") {
 		return err
 	}
@@ -665,7 +813,7 @@ func (r *KnowledgeGraphRepo) CreateVectorIndex(kbID uint, dimension int) error {
 // DropVectorIndex drops the HNSW vector index.
 func (r *KnowledgeGraphRepo) DropVectorIndex(kbID uint) error {
 	g := r.client.GraphFor(kbID)
-	_, err := g.Query(`DROP VECTOR INDEX ON :KnowledgeNode(embedding)`, nil, nil)
+	_, err := g.Query(`DROP INDEX FOR (n:KnowledgeNode) ON (n.embedding)`, nil, nil)
 	if err != nil && !strings.Contains(err.Error(), "does not exist") && !strings.Contains(err.Error(), "Unable to drop") {
 		return err
 	}
@@ -675,9 +823,15 @@ func (r *KnowledgeGraphRepo) DropVectorIndex(kbID uint) error {
 // SetNodeEmbedding writes the embedding vector to a node.
 func (r *KnowledgeGraphRepo) SetNodeEmbedding(kbID uint, nodeID string, embedding []float32) error {
 	g := r.client.GraphFor(kbID)
+	// Convert []float32 to []interface{} with float64 values, because
+	// the FalkorDB Go client only supports []interface{} in params.
+	vec := make([]interface{}, len(embedding))
+	for i, v := range embedding {
+		vec[i] = float64(v)
+	}
 	_, err := g.Query(
 		`MATCH (n:KnowledgeNode {id: $id}) SET n.embedding = vecf32($vec)`,
-		map[string]interface{}{"id": nodeID, "vec": embedding}, nil,
+		map[string]interface{}{"id": nodeID, "vec": vec}, nil,
 	)
 	return err
 }

@@ -28,6 +28,9 @@ func (a *AIApp) Models() []any {
 		// Tool registry
 		&Tool{}, &MCPServer{}, &Skill{},
 		&AgentTool{}, &AgentMCPServer{}, &AgentSkill{},
+		// Agent runtime
+		&Agent{}, &AgentTemplate{}, &AgentKnowledgeBase{},
+		&AgentSession{}, &SessionMessage{}, &AgentMemory{},
 	}
 }
 
@@ -74,6 +77,17 @@ func (a *AIApp) Providers(i do.Injector) {
 	do.Provide(i, NewAgentMCPServerRepo)
 	do.Provide(i, NewAgentSkillRepo)
 	do.Provide(i, NewToolAssemblyService)
+	// Agent runtime
+	do.Provide(i, NewAgentRepo)
+	do.Provide(i, NewAgentService)
+	do.Provide(i, NewAgentHandler)
+	do.Provide(i, NewSessionRepo)
+	do.Provide(i, NewSessionService)
+	do.Provide(i, NewSessionHandler)
+	do.Provide(i, NewMemoryRepo)
+	do.Provide(i, NewMemoryService)
+	do.Provide(i, NewMemoryHandler)
+	do.Provide(i, NewAgentGateway)
 }
 
 func (a *AIApp) Routes(api *gin.RouterGroup) {
@@ -82,6 +96,7 @@ func (a *AIApp) Routes(api *gin.RouterGroup) {
 	kbH := do.MustInvoke[*KnowledgeBaseHandler](a.injector)
 	sourceH := do.MustInvoke[*KnowledgeSourceHandler](a.injector)
 	nodeH := do.MustInvoke[*KnowledgeNodeHandler](a.injector)
+	queryH := do.MustInvoke[*KnowledgeQueryHandler](a.injector)
 
 	providers := api.Group("/ai/providers")
 	{
@@ -125,6 +140,8 @@ func (a *AIApp) Routes(api *gin.RouterGroup) {
 		kbs.GET("/:id/nodes/:nid/graph", nodeH.GetGraph)
 		// Logs
 		kbs.GET("/:id/logs", nodeH.ListLogs)
+		// Search (admin-facing, JWT auth)
+		kbs.GET("/:id/search", queryH.SearchByKb)
 	}
 
 	// Tool registry
@@ -158,8 +175,39 @@ func (a *AIApp) Routes(api *gin.RouterGroup) {
 		skills.DELETE("/:id", skillH.Delete)
 	}
 
+	// Agent runtime
+	agentH := do.MustInvoke[*AgentHandler](a.injector)
+	agents := api.Group("/ai/agents")
+	{
+		agents.POST("", agentH.Create)
+		agents.GET("", agentH.List)
+		agents.GET("/templates", agentH.ListTemplates)
+		agents.GET("/:id", agentH.Get)
+		agents.PUT("/:id", agentH.Update)
+		agents.DELETE("/:id", agentH.Delete)
+	}
+
+	sessionH := do.MustInvoke[*SessionHandler](a.injector)
+	sessions := api.Group("/ai/sessions")
+	{
+		sessions.POST("", sessionH.Create)
+		sessions.GET("", sessionH.List)
+		sessions.GET("/:sid", sessionH.Get)
+		sessions.DELETE("/:sid", sessionH.Delete)
+		sessions.POST("/:sid/messages", sessionH.SendMessage)
+		sessions.GET("/:sid/stream", sessionH.Stream)
+		sessions.POST("/:sid/cancel", sessionH.Cancel)
+	}
+
+	memoryH := do.MustInvoke[*MemoryHandler](a.injector)
+	memories := api.Group("/ai/agents/:id/memories")
+	{
+		memories.GET("", memoryH.List)
+		memories.POST("", memoryH.Create)
+		memories.DELETE("/:mid", memoryH.Delete)
+	}
+
 	// Agent knowledge query API (Sidecar token auth, bypasses JWT+Casbin)
-	queryH := do.MustInvoke[*KnowledgeQueryHandler](a.injector)
 	r := do.MustInvoke[*gin.Engine](a.injector)
 	nodeRepo := do.MustInvoke[*node.NodeRepo](a.injector)
 	knowledge := r.Group("/api/v1/ai/knowledge", node.NodeTokenMiddleware(nodeRepo))

@@ -121,6 +121,11 @@ type ExecuteRequest struct {
 	OTelExporterEndpoint string `json:"otel_exporter_endpoint"`
 	OTelServiceName      string `json:"otel_service_name"`
 	OTelSampleRate       string `json:"otel_sample_rate"`
+
+	// FalkorDB (optional — required for AI knowledge graph features)
+	FalkorDBAddr     string `json:"falkordb_addr"`
+	FalkorDBPassword string `json:"falkordb_password"`
+	FalkorDBDatabase int    `json:"falkordb_database"`
 }
 
 // Execute performs the full installation.
@@ -146,6 +151,15 @@ func (h *InstallHandler) Execute(c *gin.Context) {
 			req.DBHost, req.DBPort, req.DBUser, req.DBPassword, req.DBName)
 	} else {
 		cfg.DBDSN = "metis.db?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"
+	}
+
+	// FalkorDB (optional)
+	if req.FalkorDBAddr != "" {
+		cfg.FalkorDB = &config.FalkorDBConfig{
+			Addr:     req.FalkorDBAddr,
+			Password: req.FalkorDBPassword,
+			Database: req.FalkorDBDatabase,
+		}
 	}
 
 	// 2. Generate secrets

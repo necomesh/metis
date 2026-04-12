@@ -1,0 +1,99 @@
+package ai
+
+import (
+	"errors"
+
+	"github.com/samber/do/v2"
+	"gorm.io/gorm"
+)
+
+var (
+	ErrSessionNotFound = errors.New("session not found")
+	ErrSessionBusy     = errors.New("session has a running execution")
+)
+
+type SessionService struct {
+	repo     *SessionRepo
+	agentSvc *AgentService
+}
+
+func NewSessionService(i do.Injector) (*SessionService, error) {
+	return &SessionService{
+		repo:     do.MustInvoke[*SessionRepo](i),
+		agentSvc: do.MustInvoke[*AgentService](i),
+	}, nil
+}
+
+func (s *SessionService) Create(agentID, userID uint) (*AgentSession, error) {
+	// Validate agent exists
+	if _, err := s.agentSvc.Get(agentID); err != nil {
+		return nil, err
+	}
+
+	session := &AgentSession{
+		AgentID: agentID,
+		UserID:  userID,
+		Status:  SessionStatusRunning,
+	}
+	if err := s.repo.Create(session); err != nil {
+		return nil, err
+	}
+	return session, nil
+}
+
+func (s *SessionService) Get(id uint) (*AgentSession, error) {
+	session, err := s.repo.FindByID(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrSessionNotFound
+		}
+		return nil, err
+	}
+	return session, nil
+}
+
+func (s *SessionService) List(params SessionListParams) ([]AgentSession, int64, error) {
+	return s.repo.List(params)
+}
+
+func (s *SessionService) Delete(id uint) error {
+	return s.repo.Delete(id)
+}
+
+func (s *SessionService) GetMessages(sessionID uint) ([]SessionMessage, error) {
+	return s.repo.GetMessages(sessionID)
+}
+
+func (s *SessionService) StoreMessage(sessionID uint, role, content string, metadata []byte, tokenCount int) (*SessionMessage, error) {
+	seq, err := s.repo.NextSequence(sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	msg := &SessionMessage{
+		SessionID:  sessionID,
+		Role:       role,
+		Content:    content,
+		Metadata:   metadata,
+		TokenCount: tokenCount,
+		Sequence:   seq,
+	}
+	if err := s.repo.CreateMessage(msg); err != nil {
+		return nil, err
+	}
+
+	// Auto-generate session title from first user message
+	if seq == 1 && role == MessageRoleUser {
+		title := content
+		if len(title) > 100 {
+			title = title[:100] + "..."
+		}
+		_ = s.repo.UpdateTitle(sessionID, title)
+	}
+
+	return msg, nil
+}
+
+func (s *SessionService) UpdateStatus(id uint, status string) error {
+	return s.repo.UpdateStatus(id, status)
+}

@@ -52,14 +52,12 @@
 
 ## 7. 前端适配
 
-- [ ] 7.1 KnowledgeBase 创建/编辑 Sheet 新增 Embedding Provider 和 Embedding Model 下拉选择
-- [ ] 7.2 Recall Panel 改造 — 发送 query text 到新 API，展示带 score 的向量召回结果，区分 seed 节点和 graph 展开节点
-- [ ] 7.3 Node Table View 适配 — 确认列表数据从新 API 正常加载（字段结构可能变化）
-- [ ] 7.4 Knowledge Graph View 适配 — 图可视化数据源确认兼容
-- [ ] 7.5 知识库列表页 node_count 展示确认（API 返回格式可能变化）
+- [x] 7.1 KnowledgeBase 创建/编辑 Sheet 新增 Embedding Provider 和 Embedding Model 下拉选择
+- [x] 7.2 Recall Panel 改造 — 发送 query text 到新 API，展示带 score 的向量召回结果，区分 seed 节点和 graph 展开节点
+- [x] 7.3 Node Table View 适配 — 确认列表数据从新 API 正常加载（字段结构可能变化）
+- [x] 7.4 Knowledge Graph View 适配 — 图可视化数据源确认兼容
+- [x] 7.5 知识库列表页 node_count 展示确认（API 返回格式可能变化）
 
 ## 8. 数据迁移与验证
 
-- [ ] 8.1 编写一次性迁移逻辑 — 读取 GORM knowledge_nodes/knowledge_edges 表数据 → 按 kb_id 分组 → 写入对应 FalkorDB graph（可作为 CLI subcommand 或 seed 逻辑）
-- [ ] 8.2 迁移后验证 — 对比 GORM 和 FalkorDB 中的节点/边数量是否一致
-- [ ] 8.3 确认旧表可安全删除后，移除 GORM AutoMigrate 中的表定义
+- [x] ~~8.1-8.3~~ 用户已删库，无需迁移，跳过

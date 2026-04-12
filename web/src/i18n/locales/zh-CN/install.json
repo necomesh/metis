@@ -46,6 +46,14 @@
     "exportEndpoint": "导出端点",
     "serviceName": "服务名称",
     "sampleRate": "采样率",
+    "falkordb": "FalkorDB（知识图谱）",
+    "enableFalkorDB": "启用 FalkorDB",
+    "enableFalkorDBDesc": "AI 知识图谱功能需要 FalkorDB",
+    "falkordbAddr": "地址",
+    "falkordbAddrPlaceholder": "localhost:6379",
+    "falkordbPassword": "密码",
+    "falkordbPasswordPlaceholder": "留空则不设密码",
+    "falkordbDatabase": "数据库编号",
     "next": "下一步",
     "prev": "上一步"
   },
@@ -77,7 +85,8 @@
     "install": "开始安装",
     "installing": "安装中...",
     "prev": "上一步",
-    "installFailed": "安装失败"
+    "installFailed": "安装失败",
+    "falkordb": "FalkorDB"
   },
   "done": {
     "title": "安装完成",

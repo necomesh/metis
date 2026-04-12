@@ -27,15 +27,15 @@ function KnowledgeGraphTab({ kbId, compileMethod }: { kbId: number; compileMetho
 
   const { data: recallData, isLoading: recallLoading } = useQuery({
     queryKey: ["ai-kb-recall", kbId, recallSearchQuery],
-    queryFn: () => api.get<{ items: NodeItem[]; total: number }>(
-      `/api/v1/ai/knowledge-bases/${kbId}/nodes?keyword=${encodeURIComponent(recallSearchQuery)}&pageSize=20`,
+    queryFn: () => api.get<{ nodes: NodeItem[]; edges: unknown[] }>(
+      `/api/v1/ai/knowledge-bases/${kbId}/search?q=${encodeURIComponent(recallSearchQuery)}&limit=20`,
     ),
     enabled: recallSearchQuery.length > 0 && recallOpen,
   })
 
   const highlightedNodeIds = useMemo(() => {
-    if (!recallOpen || !recallData?.items) return new Set<string>()
-    return new Set(recallData.items.map((r) => r.id))
+    if (!recallOpen || !recallData?.nodes) return new Set<string>()
+    return new Set(recallData.nodes.map((r) => r.id))
   }, [recallOpen, recallData])
 
   function toggleRecall() {
@@ -95,7 +95,7 @@ function KnowledgeGraphTab({ kbId, compileMethod }: { kbId: number; compileMetho
         {recallOpen && (
           <RecallPanel
             kbId={kbId}
-            results={recallData?.items ?? []}
+            results={recallData?.nodes ?? []}
             isLoading={recallLoading}
             hasSearched={recallSearchQuery.length > 0}
             onSearch={setRecallSearchQuery}
@@ -178,6 +178,7 @@ export function Component() {
           <div className="flex items-center gap-3 text-sm text-muted-foreground mr-2">
             <span>{t("ai:knowledge.sourceCount")}: {kb.sourceCount}</span>
             <span>{t("ai:knowledge.nodeCount")}: {kb.nodeCount}</span>
+            <span>{t("ai:knowledge.edgeCount")}: {kb.edgeCount}</span>
           </div>
           {canCompile && (
             <Button

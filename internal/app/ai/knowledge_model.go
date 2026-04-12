@@ -208,6 +208,7 @@ type KnowledgeNodeResponse struct {
 	SourceIDs  json.RawMessage `json:"sourceIds"`
 	EdgeCount  int             `json:"edgeCount"`
 	CompiledAt int64           `json:"compiledAt"`
+	Score      float64         `json:"score,omitempty"`
 }
 
 func (n *KnowledgeNode) ToResponse() KnowledgeNodeResponse {

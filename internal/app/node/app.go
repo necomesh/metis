@@ -113,7 +113,7 @@ func (a *NodeApp) Tasks() []scheduler.TaskDef {
 			Name:        "node-offline-detection",
 			Type:        scheduler.TypeScheduled,
 			Description: "Detect offline nodes by checking heartbeat timeout",
-			CronExpr:    "*/30 * * * * *",
+			CronExpr:    "* * * * *",
 			Handler:     sidecarSvc.DetectOfflineNodes,
 		},
 		{

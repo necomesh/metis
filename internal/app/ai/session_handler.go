@@ -1,0 +1,217 @@
+package ai
+
+import (
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"strconv"
+
+	"github.com/gin-gonic/gin"
+	"github.com/samber/do/v2"
+
+	"metis/internal/handler"
+)
+
+type SessionHandler struct {
+	svc     *SessionService
+	gateway *AgentGateway
+}
+
+func NewSessionHandler(i do.Injector) (*SessionHandler, error) {
+	return &SessionHandler{
+		svc:     do.MustInvoke[*SessionService](i),
+		gateway: do.MustInvoke[*AgentGateway](i),
+	}, nil
+}
+
+type createSessionReq struct {
+	AgentID uint `json:"agentId" binding:"required"`
+}
+
+func (h *SessionHandler) Create(c *gin.Context) {
+	var req createSessionReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		handler.Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	userID, ok := c.Get("userId")
+	if !ok {
+		handler.Fail(c, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	session, err := h.svc.Create(req.AgentID, userID.(uint))
+	if err != nil {
+		if errors.Is(err, ErrAgentNotFound) {
+			handler.Fail(c, http.StatusNotFound, err.Error())
+			return
+		}
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	handler.OK(c, session.ToResponse())
+}
+
+func (h *SessionHandler) List(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
+	agentID, _ := strconv.Atoi(c.DefaultQuery("agentId", "0"))
+	userID, ok := c.Get("userId")
+	if !ok {
+		handler.Fail(c, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	sessions, total, err := h.svc.List(SessionListParams{
+		AgentID:  uint(agentID),
+		UserID:   userID.(uint),
+		Page:     page,
+		PageSize: pageSize,
+	})
+	if err != nil {
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	items := make([]AgentSessionResponse, len(sessions))
+	for i, s := range sessions {
+		items[i] = s.ToResponse()
+	}
+	handler.OK(c, gin.H{"items": items, "total": total})
+}
+
+func (h *SessionHandler) Get(c *gin.Context) {
+	sid, _ := strconv.Atoi(c.Param("sid"))
+	session, err := h.svc.Get(uint(sid))
+	if err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			handler.Fail(c, http.StatusNotFound, err.Error())
+			return
+		}
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	messages, err := h.svc.GetMessages(session.ID)
+	if err != nil {
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	msgResp := make([]SessionMessageResponse, len(messages))
+	for i, m := range messages {
+		msgResp[i] = m.ToResponse()
+	}
+
+	handler.OK(c, gin.H{
+		"session":  session.ToResponse(),
+		"messages": msgResp,
+	})
+}
+
+func (h *SessionHandler) Delete(c *gin.Context) {
+	sid, _ := strconv.Atoi(c.Param("sid"))
+	if err := h.svc.Delete(uint(sid)); err != nil {
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	c.Set("audit_action", "session.delete")
+	c.Set("audit_resource", "ai_session")
+	c.Set("audit_resource_id", c.Param("sid"))
+
+	handler.OK(c, nil)
+}
+
+type sendMessageReq struct {
+	Content string `json:"content" binding:"required"`
+}
+
+func (h *SessionHandler) SendMessage(c *gin.Context) {
+	sid, _ := strconv.Atoi(c.Param("sid"))
+	var req sendMessageReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		handler.Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	session, err := h.svc.Get(uint(sid))
+	if err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			handler.Fail(c, http.StatusNotFound, err.Error())
+			return
+		}
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Store user message
+	msg, err := h.svc.StoreMessage(session.ID, MessageRoleUser, req.Content, nil, 0)
+	if err != nil {
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// TODO: Trigger Gateway execution asynchronously
+	// For now, just store the message and return 202
+	c.JSON(http.StatusAccepted, handler.R{Code: 0, Message: "ok", Data: msg.ToResponse()})
+}
+
+func (h *SessionHandler) Stream(c *gin.Context) {
+	sid, _ := strconv.Atoi(c.Param("sid"))
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	eventCh, err := h.gateway.Run(c.Request.Context(), uint(sid))
+	if err != nil {
+		c.SSEvent("error", gin.H{"message": err.Error()})
+		return
+	}
+
+	c.Stream(func(w io.Writer) bool {
+		select {
+		case evt, ok := <-eventCh:
+			if !ok {
+				return false
+			}
+			data, _ := json.Marshal(evt)
+			c.SSEvent("message", string(data))
+			return true
+		case <-c.Request.Context().Done():
+			return false
+		}
+	})
+}
+
+func (h *SessionHandler) Cancel(c *gin.Context) {
+	sid, _ := strconv.Atoi(c.Param("sid"))
+
+	session, err := h.svc.Get(uint(sid))
+	if err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			handler.Fail(c, http.StatusNotFound, err.Error())
+			return
+		}
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if session.Status != SessionStatusRunning {
+		handler.OK(c, nil) // Idempotent no-op
+		return
+	}
+
+	// Signal executor cancellation via Gateway
+	h.gateway.Cancel(session.ID)
+	if err := h.svc.UpdateStatus(session.ID, SessionStatusCancelled); err != nil {
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	handler.OK(c, nil)
+}

@@ -46,6 +46,14 @@
     "exportEndpoint": "Export Endpoint",
     "serviceName": "Service Name",
     "sampleRate": "Sample Rate",
+    "falkordb": "FalkorDB (Knowledge Graph)",
+    "enableFalkorDB": "Enable FalkorDB",
+    "enableFalkorDBDesc": "Required for AI knowledge graph features",
+    "falkordbAddr": "Address",
+    "falkordbAddrPlaceholder": "localhost:6379",
+    "falkordbPassword": "Password",
+    "falkordbPasswordPlaceholder": "Leave empty if no password",
+    "falkordbDatabase": "Database Number",
     "next": "Next",
     "prev": "Previous"
   },
@@ -77,7 +85,8 @@
     "install": "Install",
     "installing": "Installing...",
     "prev": "Previous",
-    "installFailed": "Installation failed"
+    "installFailed": "Installation failed",
+    "falkordb": "FalkorDB"
   },
   "done": {
     "title": "Installation Complete",

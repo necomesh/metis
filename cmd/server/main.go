@@ -192,6 +192,13 @@ func main() {
 		scheduler.SetAuditLogCleanupHandler(scheduler.AuditLogCleanupTask, auditLogSvc.Cleanup)
 		engine.Register(scheduler.AuditLogCleanupTask)
 
+		// Register app tasks BEFORE engine.Start() so they are included in state sync
+		for _, a := range app.All() {
+			for _, t := range a.Tasks() {
+				engine.Register(&t)
+			}
+		}
+
 		if err := engine.Start(); err != nil {
 			slog.Error("scheduler start failed", "error", err)
 			os.Exit(1)
@@ -203,9 +210,6 @@ func main() {
 
 		for _, a := range app.All() {
 			a.Routes(authedGroup)
-			for _, t := range a.Tasks() {
-				engine.Register(&t)
-			}
 		}
 
 		// Install status endpoint (always available)
