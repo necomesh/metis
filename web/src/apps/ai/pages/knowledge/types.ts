@@ -41,6 +41,7 @@ export interface SourceItem {
   extractStatus: ExtractStatus
   byteSize: number
   sourceType: string
+  sourceUrl?: string
   createdAt: string
 }
 
@@ -53,6 +54,8 @@ export interface NodeItem {
   edgeCount: number
   content?: string
   sourceIds?: number[]
+  keywords?: string[]
+  citationMap?: Record<string, string>
   score?: number
 }
 
@@ -61,6 +64,19 @@ export interface EdgeItem {
   toNodeId: string
   relation: string
   description?: string
+}
+
+export interface SourceTextEntry {
+  id: number
+  title: string
+  content: string
+  format: string
+}
+
+export interface SearchResponse {
+  nodes: NodeItem[]
+  edges: EdgeItem[]
+  sourceTexts?: SourceTextEntry[]
 }
 
 export interface GraphResponse {

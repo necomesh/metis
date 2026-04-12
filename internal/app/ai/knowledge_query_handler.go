@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -19,6 +20,7 @@ import (
 type KnowledgeQueryHandler struct {
 	graphRepo    *KnowledgeGraphRepo
 	kbRepo       *KnowledgeBaseRepo
+	sourceRepo   *KnowledgeSourceRepo
 	modelRepo    *ModelRepo
 	embeddingSvc *KnowledgeEmbeddingService
 	encKey       crypto.EncryptionKey
@@ -28,10 +30,19 @@ func NewKnowledgeQueryHandler(i do.Injector) (*KnowledgeQueryHandler, error) {
 	return &KnowledgeQueryHandler{
 		graphRepo:    do.MustInvoke[*KnowledgeGraphRepo](i),
 		kbRepo:       do.MustInvoke[*KnowledgeBaseRepo](i),
+		sourceRepo:   do.MustInvoke[*KnowledgeSourceRepo](i),
 		modelRepo:    do.MustInvoke[*ModelRepo](i),
 		embeddingSvc: do.MustInvoke[*KnowledgeEmbeddingService](i),
 		encKey:       do.MustInvoke[crypto.EncryptionKey](i),
 	}, nil
+}
+
+// SourceTextEntry is a truncated source text for RAG grounding.
+type SourceTextEntry struct {
+	ID      uint   `json:"id"`
+	Title   string `json:"title"`
+	Content string `json:"content"`
+	Format  string `json:"format"`
 }
 
 // Search performs hybrid knowledge search (vector + fulltext + graph expansion).
@@ -121,11 +132,52 @@ func (h *KnowledgeQueryHandler) embedQuery(ctx context.Context, kbID uint, query
 	return resp.Embeddings[0]
 }
 
-// respondSearchResult builds the unified search response with nodes, edges, and scores.
+// respondSearchResult builds the unified search response with nodes, edges, scores, and source texts.
 func (h *KnowledgeQueryHandler) respondSearchResult(
 	c *gin.Context, kbID uint,
 	nodes []KnowledgeNode, edges []KnowledgeEdge, scores map[string]float64,
 ) {
+	// Collect unique source IDs from all nodes (cap at 3 per node)
+	sourceIDSet := make(map[uint]struct{})
+	for _, n := range nodes {
+		var ids []uint
+		if n.SourceIDs != "" {
+			_ = json.Unmarshal([]byte(n.SourceIDs), &ids)
+		}
+		for i, id := range ids {
+			if i >= 3 {
+				break
+			}
+			sourceIDSet[id] = struct{}{}
+		}
+	}
+
+	// Batch-fetch source records and build sourceTexts map
+	var sourceTexts []SourceTextEntry
+	if len(sourceIDSet) > 0 {
+		sourceIDs := make([]uint, 0, len(sourceIDSet))
+		for id := range sourceIDSet {
+			sourceIDs = append(sourceIDs, id)
+		}
+		sources, err := h.sourceRepo.FindByIDs(sourceIDs)
+		if err != nil {
+			slog.Debug("failed to fetch sources for RAG grounding", "error", err)
+		} else {
+			for _, src := range sources {
+				content := src.Content
+				if len(content) > 2000 {
+					content = content[:2000]
+				}
+				sourceTexts = append(sourceTexts, SourceTextEntry{
+					ID:      src.ID,
+					Title:   src.Title,
+					Content: content,
+					Format:  src.Format,
+				})
+			}
+		}
+	}
+
 	nodeResps := make([]KnowledgeNodeResponse, len(nodes))
 	for i, n := range nodes {
 		r := n.ToResponse()
@@ -145,7 +197,7 @@ func (h *KnowledgeQueryHandler) respondSearchResult(
 		edgeResps[i] = e.ToResponse()
 	}
 
-	handler.OK(c, gin.H{"nodes": nodeResps, "edges": edgeResps})
+	handler.OK(c, gin.H{"nodes": nodeResps, "edges": edgeResps, "sourceTexts": sourceTexts})
 }
 
 // vectorSearch embeds the query text and performs vector search + graph expansion.

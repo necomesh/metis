@@ -502,6 +502,7 @@
       "summary": "Summary",
       "edgeCount": "Edges",
       "content": "Content",
+      "keywords": "Keywords",
       "hasContent": "Has Content",
       "empty": "No nodes (not compiled yet)",
       "loadingContent": "Loading...",
@@ -518,7 +519,8 @@
       "noResults": "No matching results",
       "edgeCount": "edges",
       "viewContent": "View Content",
-      "hideContent": "Hide Content"
+      "hideContent": "Hide Content",
+      "viewRawSource": "View Raw Source"
     },
     "compileStage": {
       "preparing": "Preparing",
@@ -550,6 +552,10 @@
         "related": "Related",
         "contradicts": "Contradicts"
       }
+    },
+    "edges": {
+      "detail": "Edge Detail",
+      "description": "Description"
     },
     "logs": {
       "action": "Action",

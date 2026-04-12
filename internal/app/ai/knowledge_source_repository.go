@@ -27,6 +27,18 @@ func (r *KnowledgeSourceRepo) FindByID(id uint) (*KnowledgeSource, error) {
 	return &s, nil
 }
 
+// FindByIDs returns sources matching the given IDs (batch fetch).
+func (r *KnowledgeSourceRepo) FindByIDs(ids []uint) ([]KnowledgeSource, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var sources []KnowledgeSource
+	if err := r.db.Where("id IN ?", ids).Find(&sources).Error; err != nil {
+		return nil, err
+	}
+	return sources, nil
+}
+
 type SourceListParams struct {
 	KbID     uint
 	Keyword  string

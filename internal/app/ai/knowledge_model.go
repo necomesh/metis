@@ -299,26 +299,30 @@ func (s *KnowledgeSource) ToResponse() KnowledgeSourceResponse {
 // It is NOT a GORM model — nodes are stored exclusively in FalkorDB graphs.
 
 type KnowledgeNode struct {
-	ID         string `json:"id"`
-	Title      string `json:"title"`
-	Summary    string `json:"summary"`
-	Content    string `json:"content"`
-	NodeType   string `json:"nodeType"`
-	SourceIDs  string `json:"sourceIds"`
-	CompiledAt int64  `json:"compiledAt"`
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Summary     string `json:"summary"`
+	Content     string `json:"content"`
+	NodeType    string `json:"nodeType"`
+	SourceIDs   string `json:"sourceIds"`
+	Keywords    string `json:"keywords"`
+	CitationMap string `json:"citationMap"`
+	CompiledAt  int64  `json:"compiledAt"`
 }
 
 type KnowledgeNodeResponse struct {
-	ID         string          `json:"id"`
-	Title      string          `json:"title"`
-	Summary    string          `json:"summary"`
-	Content    string          `json:"content,omitempty"`
-	HasContent bool            `json:"hasContent"`
-	NodeType   string          `json:"nodeType"`
-	SourceIDs  json.RawMessage `json:"sourceIds"`
-	EdgeCount  int             `json:"edgeCount"`
-	CompiledAt int64           `json:"compiledAt"`
-	Score      float64         `json:"score,omitempty"`
+	ID          string          `json:"id"`
+	Title       string          `json:"title"`
+	Summary     string          `json:"summary"`
+	Content     string          `json:"content,omitempty"`
+	HasContent  bool            `json:"hasContent"`
+	NodeType    string          `json:"nodeType"`
+	SourceIDs   json.RawMessage `json:"sourceIds"`
+	Keywords    json.RawMessage `json:"keywords"`
+	CitationMap json.RawMessage `json:"citationMap,omitempty"`
+	EdgeCount   int             `json:"edgeCount"`
+	CompiledAt  int64           `json:"compiledAt"`
+	Score       float64         `json:"score,omitempty"`
 }
 
 func (n *KnowledgeNode) ToResponse() KnowledgeNodeResponse {
@@ -326,15 +330,25 @@ func (n *KnowledgeNode) ToResponse() KnowledgeNodeResponse {
 	if len(sourceIDs) == 0 || string(sourceIDs) == "" {
 		sourceIDs = json.RawMessage("[]")
 	}
+	keywords := json.RawMessage(n.Keywords)
+	if len(keywords) == 0 || string(keywords) == "" {
+		keywords = json.RawMessage("[]")
+	}
+	var citationMap json.RawMessage
+	if n.CitationMap != "" {
+		citationMap = json.RawMessage(n.CitationMap)
+	}
 	return KnowledgeNodeResponse{
-		ID:         n.ID,
-		Title:      n.Title,
-		Summary:    n.Summary,
-		Content:    n.Content,
-		HasContent: n.Content != "",
-		NodeType:   n.NodeType,
-		SourceIDs:  sourceIDs,
-		CompiledAt: n.CompiledAt,
+		ID:          n.ID,
+		Title:       n.Title,
+		Summary:     n.Summary,
+		Content:     n.Content,
+		HasContent:  n.Content != "",
+		NodeType:    n.NodeType,
+		SourceIDs:   sourceIDs,
+		Keywords:    keywords,
+		CitationMap: citationMap,
+		CompiledAt:  n.CompiledAt,
 	}
 }
 

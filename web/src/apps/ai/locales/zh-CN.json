@@ -512,6 +512,7 @@
       "summary": "摘要",
       "edgeCount": "关联数",
       "content": "内容",
+      "keywords": "关键词",
       "hasContent": "有内容",
       "empty": "暂无节点（尚未编译）",
       "loadingContent": "加载中...",
@@ -528,7 +529,8 @@
       "noResults": "无匹配结果",
       "edgeCount": "条关联",
       "viewContent": "查看内容",
-      "hideContent": "收起内容"
+      "hideContent": "收起内容",
+      "viewRawSource": "查看原文"
     },
     "compileStage": {
       "preparing": "准备中",
@@ -560,6 +562,10 @@
         "related": "关联",
         "contradicts": "矛盾"
       }
+    },
+    "edges": {
+      "detail": "关系详情",
+      "description": "描述"
     },
     "logs": {
       "action": "操作",

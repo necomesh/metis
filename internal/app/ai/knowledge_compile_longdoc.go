@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/kaptinlin/jsonrepair"
+
 	"metis/internal/llm"
 )
 
@@ -20,8 +22,9 @@ type sourceChunk struct {
 }
 
 type scanConcept struct {
-	Title   string `json:"title"`
-	Summary string `json:"summary"`
+	Title    string   `json:"title"`
+	Summary  string   `json:"summary"`
+	Keywords []string `json:"keywords"`
 }
 
 type scanResult struct {
@@ -411,7 +414,7 @@ func (s *KnowledgeCompileService) writeConceptArticles(ctx context.Context, llmC
 func (s *KnowledgeCompileService) mapSourceLongDoc(ctx context.Context, llmClient llm.Client, modelID string, src KnowledgeSource, cfg CompileConfig) mapSourceResult {
 	maxSize := cfg.MaxChunkSize
 	if maxSize <= 0 {
-		maxSize = 32000
+		maxSize = 12000
 	}
 
 	slog.Info("knowledge compile: using long-doc pipeline", "source", src.Title, "content_len", len(src.Content), "max_chunk", maxSize)
@@ -450,10 +453,13 @@ func (s *KnowledgeCompileService) mapSourceLongDoc(ctx context.Context, llmClien
 	}
 }
 
-// extractJSON extracts JSON from potentially markdown-wrapped LLM output.
+// extractJSON strips markdown code fences and repairs malformed JSON from LLM output.
+// Uses jsonrepair to handle common LLM issues: trailing commas, single quotes,
+// comments, truncated JSON, missing closing brackets, etc.
 func extractJSON(content string) string {
 	jsonStr := content
 
+	// Strip markdown code fences
 	if idx := strings.Index(content, "```json"); idx != -1 {
 		start := idx + 7
 		end := strings.Index(content[start:], "```")
@@ -471,5 +477,25 @@ func extractJSON(content string) string {
 		}
 	}
 
-	return strings.TrimSpace(jsonStr)
+	jsonStr = strings.TrimSpace(jsonStr)
+
+	// Try standard parse first — skip repair if JSON is already valid
+	if json.Valid([]byte(jsonStr)) {
+		return jsonStr
+	}
+
+	// Repair malformed JSON
+	repaired, err := jsonrepair.Repair(jsonStr)
+	if err != nil {
+		slog.Debug("json repair failed, returning original", "error", err, "preview", truncate(jsonStr, 200))
+		return jsonStr
+	}
+	return repaired
+}
+
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }

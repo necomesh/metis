@@ -41,11 +41,37 @@ func NewKnowledgeCompileService(i do.Injector) (*KnowledgeCompileService, error)
 
 // --- Map Phase Types ---
 
+// relationOutput represents a named relation with an optional description.
+// Supports flexible unmarshaling: accepts both "string" and {"name":"...","description":"..."}.
+type relationOutput struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+func (r *relationOutput) UnmarshalJSON(data []byte) error {
+	// Try string first (e.g. "Concept Name")
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		r.Name = s
+		r.Description = ""
+		return nil
+	}
+	// Otherwise expect object {"name": "...", "description": "..."}
+	type alias relationOutput
+	var obj alias
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return err
+	}
+	*r = relationOutput(obj)
+	return nil
+}
+
 type mapNodeOutput struct {
-	Title      string   `json:"title"`
-	Summary    string   `json:"summary"`
-	Content    string   `json:"content"`
-	References []string `json:"references"`
+	Title      string           `json:"title"`
+	Summary    string           `json:"summary"`
+	Content    string           `json:"content"`
+	Keywords   []string         `json:"keywords"`
+	References []relationOutput `json:"references"`
 }
 
 type mapResult struct {
@@ -67,13 +93,15 @@ type compileOutput struct {
 }
 
 type compileNodeOutput struct {
-	Title        string   `json:"title"`
-	Summary      string   `json:"summary"`
-	Content      string   `json:"content"`
-	References   []string `json:"references"`
-	Contradicts  []string `json:"contradicts"`
-	Sources      []string `json:"sources"`
-	UpdateReason string   `json:"update_reason,omitempty"`
+	Title        string            `json:"title"`
+	Summary      string            `json:"summary"`
+	Content      string            `json:"content"`
+	Keywords     []string          `json:"keywords"`
+	CitationMap  map[string]string `json:"citation_map,omitempty"`
+	References   []relationOutput  `json:"references"`
+	Contradicts  []relationOutput  `json:"contradicts"`
+	Sources      []string          `json:"sources"`
+	UpdateReason string            `json:"update_reason,omitempty"`
 }
 
 type compilePayload struct {
@@ -376,7 +404,7 @@ func (s *KnowledgeCompileService) runMapPhase(ctx context.Context, llmClient llm
 func (s *KnowledgeCompileService) mapSource(ctx context.Context, llmClient llm.Client, modelID string, src KnowledgeSource, cfg CompileConfig) mapSourceResult {
 	maxSize := cfg.MaxChunkSize
 	if maxSize <= 0 {
-		maxSize = 32000
+		maxSize = 12000
 	}
 
 	// Long-doc path: source exceeds maxChunkSize → three-phase pipeline
@@ -451,6 +479,18 @@ func (s *KnowledgeCompileService) runReducePhase(ctx context.Context, llmClient 
 func (s *KnowledgeCompileService) buildReducePrompt(mapResults []mapSourceResult, existingNodes []KnowledgeNode, analysis *cascadeAnalysis) string {
 	var sb strings.Builder
 
+	// Source index for citation markers
+	sb.WriteString("## Source Index\n")
+	idx := 1
+	for _, mr := range mapResults {
+		if mr.Error != nil {
+			continue
+		}
+		sb.WriteString(fmt.Sprintf("[S%d] = \"%s\"\n", idx, mr.SourceTitle))
+		idx++
+	}
+	sb.WriteString("\n")
+
 	sb.WriteString("## Extracted concepts from sources\n\n")
 	for _, mr := range mapResults {
 		if mr.Error != nil {
@@ -460,7 +500,14 @@ func (s *KnowledgeCompileService) buildReducePrompt(mapResults []mapSourceResult
 		for _, n := range mr.Nodes {
 			sb.WriteString(fmt.Sprintf("- **%s**: %s", n.Title, n.Summary))
 			if len(n.References) > 0 {
-				sb.WriteString(fmt.Sprintf(" [references: %s]", strings.Join(n.References, ", ")))
+				names := make([]string, len(n.References))
+				for i, r := range n.References {
+					names[i] = r.Name
+				}
+				sb.WriteString(fmt.Sprintf(" [references: %s]", strings.Join(names, ", ")))
+			}
+			if len(n.Keywords) > 0 {
+				sb.WriteString(fmt.Sprintf(" [keywords: %s]", strings.Join(n.Keywords, ", ")))
 			}
 			sb.WriteString("\n")
 		}
@@ -530,9 +577,10 @@ func (s *KnowledgeCompileService) buildReducePrompt(mapResults []mapSourceResult
 // resolveLLMClient looks up the model and provider configured for the KB,
 // then builds an llm.Client using the provider credentials.
 // resolveAutoChunkSize calculates maxChunkSize from the model's context window.
-// Returns contextWindow * 0.4, or a safe default (32000) if unavailable.
+// A lower threshold means more documents use the long-doc pipeline (chunked processing),
+// which produces better coverage than a single LLM call on a large input.
 func (s *KnowledgeCompileService) resolveAutoChunkSize(kb *KnowledgeBase) int {
-	const defaultChunkSize = 32000
+	const defaultChunkSize = 12000
 
 	var m *AIModel
 	var err error
@@ -545,9 +593,14 @@ func (s *KnowledgeCompileService) resolveAutoChunkSize(kb *KnowledgeBase) int {
 		return defaultChunkSize
 	}
 
-	autoSize := int(float64(m.ContextWindow) * 0.4)
+	// Use 10% of context window as chunk size (conservative to avoid "lost in the middle").
+	// Floor: 8K chars, Ceiling: 15K chars.
+	autoSize := int(float64(m.ContextWindow) * 0.1)
 	if autoSize < 8000 {
-		autoSize = 8000 // floor: never go below 8K chars
+		autoSize = 8000
+	}
+	if autoSize > 15000 {
+		autoSize = 15000
 	}
 	slog.Info("knowledge compile: auto chunk size from model context window", "model", m.ModelID, "context_window", m.ContextWindow, "chunk_size", autoSize)
 	return autoSize
@@ -618,12 +671,14 @@ func (s *KnowledgeCompileService) writeCompileOutput(kbID uint, output *compileO
 			continue
 		}
 		node := &KnowledgeNode{
-			Title:      n.Title,
-			Summary:    n.Summary,
-			Content:    n.Content,
-			NodeType:   NodeTypeConcept,
-			SourceIDs:  resolveSourceIDsJSON(n.Sources, sourceMap),
-			CompiledAt: now,
+			Title:       n.Title,
+			Summary:     n.Summary,
+			Content:     n.Content,
+			NodeType:    NodeTypeConcept,
+			SourceIDs:   resolveSourceIDsJSON(n.Sources, sourceMap),
+			Keywords:    toJSONString(n.Keywords),
+			CitationMap: toJSONString(n.CitationMap),
+			CompiledAt:  now,
 		}
 		if err := s.graphRepo.UpsertNodeByTitle(kbID, node); err != nil {
 			slog.Error("failed to upsert node", "title", n.Title, "error", err)
@@ -645,12 +700,14 @@ func (s *KnowledgeCompileService) writeCompileOutput(kbID uint, output *compileO
 			continue
 		}
 		node := &KnowledgeNode{
-			Title:      n.Title,
-			Summary:    n.Summary,
-			Content:    n.Content,
-			NodeType:   NodeTypeConcept,
-			SourceIDs:  resolveSourceIDsJSON(n.Sources, sourceMap),
-			CompiledAt: now,
+			Title:       n.Title,
+			Summary:     n.Summary,
+			Content:     n.Content,
+			NodeType:    NodeTypeConcept,
+			SourceIDs:   resolveSourceIDsJSON(n.Sources, sourceMap),
+			Keywords:    toJSONString(n.Keywords),
+			CitationMap: toJSONString(n.CitationMap),
+			CompiledAt:  now,
 		}
 		if err := s.graphRepo.UpsertNodeByTitle(kbID, node); err != nil {
 			slog.Error("failed to upsert updated node", "title", n.Title, "error", err)
@@ -684,22 +741,22 @@ func (s *KnowledgeCompileService) writeCompileOutput(kbID uint, output *compileO
 		// Create "related" edges from references
 		for _, ref := range n.References {
 			// Only create edge if target node exists — no ghost nodes
-			if _, err := s.graphRepo.FindNodeByTitle(kbID, ref); err != nil {
+			if _, err := s.graphRepo.FindNodeByTitle(kbID, ref.Name); err != nil {
 				continue
 			}
-			if err := s.graphRepo.CreateEdge(kbID, n.Title, ref, EdgeRelationRelated, ""); err != nil {
-				slog.Error("failed to create edge", "from", n.Title, "to", ref, "error", err)
+			if err := s.graphRepo.CreateEdge(kbID, n.Title, ref.Name, EdgeRelationRelated, ref.Description); err != nil {
+				slog.Error("failed to create edge", "from", n.Title, "to", ref.Name, "error", err)
 				continue
 			}
 			stats.edges++
 		}
 		// Create "contradicts" edges
 		for _, contra := range n.Contradicts {
-			if _, err := s.graphRepo.FindNodeByTitle(kbID, contra); err != nil {
+			if _, err := s.graphRepo.FindNodeByTitle(kbID, contra.Name); err != nil {
 				continue
 			}
-			if err := s.graphRepo.CreateEdge(kbID, n.Title, contra, EdgeRelationContradicts, ""); err != nil {
-				slog.Error("failed to create contradicts edge", "from", n.Title, "to", contra, "error", err)
+			if err := s.graphRepo.CreateEdge(kbID, n.Title, contra.Name, EdgeRelationContradicts, contra.Description); err != nil {
+				slog.Error("failed to create contradicts edge", "from", n.Title, "to", contra.Name, "error", err)
 				continue
 			}
 			stats.edges++
@@ -707,6 +764,18 @@ func (s *KnowledgeCompileService) writeCompileOutput(kbID uint, output *compileO
 	}
 
 	return stats, cascadeLog, nil
+}
+
+// toJSONString marshals any value to a JSON string. Returns "" on nil/empty input.
+func toJSONString(v any) string {
+	if v == nil {
+		return ""
+	}
+	b, err := json.Marshal(v)
+	if err != nil || string(b) == "null" {
+		return ""
+	}
+	return string(b)
 }
 
 // detectUpdateType infers the type of update from the reason text
@@ -922,100 +991,116 @@ func (s *KnowledgeCompileService) TaskDefs() []scheduler.TaskDef {
 	}
 }
 
-const compileSystemPrompt = `You are a knowledge compiler. Your job is to read source documents and compile them into a knowledge graph of concept nodes. Each node MUST be a complete, self-contained wiki article.
+const compileSystemPrompt = `You are a knowledge compiler. Merge extracted concepts into a knowledge graph of wiki-article nodes.
 
-IMPORTANT RULES:
-1. Organize knowledge by CONCEPTS, not by source documents
-2. Multiple sources about the same concept MUST be merged into one node
-3. Every node MUST have substantive content — a complete wiki article. Do NOT create nodes with empty or minimal content. If you cannot write at least a short article about a concept, do not create a node for it.
-4. Target article length: %d characters per node. Minimum: %d characters.
-5. Use name-driven references — output concept names and source titles, NOT database IDs
-6. Each article should be self-contained and independently readable
+TASK: Given concept outlines from multiple sources and existing graph nodes, produce final wiki articles. Merge duplicate concepts, detect contradictions, and update existing nodes when new information is available.
 
-CASCADE UPDATE RULES (CRITICAL):
-When new sources relate to existing concepts, you MUST update the existing nodes:
-1. Check "High-impact existing nodes" section - these LIKELY need updates
-2. Include affected existing nodes in "updated_nodes" array, not "nodes" array
-3. Merge new source content into existing nodes when they cover the same concept
-4. Flag contradictions if new sources conflict with existing knowledge
-5. In "update_reason" field, explain specifically what changed and why
-
-Do NOT put existing nodes (from "High-impact" or "Medium-impact" sections) in the "nodes" array.
-Only truly NEW concepts should be in "nodes".
-
-ARTICLE STRUCTURE:
-Each node's content should follow this structure:
-- Opening paragraph: what this concept is and why it matters
-- Core content: detailed explanation, key principles, specifics
-- Practical details: examples, data, comparisons where applicable
-
-OUTPUT FORMAT: You MUST output valid JSON with this exact structure:
+OUTPUT SCHEMA (strict JSON):
 {
-  "nodes": [
-    {
-      "title": "New Concept Name",
-      "summary": "One-line description",
-      "content": "Full wiki article in Markdown (REQUIRED, never empty)",
-      "references": ["Other Concept Name", "Another Concept"],
-      "contradicts": [],
-      "sources": ["Source Title 1"]
-    }
-  ],
-  "updated_nodes": [
-    {
-      "title": "Existing Concept Name",
-      "summary": "Updated summary incorporating new information",
-      "content": "Updated full article with merged information",
-      "references": ["New Concept Name", "Other Existing"],
-      "contradicts": ["Conflicting Concept"],
-      "sources": ["Original Source", "New Source Title"],
-      "update_reason": "Added pricing information from new source"
-    }
-  ]
-}
-
-- "references": list of other concept names this article relates to (creates "related" edges)
-- "contradicts": list of concept names with conflicting information (creates "contradicts" edges)
-
-If no existing nodes need updates, leave "updated_nodes" as an empty array.
-Output ONLY the JSON, no other text.`
-
-const mapSystemPrompt = `You are a knowledge extractor. Your job is to read a single source document and extract concept nodes. Each node MUST be a complete, self-contained wiki article.
-
-RULES:
-1. Extract distinct concepts from the document — only concepts you can write a substantive article about
-2. Every node MUST have non-empty content: a complete wiki article
-3. Do NOT create nodes for concepts only briefly mentioned. Only create nodes for concepts with enough material to write at least %d characters.
-4. Target article length: %d characters per node
-5. Use descriptive, canonical concept titles (e.g., "React Hooks" not "hooks")
-6. List other concepts referenced in each article under "references"
-
-OUTPUT FORMAT: You MUST output valid JSON with this exact structure:
-{
-  "nodes": [
+  "nodes": [                              // NEW concepts only
     {
       "title": "Concept Name",
-      "summary": "One-line description",
-      "content": "Full wiki article in Markdown (REQUIRED, never empty)",
-      "references": ["Other Concept Name", "Another Concept"]
+      "summary": "2-3 sentence description",
+      "content": "Full Markdown article with [S1][S2] citation markers (REQUIRED, never empty)",
+      "keywords": ["domain-specific", "search", "terms"],          // 3-8 keywords
+      "citation_map": {"S1": "Source Title 1", "S2": "Source Title 2"},  // maps [S1] markers to source titles
+      "references": [                                              // creates "related" edges
+        {"name": "Other Concept", "description": "Why these concepts are related"}
+      ],
+      "contradicts": [],                                           // creates "contradicts" edges
+      "sources": ["Source Title 1", "Source Title 2"]              // which source documents contributed
+    }
+  ],
+  "updated_nodes": [                      // EXISTING concepts that need updates
+    {
+      "title": "Existing Concept Name",   // must match an existing node title exactly
+      "summary": "Updated summary",
+      "content": "Rewritten article incorporating new information, with [S1][S2] citations",
+      "keywords": ["updated", "keywords"],
+      "citation_map": {"S1": "Original Source", "S2": "New Source"},
+      "references": [{"name": "Related Concept", "description": "Relationship explanation"}],
+      "contradicts": [{"name": "Conflicting Concept", "description": "Nature of contradiction"}],
+      "sources": ["Original Source", "New Source"],
+      "update_reason": "What changed and why"
     }
   ]
 }
 
-Output ONLY the JSON, no other text.`
+FIELD RULES:
+- "content": Target %d chars, minimum %d chars. Must be a complete, self-contained wiki article.
+- "citation_map": Every [S1]-style marker in content MUST have a corresponding entry. Use the Source Index provided in the user message.
+- "references"/"contradicts": Each entry MUST be {"name": "...", "description": "..."}. The description explains WHY the relationship exists.
+- "keywords": Domain-specific terms useful for search. NOT generic words like "overview" or "important".
 
-const scanSystemPrompt = `You are a knowledge scanner. Your job is to quickly identify distinct concepts in a text chunk. Output ONLY concept titles and one-line summaries — do NOT write full articles.
+CASCADE RULES:
+When the user message includes "High-impact existing nodes", those nodes LIKELY need updates:
+1. Put updated existing nodes in "updated_nodes", NOT in "nodes"
+2. Merge new source information into the existing article
+3. Add contradictions if new sources conflict with existing knowledge
+4. Explain what changed in "update_reason"
 
-RULES:
-1. Only identify concepts that have enough material for a substantive article
-2. Skip trivially mentioned concepts
-3. Use descriptive, canonical concept titles
+Only truly NEW concepts (not matching any existing node) go in "nodes".
+If no updates are needed, leave "updated_nodes" as [].
 
-OUTPUT FORMAT: You MUST output valid JSON:
+BAD OUTPUT (will cause errors):
+- "references": ["Concept A", "Concept B"]           ← WRONG: must be objects with name+description
+- "content": ""                                        ← WRONG: content must never be empty
+- "citation_map": {}  but content has [S1] markers    ← WRONG: every marker needs a map entry
+- Putting an existing node title in "nodes" instead of "updated_nodes"
+
+Output ONLY the JSON object, no markdown fences, no explanation.`
+
+const mapSystemPrompt = `You are a knowledge extractor. Read a source document and extract distinct concept nodes.
+
+TASK: For each concept with enough material, produce a self-contained wiki article.
+IMPORTANT: You MUST process the ENTIRE document from beginning to end. Do NOT stop after the first section — extract concepts from ALL parts of the source.
+
+OUTPUT SCHEMA (strict JSON):
 {
-  "concepts": [
-    {"title": "Concept Name", "summary": "One-line description"}
+  "nodes": [
+    {
+      "title": "Canonical Concept Name",   // descriptive, e.g. "React Hooks" not "hooks"
+      "summary": "2-3 sentence description that captures the concept's essence and scope",
+      "content": "Full wiki article in Markdown (REQUIRED, never empty or short)",
+      "keywords": ["domain-specific", "search", "terms"],  // 3-8 keywords
+      "references": ["Other Concept Name"]                  // names of related concepts mentioned in article
+    }
   ]
 }
 
-Output ONLY the JSON, no other text.`
+RULES:
+1. Only create nodes for concepts with enough material for at least %d characters of content.
+2. Target article length: %d characters. Write substantive, detailed articles.
+3. The "summary" field is critical — it must capture WHAT the concept is, WHY it matters, and its SCOPE. A good summary lets someone decide whether to read the full article.
+4. "keywords" must be specific and domain-relevant (not generic words like "important" or "system").
+5. "references" is a flat list of concept name strings — just the names, nothing else.
+6. Scan the ENTIRE source — concepts from the middle and end of the document are just as important as those at the beginning.
+
+DO NOT:
+- Create nodes for concepts only briefly mentioned
+- Output empty or near-empty content
+- Use database IDs anywhere — use human-readable names only
+- Skip sections of the source document
+
+Output ONLY the JSON object, no markdown fences, no explanation.`
+
+const scanSystemPrompt = `You are a knowledge scanner. Quickly identify distinct concepts in a text chunk.
+
+OUTPUT SCHEMA (strict JSON):
+{
+  "concepts": [
+    {
+      "title": "Canonical Concept Name",
+      "summary": "2-3 sentence description capturing essence and scope",
+      "keywords": ["domain-specific", "terms"]   // 3-8 keywords for deduplication
+    }
+  ]
+}
+
+RULES:
+1. Only identify concepts with enough material for a substantive article.
+2. Use descriptive, canonical titles (e.g., "React Server Components" not "server components").
+3. The summary is critical for downstream merging — be specific about scope and boundaries.
+4. Skip trivially mentioned concepts.
+
+Output ONLY the JSON object, no markdown fences, no explanation.`

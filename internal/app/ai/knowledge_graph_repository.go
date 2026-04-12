@@ -58,16 +58,19 @@ func (r *KnowledgeGraphRepo) CreateNode(kbID uint, node *KnowledgeNode) error {
 	g := r.client.GraphFor(kbID)
 	query := `MERGE (n:KnowledgeNode {id: $id})
 SET n.title = $title, n.summary = $summary, n.content = $content,
-    n.node_type = $nodeType, n.source_ids = $sourceIds, n.compiled_at = $compiledAt`
+    n.node_type = $nodeType, n.source_ids = $sourceIds, n.compiled_at = $compiledAt,
+    n.keywords = $keywords, n.citation_map = $citationMap`
 
 	params := map[string]interface{}{
-		"id":         node.ID,
-		"title":      node.Title,
-		"summary":    node.Summary,
-		"content":    node.Content,
-		"nodeType":   node.NodeType,
-		"sourceIds":  node.SourceIDs,
-		"compiledAt": node.CompiledAt,
+		"id":          node.ID,
+		"title":       node.Title,
+		"summary":     node.Summary,
+		"content":     node.Content,
+		"nodeType":    node.NodeType,
+		"sourceIds":   node.SourceIDs,
+		"keywords":    node.Keywords,
+		"citationMap": node.CitationMap,
+		"compiledAt":  node.CompiledAt,
 	}
 
 	_, err := g.Query(query, params, nil)
@@ -86,19 +89,23 @@ func (r *KnowledgeGraphRepo) UpsertNodeByTitle(kbID uint, node *KnowledgeNode) e
 	g := r.client.GraphFor(kbID)
 	query := `MERGE (n:KnowledgeNode {title: $title})
 ON CREATE SET n.id = $id, n.summary = $summary, n.content = $content,
-              n.node_type = $nodeType, n.source_ids = $sourceIds, n.compiled_at = $compiledAt
+              n.node_type = $nodeType, n.source_ids = $sourceIds, n.compiled_at = $compiledAt,
+              n.keywords = $keywords, n.citation_map = $citationMap
 ON MATCH SET  n.summary = $summary, n.content = $content,
-              n.source_ids = $sourceIds, n.compiled_at = $compiledAt
+              n.source_ids = $sourceIds, n.compiled_at = $compiledAt,
+              n.keywords = $keywords, n.citation_map = $citationMap
 RETURN n.id`
 
 	params := map[string]interface{}{
-		"id":         node.ID,
-		"title":      node.Title,
-		"summary":    node.Summary,
-		"content":    node.Content,
-		"nodeType":   node.NodeType,
-		"sourceIds":  node.SourceIDs,
-		"compiledAt": node.CompiledAt,
+		"id":          node.ID,
+		"title":       node.Title,
+		"summary":     node.Summary,
+		"content":     node.Content,
+		"nodeType":    node.NodeType,
+		"sourceIds":   node.SourceIDs,
+		"keywords":    node.Keywords,
+		"citationMap": node.CitationMap,
+		"compiledAt":  node.CompiledAt,
 	}
 
 	result, err := g.Query(query, params, nil)
@@ -883,13 +890,15 @@ func recordToNode(rec *falkordb.Record, alias string) (*KnowledgeNode, error) {
 	}
 
 	node := &KnowledgeNode{
-		ID:         toString(fNode.GetProperty("id")),
-		Title:      toString(fNode.GetProperty("title")),
-		Summary:    toString(fNode.GetProperty("summary")),
-		Content:    toString(fNode.GetProperty("content")),
-		NodeType:   toString(fNode.GetProperty("node_type")),
-		SourceIDs:  toString(fNode.GetProperty("source_ids")),
-		CompiledAt: toInt64(fNode.GetProperty("compiled_at")),
+		ID:          toString(fNode.GetProperty("id")),
+		Title:       toString(fNode.GetProperty("title")),
+		Summary:     toString(fNode.GetProperty("summary")),
+		Content:     toString(fNode.GetProperty("content")),
+		NodeType:    toString(fNode.GetProperty("node_type")),
+		SourceIDs:   toString(fNode.GetProperty("source_ids")),
+		Keywords:    toString(fNode.GetProperty("keywords")),
+		CitationMap: toString(fNode.GetProperty("citation_map")),
+		CompiledAt:  toInt64(fNode.GetProperty("compiled_at")),
 	}
 
 	return node, nil

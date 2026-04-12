@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { useTranslation } from "react-i18next"
-import { BookOpen, FileText, Maximize2, ChevronDown, ChevronRight, Loader2 } from "lucide-react"
+import { BookOpen, FileText, Maximize2, ChevronDown, ChevronRight, Loader2, ArrowRight } from "lucide-react"
 import ForceGraph2D from "react-force-graph-2d"
 import { useQuery } from "@tanstack/react-query"
 import { api } from "@/lib/api"
@@ -17,6 +17,7 @@ interface GraphNode {
   nodeType: string
   edgeCount: number
   sourceIds?: number[]
+  keywords?: string[]
   hasContent?: boolean
   color: string
   val: number
@@ -29,6 +30,8 @@ interface GraphLink {
   target: string
   relation: string
   color: string
+  description?: string
+  curvature: number
 }
 
 export function KnowledgeGraphView({ kbId, highlightedNodeIds }: { kbId: number; highlightedNodeIds?: Set<string> }) {
@@ -36,6 +39,7 @@ export function KnowledgeGraphView({ kbId, highlightedNodeIds }: { kbId: number;
   const containerRef = useRef<HTMLDivElement>(null)
   const graphRef = useRef<{ zoomToFit: (ms?: number, px?: number) => void; zoom: (k: number, ms?: number) => void }>(null)
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null)
+  const [selectedEdge, setSelectedEdge] = useState<GraphLink | null>(null)
   const [containerSize, setContainerSize] = useState<{ w: number; h: number } | null>(null)
   const [nodeContent, setNodeContent] = useState<string | null>(null)
   const [loadingContent, setLoadingContent] = useState(false)
@@ -74,23 +78,35 @@ export function KnowledgeGraphView({ kbId, highlightedNodeIds }: { kbId: number;
       nodeType: n.nodeType,
       edgeCount: n.edgeCount,
       sourceIds: n.sourceIds,
+      keywords: n.keywords,
       hasContent: n.hasContent,
       color: NODE_COLORS[n.nodeType] ?? NODE_COLORS.concept,
       val: 1 + Math.min(n.edgeCount, 10) * 0.3,
     }))
     const nodeIds = new Set(nodes.map((n) => n.id))
-    const links: GraphLink[] = (data.edges as EdgeItem[])
+    const rawLinks = (data.edges as EdgeItem[])
       .filter((e) => nodeIds.has(e.fromNodeId) && nodeIds.has(e.toNodeId))
       .map((e) => ({
         source: e.fromNodeId,
         target: e.toNodeId,
         relation: e.relation,
         color: RELATION_COLORS[e.relation] ?? RELATION_COLORS.related,
+        description: e.description,
+        curvature: 0,
       }))
+    // Detect bidirectional edges and curve them so they don't overlap
+    const edgeSet = new Set(rawLinks.map((l) => `${l.source}→${l.target}`))
+    const links: GraphLink[] = rawLinks.map((l) => {
+      if (edgeSet.has(`${l.target}→${l.source}`)) {
+        return { ...l, curvature: 0.3 }
+      }
+      return l
+    })
     return { nodes, links }
   }, [data])
 
   const handleNodeClick = useCallback((node: GraphNode) => {
+    setSelectedEdge(null)
     setSelectedNode((prev) => {
       if (prev?.id === node.id) {
         // 关闭面板时重置内容状态
@@ -102,6 +118,20 @@ export function KnowledgeGraphView({ kbId, highlightedNodeIds }: { kbId: number;
       setShowContent(false)
       setNodeContent(null)
       return node
+    })
+  }, [])
+
+  // d3-force mutates link.source/target from string IDs to full node objects,
+  // so we must normalize back to string IDs when storing selectedEdge.
+  const handleLinkClick = useCallback((link: GraphLink) => {
+    const sourceId = typeof link.source === "string" ? link.source : (link.source as unknown as GraphNode).id
+    const targetId = typeof link.target === "string" ? link.target : (link.target as unknown as GraphNode).id
+    setSelectedNode(null)
+    setShowContent(false)
+    setNodeContent(null)
+    setSelectedEdge((prev) => {
+      if (prev?.source === sourceId && prev?.target === targetId) return null
+      return { source: sourceId, target: targetId, relation: link.relation, color: link.color, description: link.description, curvature: link.curvature }
     })
   }, [])
 
@@ -137,6 +167,11 @@ export function KnowledgeGraphView({ kbId, highlightedNodeIds }: { kbId: number;
     if (text.length <= maxLength) return text
     return text.slice(0, maxLength) + "..."
   }, [])
+
+  // Lookup node name by ID for edge detail panel
+  const nodeNameById = useCallback((id: string) => {
+    return graphData.nodes.find((n) => n.id === id)?.name ?? id
+  }, [graphData.nodes])
 
   const nodeCanvasObject = useCallback(
     (node: GraphNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
@@ -249,12 +284,14 @@ export function KnowledgeGraphView({ kbId, highlightedNodeIds }: { kbId: number;
           linkTarget="target"
           linkColor={(link: GraphLink) => link.color}
           linkWidth={1.5}
+          linkCurvature="curvature"
           linkDirectionalArrowLength={4}
           linkDirectionalArrowRelPos={1}
-          linkLabel={(link: GraphLink) => link.relation}
+          linkLabel={(link: GraphLink) => link.description ? `${link.relation}: ${link.description}` : link.relation}
           nodeCanvasObject={nodeCanvasObject}
           nodePointerAreaPaint={nodePointerAreaPaint}
           onNodeClick={handleNodeClick}
+          onLinkClick={handleLinkClick}
           cooldownTicks={100}
           warmupTicks={30}
           enableZoomInteraction={true}
@@ -315,6 +352,17 @@ export function KnowledgeGraphView({ kbId, highlightedNodeIds }: { kbId: number;
           <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
             <span>{t("ai:knowledge.nodes.edgeCount")}: {selectedNode.edgeCount}</span>
           </div>
+
+          {/* Keywords */}
+          {selectedNode.keywords && selectedNode.keywords.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-2">
+              {selectedNode.keywords.map((kw) => (
+                <Badge key={kw} variant="secondary" className="text-[10px] px-1.5 py-0 font-normal">
+                  {kw}
+                </Badge>
+              ))}
+            </div>
+          )}
           
           {/* 查看原文按钮 */}
           {selectedNode.hasContent && (
@@ -347,9 +395,17 @@ export function KnowledgeGraphView({ kbId, highlightedNodeIds }: { kbId: number;
           {/* 原文内容 */}
           {showContent && nodeContent !== null && (
             <div className="mt-2">
-              <pre className="rounded bg-muted p-2 text-xs font-mono whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
-                {nodeContent || t("ai:knowledge.nodes.noContent")}
-              </pre>
+              <div className="rounded bg-muted p-2 text-xs font-mono whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
+                {(nodeContent || t("ai:knowledge.nodes.noContent")).split(/(\[S\d+\])/).map((part, i) =>
+                  /^\[S\d+\]$/.test(part) ? (
+                    <span key={i} className="inline-flex items-center px-1 py-0 rounded text-[10px] font-semibold bg-primary/15 text-primary mx-0.5">
+                      {part}
+                    </span>
+                  ) : (
+                    <span key={i}>{part}</span>
+                  )
+                )}
+              </div>
             </div>
           )}
           
@@ -368,6 +424,40 @@ export function KnowledgeGraphView({ kbId, highlightedNodeIds }: { kbId: number;
                     </div>
                   ))}
               </div>
+            </div>
+          )}
+        </div>
+      )}
+      {/* Edge detail panel */}
+      {selectedEdge && (
+        <div className="absolute top-3 right-3 w-80 rounded-lg border bg-card/95 backdrop-blur p-3 shadow-lg text-sm">
+          <div className="flex items-center gap-2 mb-2">
+            <h4 className="font-semibold truncate flex-1">{t("ai:knowledge.edges.detail")}</h4>
+            <Badge
+              variant="outline"
+              className="text-xs shrink-0"
+              style={{
+                backgroundColor: (RELATION_COLORS[selectedEdge.relation] ?? RELATION_COLORS.related) + "20",
+                color: RELATION_COLORS[selectedEdge.relation] ?? RELATION_COLORS.related,
+                borderColor: "transparent",
+              }}
+            >
+              {t(`ai:knowledge.graph.relations.${selectedEdge.relation}`, selectedEdge.relation)}
+            </Badge>
+          </div>
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="font-medium truncate max-w-[120px]" title={nodeNameById(selectedEdge.source)}>
+              {nodeNameById(selectedEdge.source)}
+            </span>
+            <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+            <span className="font-medium truncate max-w-[120px]" title={nodeNameById(selectedEdge.target)}>
+              {nodeNameById(selectedEdge.target)}
+            </span>
+          </div>
+          {selectedEdge.description && (
+            <div className="mt-2 pt-2 border-t">
+              <span className="text-xs text-muted-foreground">{t("ai:knowledge.edges.description")}</span>
+              <p className="mt-1 text-xs leading-relaxed">{selectedEdge.description}</p>
             </div>
           )}
         </div>

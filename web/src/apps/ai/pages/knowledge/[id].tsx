@@ -8,7 +8,7 @@ import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { usePermission } from "@/hooks/use-permission"
-import type { KnowledgeBaseDetail, NodeItem } from "./types"
+import type { KnowledgeBaseDetail, SearchResponse } from "./types"
 import { CompileStatusBadge } from "./components/status-badges"
 import { SourcesTab } from "./components/sources-tab"
 import { KnowledgeGraphView } from "./components/knowledge-graph-view"
@@ -28,7 +28,7 @@ function KnowledgeGraphTab({ kbId, compileMethod }: { kbId: number; compileMetho
 
   const { data: recallData, isLoading: recallLoading } = useQuery({
     queryKey: ["ai-kb-recall", kbId, recallSearchQuery],
-    queryFn: () => api.get<{ nodes: NodeItem[]; edges: unknown[] }>(
+    queryFn: () => api.get<SearchResponse>(
       `/api/v1/ai/knowledge-bases/${kbId}/search?q=${encodeURIComponent(recallSearchQuery)}&limit=20`,
     ),
     enabled: recallSearchQuery.length > 0 && recallOpen,
@@ -97,6 +97,7 @@ function KnowledgeGraphTab({ kbId, compileMethod }: { kbId: number; compileMetho
           <RecallPanel
             kbId={kbId}
             results={recallData?.nodes ?? []}
+            sourceTexts={recallData?.sourceTexts}
             isLoading={recallLoading}
             hasSearched={recallSearchQuery.length > 0}
             onSearch={setRecallSearchQuery}
