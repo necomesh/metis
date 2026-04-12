@@ -2,7 +2,7 @@ import { useCallback, useMemo, useRef, useState, useEffect } from "react"
 import { useParams, useNavigate } from "react-router"
 import { useTranslation } from "react-i18next"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { Square, Trash2, Brain, PanelLeft, PanelLeftClose } from "lucide-react"
+import { Square, Trash2, Brain, PanelLeft, PanelLeftClose, Paperclip, AlertTriangle, RotateCcw, Play } from "lucide-react"
 import { sessionApi, type SessionMessage as SessionMsg } from "@/lib/api"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -13,33 +13,49 @@ import {
 } from "@/components/ui/alert-dialog"
 import { useChatStream, type ChatEvent } from "./hooks/use-chat-stream"
 import { QAPair, AIResponse } from "./components/message-item"
+import { ThinkingBlock } from "./components/thinking-block"
+import { PlanProgress } from "./components/plan-progress"
+import { WelcomeScreen } from "./components/welcome-screen"
 import { SessionSidebar } from "./components/session-sidebar"
 import { MemoryPanel } from "./components/memory-panel"
 
 const SIDEBAR_COLLAPSED_KEY = "ai-chat-sidebar-collapsed"
 
+interface StreamState {
+  text: string
+  thinkingText: string
+  thinkingDone: boolean
+  thinkingDurationMs: number
+  planSteps: { description: string; durationMs?: number }[]
+  planStepIndex: number
+  doneMetrics: { durationMs?: number; inputTokens?: number; outputTokens?: number } | null
+  cancelled: boolean
+  error: string | null
+}
+
+const INITIAL_STREAM_STATE: StreamState = {
+  text: "",
+  thinkingText: "",
+  thinkingDone: false,
+  thinkingDurationMs: 0,
+  planSteps: [],
+  planStepIndex: -1,
+  doneMetrics: null,
+  cancelled: false,
+  error: null,
+}
+
 export function Component() {
-  // Group messages into QA pairs - defined inside component to avoid fast-refresh issues
   const groupMessagesIntoPairs = useCallback((messages: SessionMsg[]): Array<{
     userMessage: SessionMsg
     aiMessage?: SessionMsg
     tools: SessionMsg[]
   }> => {
-    const pairs: Array<{
-      userMessage: SessionMsg
-      aiMessage?: SessionMsg
-      tools: SessionMsg[]
-    }> = []
-
-    let currentPair: {
-      userMessage?: SessionMsg
-      aiMessage?: SessionMsg
-      tools: SessionMsg[]
-    } = { tools: [] }
+    const pairs: Array<{ userMessage: SessionMsg; aiMessage?: SessionMsg; tools: SessionMsg[] }> = []
+    let currentPair: { userMessage?: SessionMsg; aiMessage?: SessionMsg; tools: SessionMsg[] } = { tools: [] }
 
     for (const msg of messages) {
       if (msg.role === "user") {
-        // Save previous pair if exists
         if (currentPair.userMessage) {
           pairs.push({
             userMessage: currentPair.userMessage,
@@ -47,7 +63,6 @@ export function Component() {
             tools: currentPair.tools,
           })
         }
-        // Start new pair
         currentPair = { userMessage: msg, tools: [] }
       } else if (msg.role === "assistant") {
         currentPair.aiMessage = msg
@@ -56,7 +71,6 @@ export function Component() {
       }
     }
 
-    // Add last pair
     if (currentPair.userMessage) {
       pairs.push({
         userMessage: currentPair.userMessage,
@@ -67,6 +81,7 @@ export function Component() {
 
     return pairs
   }, [])
+
   const { sid } = useParams<{ sid: string }>()
   const sessionId = Number(sid)
   const { t } = useTranslation(["ai", "common"])
@@ -74,7 +89,7 @@ export function Component() {
   const queryClient = useQueryClient()
   const [input, setInput] = useState("")
   const [pendingMessages, setPendingMessages] = useState<SessionMsg[]>([])
-  const [streamingText, setStreamingText] = useState("")
+  const [stream, setStream] = useState<StreamState>(INITIAL_STREAM_STATE)
   const [memoryOpen, setMemoryOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     const saved = localStorage.getItem(SIDEBAR_COLLAPSED_KEY)
@@ -92,7 +107,6 @@ export function Component() {
 
   const messages = useMemo(() => {
     const base = sessionData?.messages ?? []
-    // Deduplicate: filter out pending messages that already exist in base (by ID)
     const baseIds = new Set(base.map(m => m.id))
     const uniquePending = pendingMessages.filter(m => !baseIds.has(m.id))
     return [...base, ...uniquePending]
@@ -108,20 +122,54 @@ export function Component() {
 
   const handleEvent = useCallback((event: ChatEvent) => {
     if (event.type === "content_delta" && event.text) {
-      setStreamingText((prev) => prev + event.text)
+      setStream(prev => ({ ...prev, text: prev.text + event.text }))
+    } else if (event.type === "thinking_delta" && event.text) {
+      setStream(prev => ({ ...prev, thinkingText: prev.thinkingText + event.text }))
+    } else if (event.type === "thinking_done") {
+      setStream(prev => ({
+        ...prev,
+        thinkingDone: true,
+        thinkingDurationMs: event.durationMs ?? 0,
+      }))
+    } else if (event.type === "plan_steps" && event.steps) {
+      setStream(prev => ({
+        ...prev,
+        planSteps: event.steps!.map(s => ({ description: s.description })),
+        planStepIndex: 0,
+      }))
+    } else if (event.type === "step_start" && event.stepIndex != null) {
+      setStream(prev => ({ ...prev, planStepIndex: event.stepIndex! }))
+    } else if (event.type === "step_done" && event.stepIndex != null) {
+      setStream(prev => {
+        const steps = [...prev.planSteps]
+        if (steps[event.stepIndex!]) {
+          steps[event.stepIndex!] = { ...steps[event.stepIndex!], durationMs: event.durationMs }
+        }
+        return { ...prev, planSteps: steps, planStepIndex: event.stepIndex! + 1 }
+      })
     }
   }, [])
 
-  const handleDone = useCallback(() => {
-    setStreamingText("")
+  const handleDone = useCallback((event: ChatEvent) => {
+    setStream(prev => ({
+      ...prev,
+      doneMetrics: {
+        durationMs: event.durationMs,
+        inputTokens: event.inputTokens,
+        outputTokens: event.outputTokens,
+      },
+    }))
     setPendingMessages([])
     queryClient.invalidateQueries({ queryKey: ["ai-session", sessionId] })
+    // Reset stream state after query refresh, keeping metrics for last message
+    setTimeout(() => {
+      setStream(INITIAL_STREAM_STATE)
+    }, 100)
   }, [queryClient, sessionId])
 
   const handleStreamError = useCallback((msg: string) => {
-    setStreamingText("")
+    setStream(prev => ({ ...prev, error: msg }))
     setPendingMessages([])
-    toast.error(msg)
     queryClient.invalidateQueries({ queryKey: ["ai-session", sessionId] })
   }, [queryClient, sessionId])
 
@@ -134,9 +182,9 @@ export function Component() {
   const sendMutation = useMutation({
     mutationFn: (content: string) => sessionApi.sendMessage(sessionId, content),
     onSuccess: (msg) => {
-      setPendingMessages((prev) => [...prev, msg])
+      setPendingMessages(prev => [...prev, msg])
       setInput("")
-      setStreamingText("")
+      setStream(INITIAL_STREAM_STATE)
       connect(sessionId)
       scrollToBottom()
     },
@@ -147,6 +195,7 @@ export function Component() {
     mutationFn: () => sessionApi.cancel(sessionId),
     onSuccess: () => {
       disconnect()
+      setStream(prev => ({ ...prev, cancelled: true }))
       queryClient.invalidateQueries({ queryKey: ["ai-session", sessionId] })
     },
   })
@@ -161,11 +210,27 @@ export function Component() {
     onError: (err) => toast.error(err.message),
   })
 
+  const editMessageMutation = useMutation({
+    mutationFn: ({ mid, content }: { mid: number; content: string }) =>
+      sessionApi.editMessage(sessionId, mid, content),
+    onSuccess: () => {
+      setPendingMessages([])
+      setStream(INITIAL_STREAM_STATE)
+      queryClient.invalidateQueries({ queryKey: ["ai-session", sessionId] })
+      // Trigger new SSE stream after edit
+      connect(sessionId)
+    },
+    onError: (err) => toast.error(err.message),
+  })
+
+  const handleEditMessage = useCallback((messageId: number, content: string) => {
+    editMessageMutation.mutate({ mid: messageId, content })
+  }, [editMessageMutation])
+
   // Auto-resize textarea
   useEffect(() => {
     const textarea = textareaRef.current
     if (!textarea) return
-
     textarea.style.height = "auto"
     const newHeight = Math.min(textarea.scrollHeight, 200)
     textarea.style.height = `${newHeight}px`
@@ -173,20 +238,20 @@ export function Component() {
 
   // Scroll to bottom when streaming
   useEffect(() => {
-    if (isStreaming && streamingText) {
+    if (isStreaming && (stream.text || stream.thinkingText)) {
       scrollToBottom()
     }
-  }, [isStreaming, streamingText, scrollToBottom])
+  }, [isStreaming, stream.text, stream.thinkingText, scrollToBottom])
 
-  // Auto scroll to bottom when messages change (initial load, new messages)
+  // Auto scroll on messages change
   useEffect(() => {
     scrollToBottom()
   }, [qaPairs, scrollToBottom])
 
-  function handleSend() {
-    const content = input.trim()
-    if (!content || isStreaming || sendMutation.isPending) return
-    sendMutation.mutate(content)
+  function handleSend(content?: string) {
+    const text = (content ?? input).trim()
+    if (!text || isStreaming || sendMutation.isPending) return
+    sendMutation.mutate(text)
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -196,8 +261,13 @@ export function Component() {
     }
   }
 
+  function handleRetry() {
+    setStream(INITIAL_STREAM_STATE)
+    connect(sessionId)
+  }
+
   const toggleSidebar = useCallback(() => {
-    setSidebarCollapsed((prev) => {
+    setSidebarCollapsed(prev => {
       const newValue = !prev
       localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(newValue))
       return newValue
@@ -210,6 +280,9 @@ export function Component() {
 
   const session = sessionData?.session
   const agentId = session?.agentId
+  const agentName = (session as Record<string, unknown>)?.agentName as string | undefined
+  const hasMessages = messages.length > 0 || isStreaming
+  const showWelcome = !hasMessages && !isStreaming
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -225,19 +298,12 @@ export function Component() {
         {/* Header */}
         <div className="flex items-center justify-between border-b px-4 py-2 shrink-0 h-12">
           <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 w-8 p-0"
-              onClick={toggleSidebar}
-            >
+            <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={toggleSidebar}>
               {sidebarCollapsed ? <PanelLeft className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
             </Button>
             <h3 className="font-medium truncate">{session?.title || t("ai:chat.newChat")}</h3>
             {session?.status && (
-              <Badge variant="outline" className="text-xs">
-                {t(`ai:chat.sessionStatus.${session.status}`)}
-              </Badge>
+              <Badge variant="outline" className="text-xs">{t(`ai:chat.sessionStatus.${session.status}`)}</Badge>
             )}
           </div>
           <div className="flex items-center gap-1">
@@ -268,36 +334,134 @@ export function Component() {
           </div>
         </div>
 
-        {/* Messages - only this area scrolls */}
+        {/* Messages area */}
         <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
-          <div className="max-w-5xl mx-auto px-4 pb-4">
-            {/* Render completed QA pairs */}
-            {qaPairs.map((pair) => (
-              <QAPair
-                key={pair.userMessage.id}
-                userMessage={pair.userMessage}
-                aiMessage={pair.aiMessage}
-              />
-            ))}
-
-            {/* Render streaming AI response only (user message is already in qaPairs) */}
-            {isStreaming && streamingText && (
-              <div className="py-6 border-b border-border/50">
-                <AIResponse
-                  content={streamingText}
-                  isStreaming={isStreaming}
+          {showWelcome ? (
+            <WelcomeScreen
+              agentName={agentName ?? session?.title}
+              agentType={(session as Record<string, unknown>)?.agentType as string | undefined}
+              onPromptClick={(prompt) => handleSend(prompt)}
+            />
+          ) : (
+            <div className="max-w-3xl mx-auto px-4 pb-4">
+              {/* Rendered QA pairs */}
+              {qaPairs.map((pair) => (
+                <QAPair
+                  key={pair.userMessage.id}
+                  userMessage={pair.userMessage}
+                  aiMessage={pair.aiMessage}
+                  tools={pair.tools}
+                  agentName={agentName}
+                  onEditMessage={handleEditMessage}
                 />
-              </div>
-            )}
+              ))}
 
-            <div ref={messagesEndRef} />
-          </div>
+              {/* Streaming area */}
+              {isStreaming && (
+                <div className="py-6">
+                  {/* Thinking block */}
+                  {stream.thinkingText && (
+                    <ThinkingBlock
+                      content={stream.thinkingText}
+                      isStreaming={!stream.thinkingDone}
+                      durationMs={stream.thinkingDurationMs}
+                    />
+                  )}
+
+                  {/* Plan progress */}
+                  {stream.planSteps.length > 0 && (
+                    <PlanProgress
+                      steps={stream.planSteps}
+                      currentStepIndex={stream.planStepIndex}
+                      isStreaming={isStreaming}
+                    />
+                  )}
+
+                  {/* Streaming AI response */}
+                  {stream.text && (
+                    <AIResponse
+                      content={stream.text}
+                      agentName={agentName}
+                      isStreaming
+                    />
+                  )}
+
+                  {/* Initial "thinking" indicator before any text */}
+                  {!stream.text && !stream.thinkingText && (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      {agentName && <span className="text-xs font-medium">{agentName}</span>}
+                      <span className="flex gap-1">
+                        <span className="h-1.5 w-1.5 rounded-full bg-foreground/40 animate-bounce [animation-delay:0ms]" />
+                        <span className="h-1.5 w-1.5 rounded-full bg-foreground/40 animate-bounce [animation-delay:150ms]" />
+                        <span className="h-1.5 w-1.5 rounded-full bg-foreground/40 animate-bounce [animation-delay:300ms]" />
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Cancelled state — preserved content */}
+              {stream.cancelled && stream.text && !isStreaming && (
+                <div className="py-6">
+                  <AIResponse content={stream.text} agentName={agentName} />
+                  <div className="flex items-center gap-3 mt-2 p-3 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30">
+                    <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0" />
+                    <span className="text-sm text-amber-700 dark:text-amber-400">{t("ai:chat.stopped")}</span>
+                    <div className="flex items-center gap-2 ml-auto">
+                      <Button variant="outline" size="sm" onClick={() => { setStream(INITIAL_STREAM_STATE); connect(sessionId) }}>
+                        <Play className="h-3.5 w-3.5 mr-1" />
+                        {t("ai:chat.continueGenerating")}
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={handleRetry}>
+                        <RotateCcw className="h-3.5 w-3.5 mr-1" />
+                        {t("ai:chat.regenerate")}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Inline error */}
+              {stream.error && !isStreaming && (
+                <div className="py-6">
+                  <div className="flex items-center gap-3 p-3 rounded-lg border-l-4 border-destructive bg-destructive/5">
+                    <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />
+                    <div className="flex-1">
+                      <div className="text-sm font-medium text-destructive">{t("ai:chat.generationError")}</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">{stream.error}</div>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={handleRetry}>
+                      <RotateCcw className="h-3.5 w-3.5 mr-1" />
+                      {t("ai:chat.retry")}
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              <div ref={messagesEndRef} />
+            </div>
+          )}
         </div>
 
-        {/* Input - fixed at bottom */}
+        {/* Centered stop button during streaming */}
+        {isStreaming && (
+          <div className="flex justify-center pb-2 shrink-0">
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-full px-4"
+              onClick={() => cancelMutation.mutate()}
+            >
+              <Square className="h-3.5 w-3.5 mr-1.5" />
+              {t("ai:chat.cancel")}
+            </Button>
+          </div>
+        )}
+
+        {/* Input area — floating card */}
         <div className="px-4 pb-3 pt-1 shrink-0">
-          <div className="max-w-5xl mx-auto">
-            <div className="flex items-end gap-3 rounded-2xl bg-muted/60 px-5 py-3 transition-colors focus-within:bg-muted">
+          <div className="max-w-3xl mx-auto">
+            <div className="rounded-2xl bg-background shadow-lg border transition-colors focus-within:border-primary/30">
               <textarea
                 ref={textareaRef}
                 value={input}
@@ -305,40 +469,32 @@ export function Component() {
                 onKeyDown={handleKeyDown}
                 placeholder={t("ai:chat.inputPlaceholder")}
                 rows={1}
-                className="flex-1 min-h-[28px] max-h-[200px] resize-none bg-transparent py-0.5 text-base leading-relaxed placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                className="w-full min-h-[44px] max-h-[200px] resize-none bg-transparent px-4 pt-3 pb-1 text-base leading-relaxed placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
                 disabled={isStreaming}
               />
-              {isStreaming ? (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="shrink-0 h-8 w-8 rounded-full"
-                  onClick={() => cancelMutation.mutate()}
-                >
-                  <Square className="h-4 w-4" />
-                </Button>
-              ) : (
-                <Button
-                  size="icon"
-                  className="shrink-0 h-8 w-8 rounded-full"
-                  onClick={handleSend}
-                  disabled={!input.trim() || sendMutation.isPending}
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="h-4 w-4"
-                  >
-                    <path d="m22 2-7 20-4-9-9-4Z" />
-                    <path d="M22 2 11 13" />
-                  </svg>
-                </Button>
-              )}
+              {/* Toolbar */}
+              <div className="flex items-center justify-between px-3 pb-2">
+                <div className="flex items-center gap-1">
+                  <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground/40" disabled>
+                    <Paperclip className="h-4 w-4" />
+                  </Button>
+                </div>
+                <div className="flex items-center gap-2">
+                  {!isStreaming && (
+                    <Button
+                      size="icon"
+                      className="h-8 w-8 rounded-full"
+                      onClick={() => handleSend()}
+                      disabled={!input.trim() || sendMutation.isPending}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                        <path d="m22 2-7 20-4-9-9-4Z" />
+                        <path d="M22 2 11 13" />
+                      </svg>
+                    </Button>
+                  )}
+                </div>
+              </div>
             </div>
             <p className="text-[10px] text-muted-foreground/50 text-center mt-1">
               {t("ai:chat.inputHint")}

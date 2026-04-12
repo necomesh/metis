@@ -72,6 +72,10 @@ func (r *SessionRepo) UpdateTitle(id uint, title string) error {
 	return r.db.Model(&AgentSession{}).Where("id = ?", id).Update("title", title).Error
 }
 
+func (r *SessionRepo) Update(id uint, updates map[string]interface{}) error {
+	return r.db.Model(&AgentSession{}).Where("id = ?", id).Updates(updates).Error
+}
+
 func (r *SessionRepo) Delete(id uint) error {
 	// Delete messages first
 	if err := r.db.Where("session_id = ?", id).Delete(&SessionMessage{}).Error; err != nil {
@@ -108,4 +112,20 @@ func (r *SessionRepo) NextSequence(sessionID uint) (int, error) {
 		return 1, nil
 	}
 	return *maxSeq + 1, nil
+}
+
+func (r *SessionRepo) FindMessageByID(id, sessionID uint) (*SessionMessage, error) {
+	var m SessionMessage
+	if err := r.db.Where("id = ? AND session_id = ?", id, sessionID).First(&m).Error; err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+func (r *SessionRepo) UpdateMessageContent(id uint, content string) error {
+	return r.db.Model(&SessionMessage{}).Where("id = ?", id).Update("content", content).Error
+}
+
+func (r *SessionRepo) DeleteMessagesAfterSequence(sessionID uint, sequence int) error {
+	return r.db.Where("session_id = ? AND sequence > ?", sessionID, sequence).Delete(&SessionMessage{}).Error
 }

@@ -39,6 +39,26 @@ func NewKnowledgeCompileService(i do.Injector) (*KnowledgeCompileService, error)
 	}, nil
 }
 
+// --- Map Phase Types ---
+
+type mapNodeOutput struct {
+	Title   string            `json:"title"`
+	Summary string            `json:"summary"`
+	Content *string           `json:"content"`
+	Related []compileRelation `json:"related"`
+}
+
+type mapResult struct {
+	Nodes []mapNodeOutput `json:"nodes"`
+}
+
+type mapSourceResult struct {
+	SourceTitle string
+	SourceID    uint
+	Nodes       []mapNodeOutput
+	Error       error
+}
+
 // --- LLM Output Schema ---
 
 type compileOutput struct {
@@ -87,6 +107,7 @@ type cascadeMatch struct {
 }
 
 // HandleCompile is the scheduler handler for knowledge compilation.
+// It uses a Map-Reduce pipeline: Map extracts concepts per source, Reduce merges them.
 func (s *KnowledgeCompileService) HandleCompile(ctx context.Context, payload json.RawMessage) error {
 	var p compilePayload
 	if err := json.Unmarshal(payload, &p); err != nil {
@@ -138,14 +159,14 @@ func (s *KnowledgeCompileService) HandleCompile(ctx context.Context, payload jso
 	existingNodes, _ := s.graphRepo.FindAllNodes(kb.ID)
 
 	// Perform cascade impact analysis
-	var cascadeAnalysis *cascadeAnalysis
+	var cascade *cascadeAnalysis
 	if !p.Recompile && len(existingNodes) > 0 {
 		slog.Info("knowledge compile: analyzing cascade impact", "kb_id", kb.ID, "existing_nodes", len(existingNodes))
-		cascadeAnalysis = s.analyzeCascadeImpact(sources, existingNodes, kb.ID)
+		cascade = s.analyzeCascadeImpact(sources, existingNodes, kb.ID)
 		slog.Info("knowledge compile: cascade analysis done",
-			"high_impact", len(cascadeAnalysis.HighImpactNodes),
-			"medium_impact", len(cascadeAnalysis.MediumImpactNodes),
-			"reference", len(cascadeAnalysis.ReferenceNodes))
+			"high_impact", len(cascade.HighImpactNodes),
+			"medium_impact", len(cascade.MediumImpactNodes),
+			"reference", len(cascade.ReferenceNodes))
 	}
 
 	// Drop vector index before writing (avoid HNSW concurrent write bug)
@@ -163,27 +184,8 @@ func (s *KnowledgeCompileService) HandleCompile(ctx context.Context, payload jso
 		return fmt.Errorf("resolve LLM client: %w", err)
 	}
 
-	// Build the compilation prompt with cascade analysis
-	prompt := s.buildCompilePrompt(sources, existingNodes, cascadeAnalysis)
-
-	// Update progress before calling LLM
-	progress.Stage = CompileStageCallingLLM
-	progress.Sources.Done = len(sources)
-	progress.CurrentItem = "AI 正在分析文档内容..."
-	if err := s.updateProgress(kb, progress); err != nil {
-		slog.Error("failed to update progress", "kb_id", kb.ID, "error", err)
-	}
-
-	// Call LLM
-	slog.Info("knowledge compile: calling LLM", "kb_id", kb.ID, "sources", len(sources), "existing_nodes", len(existingNodes))
-
-	resp, err := llmClient.Chat(ctx, llm.ChatRequest{
-		Model: modelIDStr,
-		Messages: []llm.Message{
-			{Role: llm.RoleSystem, Content: compileSystemPrompt},
-			{Role: llm.RoleUser, Content: prompt},
-		},
-	})
+	// === Phase 1: MAP — extract concepts per source ===
+	mapResults, err := s.runMapPhase(ctx, llmClient, modelIDStr, sources, kb, progress)
 	if err != nil {
 		kb.CompileStatus = CompileStatusError
 		if updateErr := s.kbRepo.Update(kb); updateErr != nil {
@@ -197,11 +199,11 @@ func (s *KnowledgeCompileService) HandleCompile(ctx context.Context, payload jso
 		}); logErr != nil {
 			slog.Error("knowledge compile: failed to create log", "kb_id", kb.ID, "error", logErr)
 		}
-		return fmt.Errorf("LLM call: %w", err)
+		return fmt.Errorf("map phase: %w", err)
 	}
 
-	// Parse LLM output
-	output, err := s.parseLLMOutput(resp.Content)
+	// === Phase 2: REDUCE — merge concepts via LLM ===
+	output, err := s.runReducePhase(ctx, llmClient, modelIDStr, mapResults, existingNodes, cascade, kb, progress)
 	if err != nil {
 		kb.CompileStatus = CompileStatusError
 		if updateErr := s.kbRepo.Update(kb); updateErr != nil {
@@ -211,12 +213,14 @@ func (s *KnowledgeCompileService) HandleCompile(ctx context.Context, payload jso
 			KbID:         kb.ID,
 			Action:       KnowledgeLogCompile,
 			ModelID:      modelIDStr,
-			ErrorMessage: "parse LLM output: " + err.Error(),
+			ErrorMessage: err.Error(),
 		}); logErr != nil {
 			slog.Error("knowledge compile: failed to create log", "kb_id", kb.ID, "error", logErr)
 		}
-		return fmt.Errorf("parse output: %w", err)
+		return fmt.Errorf("reduce phase: %w", err)
 	}
+
+	// === Phase 3: Write (unchanged) ===
 
 	// Update progress with total node count from LLM
 	progress.Stage = CompileStageWritingNodes
@@ -264,7 +268,7 @@ func (s *KnowledgeCompileService) HandleCompile(ctx context.Context, payload jso
 		slog.Error("failed to generate embeddings", "kb_id", kb.ID, "error", err)
 	}
 
-	// Update embeddings progress (embedding service doesn't report progress yet, so mark all done)
+	// Update embeddings progress
 	progress.Embeddings.Done = progress.Embeddings.Total
 	if err := s.updateProgress(kb, progress); err != nil {
 		slog.Error("failed to update progress", "kb_id", kb.ID, "error", err)
@@ -284,7 +288,6 @@ func (s *KnowledgeCompileService) HandleCompile(ctx context.Context, payload jso
 	now := time.Now()
 	kb.CompileStatus = CompileStatusCompleted
 	kb.CompiledAt = &now
-	// Clear progress data on successful completion
 	kb.SetCompileProgress(nil)
 	if err := s.kbRepo.Update(kb); err != nil {
 		slog.Error("failed to update kb status after compile", "kb_id", kb.ID, "error", err)
@@ -322,6 +325,220 @@ func (s *KnowledgeCompileService) HandleCompile(ctx context.Context, payload jso
 	}
 	slog.Info("knowledge compile: done", "kb_id", kb.ID, "created", stats.created, "updated", stats.updated, "edges", stats.edges, "lint", lintIssues, "cascade_updates", cascadeCount)
 	return nil
+}
+
+// runMapPhase iterates each source, calls LLM to extract concepts, and returns results.
+// Individual source failures are tolerated; only fails if ALL sources fail.
+func (s *KnowledgeCompileService) runMapPhase(ctx context.Context, llmClient llm.Client, modelID string, sources []KnowledgeSource, kb *KnowledgeBase, progress *CompileProgress) ([]mapSourceResult, error) {
+	progress.Stage = CompileStageMapping
+	if err := s.updateProgress(kb, progress); err != nil {
+		slog.Error("failed to update progress", "kb_id", kb.ID, "error", err)
+	}
+
+	var results []mapSourceResult
+	successCount := 0
+
+	for i, src := range sources {
+		progress.CurrentItem = fmt.Sprintf("分析来源 %d/%d: %s", i+1, len(sources), src.Title)
+		if err := s.updateProgress(kb, progress); err != nil {
+			slog.Error("failed to update progress", "kb_id", kb.ID, "error", err)
+		}
+
+		slog.Info("knowledge compile: map source", "kb_id", kb.ID, "source", src.Title, "index", i+1, "total", len(sources))
+
+		result := s.mapSource(ctx, llmClient, modelID, src)
+		results = append(results, result)
+
+		if result.Error != nil {
+			slog.Warn("knowledge compile: map source failed, skipping", "kb_id", kb.ID, "source", src.Title, "error", result.Error)
+		} else {
+			successCount++
+			slog.Info("knowledge compile: map source done", "kb_id", kb.ID, "source", src.Title, "nodes", len(result.Nodes))
+		}
+
+		progress.Sources.Done = i + 1
+		if err := s.updateProgress(kb, progress); err != nil {
+			slog.Error("failed to update progress", "kb_id", kb.ID, "error", err)
+		}
+	}
+
+	if successCount == 0 {
+		return nil, fmt.Errorf("all %d sources failed in map phase", len(sources))
+	}
+
+	slog.Info("knowledge compile: map phase done", "kb_id", kb.ID, "success", successCount, "failed", len(sources)-successCount)
+	return results, nil
+}
+
+// mapSource calls LLM to extract concepts from a single source.
+func (s *KnowledgeCompileService) mapSource(ctx context.Context, llmClient llm.Client, modelID string, src KnowledgeSource) mapSourceResult {
+	content := src.Content
+	if len(content) > 8000 {
+		content = content[:8000] + "\n\n[...truncated...]"
+	}
+
+	prompt := fmt.Sprintf("## Source: %s\n\n%s", src.Title, content)
+
+	resp, err := llmClient.Chat(ctx, llm.ChatRequest{
+		Model: modelID,
+		Messages: []llm.Message{
+			{Role: llm.RoleSystem, Content: mapSystemPrompt},
+			{Role: llm.RoleUser, Content: prompt},
+		},
+	})
+	if err != nil {
+		return mapSourceResult{SourceTitle: src.Title, SourceID: src.ID, Error: fmt.Errorf("LLM call: %w", err)}
+	}
+
+	var mr mapResult
+	jsonStr := resp.Content
+
+	// Extract JSON from markdown code block if present
+	if idx := strings.Index(jsonStr, "```json"); idx != -1 {
+		start := idx + 7
+		end := strings.Index(jsonStr[start:], "```")
+		if end != -1 {
+			jsonStr = jsonStr[start : start+end]
+		}
+	} else if idx := strings.Index(jsonStr, "```"); idx != -1 {
+		start := idx + 3
+		if nl := strings.Index(jsonStr[start:], "\n"); nl != -1 {
+			start = start + nl + 1
+		}
+		end := strings.Index(jsonStr[start:], "```")
+		if end != -1 {
+			jsonStr = jsonStr[start : start+end]
+		}
+	}
+	jsonStr = strings.TrimSpace(jsonStr)
+
+	if err := json.Unmarshal([]byte(jsonStr), &mr); err != nil {
+		return mapSourceResult{SourceTitle: src.Title, SourceID: src.ID, Error: fmt.Errorf("parse JSON: %w (preview: %.200s)", err, jsonStr)}
+	}
+
+	return mapSourceResult{
+		SourceTitle: src.Title,
+		SourceID:    src.ID,
+		Nodes:       mr.Nodes,
+	}
+}
+
+// runReducePhase merges all Map results via LLM and returns the final compileOutput.
+func (s *KnowledgeCompileService) runReducePhase(ctx context.Context, llmClient llm.Client, modelID string, mapResults []mapSourceResult, existingNodes []KnowledgeNode, cascade *cascadeAnalysis, kb *KnowledgeBase, progress *CompileProgress) (*compileOutput, error) {
+	progress.Stage = CompileStageCallingLLM
+	progress.CurrentItem = "AI 正在合并知识图谱..."
+	if err := s.updateProgress(kb, progress); err != nil {
+		slog.Error("failed to update progress", "kb_id", kb.ID, "error", err)
+	}
+
+	prompt := s.buildReducePrompt(mapResults, existingNodes, cascade)
+
+	slog.Info("knowledge compile: reduce phase calling LLM", "kb_id", kb.ID, "map_results", len(mapResults), "existing_nodes", len(existingNodes))
+
+	resp, err := llmClient.Chat(ctx, llm.ChatRequest{
+		Model: modelID,
+		Messages: []llm.Message{
+			{Role: llm.RoleSystem, Content: compileSystemPrompt},
+			{Role: llm.RoleUser, Content: prompt},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("LLM call: %w", err)
+	}
+
+	output, err := s.parseLLMOutput(resp.Content)
+	if err != nil {
+		return nil, fmt.Errorf("parse output: %w", err)
+	}
+
+	return output, nil
+}
+
+// buildReducePrompt builds the Reduce phase prompt from Map results and existing graph state.
+func (s *KnowledgeCompileService) buildReducePrompt(mapResults []mapSourceResult, existingNodes []KnowledgeNode, analysis *cascadeAnalysis) string {
+	var sb strings.Builder
+
+	sb.WriteString("## Extracted concepts from sources\n\n")
+	for _, mr := range mapResults {
+		if mr.Error != nil {
+			continue
+		}
+		sb.WriteString(fmt.Sprintf("### From \"%s\":\n", mr.SourceTitle))
+		for _, n := range mr.Nodes {
+			sb.WriteString(fmt.Sprintf("- **%s**: %s", n.Title, n.Summary))
+			if len(n.Related) > 0 {
+				rels := make([]string, 0, len(n.Related))
+				for _, r := range n.Related {
+					rels = append(rels, fmt.Sprintf("%s(%s)", r.Concept, r.Relation))
+				}
+				sb.WriteString(fmt.Sprintf(" [relations: %s]", strings.Join(rels, ", ")))
+			}
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	// Impact analysis section (same logic as old buildCompilePrompt)
+	if analysis != nil && len(existingNodes) > 0 {
+		sb.WriteString("## Impact Analysis\n\n")
+
+		if len(analysis.NewConcepts) > 0 {
+			sb.WriteString("Key concepts from new sources: ")
+			for i, concept := range analysis.NewConcepts {
+				if i > 0 {
+					sb.WriteString(", ")
+				}
+				sb.WriteString(fmt.Sprintf("\"%s\"", concept))
+			}
+			sb.WriteString("\n\n")
+		}
+
+		if len(analysis.HighImpactNodes) > 0 {
+			sb.WriteString("### High-impact existing nodes (LIKELY NEED UPDATES)\n")
+			sb.WriteString("These nodes are directly related to the new sources:\n\n")
+			for _, n := range analysis.HighImpactNodes {
+				sb.WriteString(fmt.Sprintf("- **%s**: %s\n", n.Title, n.Summary))
+			}
+			sb.WriteString("\n")
+		}
+
+		if len(analysis.MediumImpactNodes) > 0 {
+			sb.WriteString("### Medium-impact nodes (CHECK FOR NEW RELATIONSHIPS)\n")
+			sb.WriteString("These nodes may be related to new concepts:\n\n")
+			for _, n := range analysis.MediumImpactNodes {
+				sb.WriteString(fmt.Sprintf("- **%s**: %s\n", n.Title, n.Summary))
+			}
+			sb.WriteString("\n")
+		}
+
+		if len(analysis.ReferenceNodes) > 0 {
+			sb.WriteString("### Reference only (unlikely affected)\n")
+			sb.WriteString("For context only - these are less likely to need updates:\n\n")
+			limit := len(analysis.ReferenceNodes)
+			if limit > 20 {
+				limit = 20
+			}
+			for i := 0; i < limit; i++ {
+				n := analysis.ReferenceNodes[i]
+				sb.WriteString(fmt.Sprintf("- **%s**: %s\n", n.Title, n.Summary))
+			}
+			if len(analysis.ReferenceNodes) > 20 {
+				sb.WriteString(fmt.Sprintf("- ... and %d more nodes\n", len(analysis.ReferenceNodes)-20))
+			}
+			sb.WriteString("\n")
+		}
+	} else if len(existingNodes) > 0 {
+		sb.WriteString("## Existing knowledge nodes\n\n")
+		for _, n := range existingNodes {
+			if n.NodeType == NodeTypeIndex {
+				continue
+			}
+			sb.WriteString(fmt.Sprintf("- **%s**: %s\n", n.Title, n.Summary))
+		}
+		sb.WriteString("\n")
+	}
+
+	return sb.String()
 }
 
 // resolveLLMClient looks up the model and provider configured for the KB,
@@ -540,88 +757,6 @@ func (s *KnowledgeCompileService) runLint(kbID uint) int {
 		slog.Info("knowledge lint", "kb_id", kbID, "orphans", orphans, "sparse", sparse, "contradictions", contradictions)
 	}
 	return issues
-}
-
-func (s *KnowledgeCompileService) buildCompilePrompt(sources []KnowledgeSource, existingNodes []KnowledgeNode, analysis *cascadeAnalysis) string {
-	var sb strings.Builder
-
-	sb.WriteString("## Sources to compile\n\n")
-	for i, src := range sources {
-		sb.WriteString(fmt.Sprintf("### Source %d: %s\n\n", i+1, src.Title))
-		content := src.Content
-		if len(content) > 8000 {
-			content = content[:8000] + "\n\n[...truncated...]"
-		}
-		sb.WriteString(content)
-		sb.WriteString("\n\n---\n\n")
-	}
-
-	// Impact analysis section
-	if analysis != nil && len(existingNodes) > 0 {
-		sb.WriteString("## Impact Analysis\n\n")
-
-		if len(analysis.NewConcepts) > 0 {
-			sb.WriteString("Key concepts from new sources: ")
-			for i, concept := range analysis.NewConcepts {
-				if i > 0 {
-					sb.WriteString(", ")
-				}
-				sb.WriteString(fmt.Sprintf("\"%s\"", concept))
-			}
-			sb.WriteString("\n\n")
-		}
-
-		// High-impact nodes (likely to need updates)
-		if len(analysis.HighImpactNodes) > 0 {
-			sb.WriteString("### High-impact existing nodes (LIKELY NEED UPDATES)\n")
-			sb.WriteString("These nodes are directly related to the new sources:\n\n")
-			for _, n := range analysis.HighImpactNodes {
-				sb.WriteString(fmt.Sprintf("- **%s**: %s\n", n.Title, n.Summary))
-			}
-			sb.WriteString("\n")
-		}
-
-		// Medium-impact nodes
-		if len(analysis.MediumImpactNodes) > 0 {
-			sb.WriteString("### Medium-impact nodes (CHECK FOR NEW RELATIONSHIPS)\n")
-			sb.WriteString("These nodes may be related to new concepts:\n\n")
-			for _, n := range analysis.MediumImpactNodes {
-				sb.WriteString(fmt.Sprintf("- **%s**: %s\n", n.Title, n.Summary))
-			}
-			sb.WriteString("\n")
-		}
-
-		// Reference nodes
-		if len(analysis.ReferenceNodes) > 0 {
-			sb.WriteString("### Reference only (unlikely affected)\n")
-			sb.WriteString("For context only - these are less likely to need updates:\n\n")
-			// Limit to avoid overwhelming the prompt
-			limit := len(analysis.ReferenceNodes)
-			if limit > 20 {
-				limit = 20
-			}
-			for i := 0; i < limit; i++ {
-				n := analysis.ReferenceNodes[i]
-				sb.WriteString(fmt.Sprintf("- **%s**: %s\n", n.Title, n.Summary))
-			}
-			if len(analysis.ReferenceNodes) > 20 {
-				sb.WriteString(fmt.Sprintf("- ... and %d more nodes\n", len(analysis.ReferenceNodes)-20))
-			}
-			sb.WriteString("\n")
-		}
-	} else if len(existingNodes) > 0 {
-		// Fallback: simple list without analysis
-		sb.WriteString("## Existing knowledge nodes\n\n")
-		for _, n := range existingNodes {
-			if n.NodeType == NodeTypeIndex {
-				continue
-			}
-			sb.WriteString(fmt.Sprintf("- **%s**: %s\n", n.Title, n.Summary))
-		}
-		sb.WriteString("\n")
-	}
-
-	return sb.String()
 }
 
 func (s *KnowledgeCompileService) parseLLMOutput(content string) (*compileOutput, error) {
@@ -890,4 +1025,35 @@ Relation types:
 - "part_of": is a component of
 
 If no existing nodes need updates, leave "updated_nodes" as an empty array.
+Output ONLY the JSON, no other text.`
+
+const mapSystemPrompt = `You are a knowledge extractor. Your job is to read a single source document and extract concept nodes with relationships.
+
+RULES:
+1. Extract distinct concepts from the document
+2. Each concept should have a clear title, one-line summary, and optionally full content in Markdown
+3. Identify relationships between concepts found in this document
+4. Create nodes even for concepts mentioned but not fully explained (set content to null)
+5. Use descriptive, canonical concept titles (e.g., "React Hooks" not "hooks")
+
+OUTPUT FORMAT: You MUST output valid JSON with this exact structure:
+{
+  "nodes": [
+    {
+      "title": "Concept Name",
+      "summary": "One-line description",
+      "content": "Full Markdown article or null if not enough info",
+      "related": [
+        {"concept": "Other Concept Name", "relation": "related|contradicts|extends|part_of"}
+      ]
+    }
+  ]
+}
+
+Relation types:
+- "related": general relationship
+- "contradicts": conflicting information
+- "extends": builds upon or specializes
+- "part_of": is a component of
+
 Output ONLY the JSON, no other text.`

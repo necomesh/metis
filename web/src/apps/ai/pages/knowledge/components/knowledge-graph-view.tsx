@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { useTranslation } from "react-i18next"
-import { BookOpen, FileText, Maximize2 } from "lucide-react"
+import { BookOpen, FileText, Maximize2, ChevronDown, ChevronRight, Loader2 } from "lucide-react"
 import ForceGraph2D from "react-force-graph-2d"
 import { useQuery } from "@tanstack/react-query"
 import { api } from "@/lib/api"
@@ -17,6 +17,7 @@ interface GraphNode {
   nodeType: string
   edgeCount: number
   sourceIds?: number[]
+  hasContent?: boolean
   color: string
   val: number
   x?: number
@@ -36,6 +37,9 @@ export function KnowledgeGraphView({ kbId, highlightedNodeIds }: { kbId: number;
   const graphRef = useRef<{ zoomToFit: (ms?: number, px?: number) => void; zoom: (k: number, ms?: number) => void }>(null)
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null)
   const [containerSize, setContainerSize] = useState<{ w: number; h: number } | null>(null)
+  const [nodeContent, setNodeContent] = useState<string | null>(null)
+  const [loadingContent, setLoadingContent] = useState(false)
+  const [showContent, setShowContent] = useState(false)
 
   const { data, isLoading } = useQuery({
     queryKey: ["ai-kb-graph", kbId],
@@ -70,6 +74,7 @@ export function KnowledgeGraphView({ kbId, highlightedNodeIds }: { kbId: number;
       nodeType: n.nodeType,
       edgeCount: n.edgeCount,
       sourceIds: n.sourceIds,
+      hasContent: n.hasContent,
       color: NODE_COLORS[n.nodeType] ?? NODE_COLORS.concept,
       val: 1 + Math.min(n.edgeCount, 10) * 0.3,
     }))
@@ -86,13 +91,57 @@ export function KnowledgeGraphView({ kbId, highlightedNodeIds }: { kbId: number;
   }, [data])
 
   const handleNodeClick = useCallback((node: GraphNode) => {
-    setSelectedNode((prev) => (prev?.id === node.id ? null : node))
+    setSelectedNode((prev) => {
+      if (prev?.id === node.id) {
+        // 关闭面板时重置内容状态
+        setShowContent(false)
+        setNodeContent(null)
+        return null
+      }
+      // 切换节点时重置内容状态
+      setShowContent(false)
+      setNodeContent(null)
+      return node
+    })
+  }, [])
+
+  // 加载节点原文内容
+  const toggleNodeContent = useCallback(async () => {
+    if (!selectedNode || !selectedNode.hasContent) return
+    // 如果已经显示内容，则收起
+    if (showContent) {
+      setShowContent(false)
+      return
+    }
+    // 如果已经加载过内容，直接显示
+    if (nodeContent !== null) {
+      setShowContent(true)
+      return
+    }
+    // 加载内容
+    setLoadingContent(true)
+    try {
+      const resp = await api.get<{ content?: string }>(`/api/v1/ai/knowledge-bases/${kbId}/nodes/${selectedNode.id}`)
+      setNodeContent(resp.content ?? "")
+      setShowContent(true)
+    } catch {
+      setNodeContent("")
+      setShowContent(true)
+    } finally {
+      setLoadingContent(false)
+    }
+  }, [selectedNode, kbId, nodeContent, showContent])
+
+  // 截断长标签，添加省略号
+  const truncateLabel = useCallback((text: string, maxLength: number = 12) => {
+    if (text.length <= maxLength) return text
+    return text.slice(0, maxLength) + "..."
   }, [])
 
   const nodeCanvasObject = useCallback(
     (node: GraphNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
-      const label = node.name
-      const fontSize = Math.max(12 / globalScale, 2)
+      const label = truncateLabel(node.name)
+      const fontSize = Math.max(11 / globalScale, 2)
       ctx.font = `${fontSize}px sans-serif`
       const isSelected = selectedNode?.id === node.id
       const isHighlighted = highlightedNodeIds?.has(node.id) ?? false
@@ -120,15 +169,15 @@ export function KnowledgeGraphView({ kbId, highlightedNodeIds }: { kbId: number;
         ctx.stroke()
       }
 
-      // Label
-      if (globalScale > 0.6) {
+      // Label - 提高显示阈值到 0.8，减少缩放小时的混乱
+      if (globalScale > 0.8) {
         ctx.textAlign = "center"
         ctx.textBaseline = "top"
         ctx.fillStyle = isSelected ? "#f59e0b" : "#374151"
         ctx.fillText(label, node.x ?? 0, (node.y ?? 0) + r + 2)
       }
     },
-    [selectedNode, highlightedNodeIds],
+    [selectedNode, highlightedNodeIds, truncateLabel],
   )
 
   const nodePointerAreaPaint = useCallback(
@@ -211,6 +260,13 @@ export function KnowledgeGraphView({ kbId, highlightedNodeIds }: { kbId: number;
           enableZoomInteraction={true}
           enablePanInteraction={true}
           onEngineStop={handleEngineStop}
+          // Tooltip: 悬停显示完整标题和节点信息
+          nodeLabel={(node: GraphNode) => `${node.name}\n类型: ${t(`ai:knowledge.graph.nodeTypes.${node.nodeType}`)}\n关联数: ${node.edgeCount}`}
+          // 增加节点间距，减少重叠
+          d3Force={(engine: { force: (name: string) => { strength?: (v: number) => void; distance?: (v: number) => void } | undefined }) => {
+            engine.force("charge")?.strength?.(-300)
+            engine.force("link")?.distance?.(80)
+          }}
         />
       )}
       {/* Legend */}
@@ -242,19 +298,57 @@ export function KnowledgeGraphView({ kbId, highlightedNodeIds }: { kbId: number;
       )}
       {/* Node detail panel */}
       {selectedNode && (
-        <div className="absolute top-3 right-3 w-72 rounded-lg border bg-card/95 backdrop-blur p-3 shadow-lg text-sm">
+        <div className="absolute top-3 right-3 w-80 rounded-lg border bg-card/95 backdrop-blur p-3 shadow-lg text-sm max-h-[calc(100%-24px)] overflow-y-auto">
           <div className="flex items-center gap-2 mb-2">
             <h4 className="font-semibold truncate flex-1">{selectedNode.name}</h4>
             <Badge variant="outline" className="border-transparent text-xs" style={{ backgroundColor: selectedNode.color + "20", color: selectedNode.color }}>
               {t(`ai:knowledge.graph.nodeTypes.${selectedNode.nodeType}`)}
             </Badge>
           </div>
-          <p className="text-muted-foreground text-xs leading-relaxed line-clamp-4">
+          <p className="text-muted-foreground text-xs leading-relaxed">
             {selectedNode.summary || "—"}
           </p>
           <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
             <span>{t("ai:knowledge.nodes.edgeCount")}: {selectedNode.edgeCount}</span>
           </div>
+          
+          {/* 查看原文按钮 */}
+          {selectedNode.hasContent && (
+            <div className="mt-2">
+              <button
+                onClick={toggleNodeContent}
+                disabled={loadingContent}
+                className="flex items-center gap-1 text-xs text-primary hover:underline disabled:opacity-50"
+              >
+                {loadingContent ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    {t("ai:knowledge.nodes.loadingContent")}
+                  </>
+                ) : showContent ? (
+                  <>
+                    <ChevronDown className="h-3 w-3" />
+                    {t("ai:knowledge.recall.hideContent")}
+                  </>
+                ) : (
+                  <>
+                    <ChevronRight className="h-3 w-3" />
+                    {t("ai:knowledge.recall.viewContent")}
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+          
+          {/* 原文内容 */}
+          {showContent && nodeContent !== null && (
+            <div className="mt-2">
+              <pre className="rounded bg-muted p-2 text-xs font-mono whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
+                {nodeContent || t("ai:knowledge.nodes.noContent")}
+              </pre>
+            </div>
+          )}
+          
           {selectedNode.sourceIds && selectedNode.sourceIds.length > 0 && sources.length > 0 && (
             <div className="mt-2 pt-2 border-t">
               <span className="text-xs font-medium">{t("ai:knowledge.nodes.sources")}</span>

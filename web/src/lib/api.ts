@@ -322,6 +322,7 @@ export interface AgentInfo {
   workspace?: string;
   // common
   instructions?: string;
+  suggestedPrompts?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -349,6 +350,7 @@ export interface AgentSession {
   userId: number;
   status: 'running' | 'completed' | 'cancelled' | 'error';
   title: string;
+  pinned: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -423,10 +425,19 @@ export const sessionApi = {
 
   delete: (sid: number) => api.delete<null>(`/api/v1/ai/sessions/${sid}`),
 
+  update: (sid: number, data: { title?: string; pinned?: boolean }) =>
+    api.put<AgentSession>(`/api/v1/ai/sessions/${sid}`, data),
+
   sendMessage: (sid: number, content: string) =>
     api.post<SessionMessage>(`/api/v1/ai/sessions/${sid}/messages`, { content }),
 
   cancel: (sid: number) => api.post<null>(`/api/v1/ai/sessions/${sid}/cancel`),
+
+  editMessage: (sid: number, mid: number, content: string) =>
+    api.put<SessionMessage>(`/api/v1/ai/sessions/${sid}/messages/${mid}`, { content }),
+
+  continueGeneration: (sid: number) =>
+    api.post<null>(`/api/v1/ai/sessions/${sid}/continue`),
 
   streamUrl: (sid: number) => `/api/v1/ai/sessions/${sid}/stream`,
 };

@@ -215,3 +215,94 @@ func (h *SessionHandler) Cancel(c *gin.Context) {
 
 	handler.OK(c, nil)
 }
+
+type updateSessionReq struct {
+	Title  *string `json:"title"`
+	Pinned *bool   `json:"pinned"`
+}
+
+func (h *SessionHandler) Update(c *gin.Context) {
+	sid, _ := strconv.Atoi(c.Param("sid"))
+	var req updateSessionReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		handler.Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if _, err := h.svc.Get(uint(sid)); err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			handler.Fail(c, http.StatusNotFound, err.Error())
+			return
+		}
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	updates := make(map[string]interface{})
+	if req.Title != nil {
+		updates["title"] = *req.Title
+	}
+	if req.Pinned != nil {
+		updates["pinned"] = *req.Pinned
+	}
+	if len(updates) == 0 {
+		handler.Fail(c, http.StatusBadRequest, "no fields to update")
+		return
+	}
+
+	if err := h.svc.Update(uint(sid), updates); err != nil {
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	handler.OK(c, nil)
+}
+
+type editMessageReq struct {
+	Content string `json:"content" binding:"required"`
+}
+
+func (h *SessionHandler) EditMessage(c *gin.Context) {
+	sid, _ := strconv.Atoi(c.Param("sid"))
+	mid, _ := strconv.Atoi(c.Param("mid"))
+
+	var req editMessageReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		handler.Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	msg, err := h.svc.EditMessage(uint(sid), uint(mid), req.Content)
+	if err != nil {
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	handler.OK(c, msg.ToResponse())
+}
+
+func (h *SessionHandler) Continue(c *gin.Context) {
+	sid, _ := strconv.Atoi(c.Param("sid"))
+
+	session, err := h.svc.Get(uint(sid))
+	if err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			handler.Fail(c, http.StatusNotFound, err.Error())
+			return
+		}
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if session.Status == SessionStatusRunning {
+		handler.Fail(c, http.StatusConflict, "session is already running")
+		return
+	}
+
+	// Update status to running, then trigger stream via normal SSE flow
+	if err := h.svc.UpdateStatus(session.ID, SessionStatusRunning); err != nil {
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	handler.OK(c, nil)
+}

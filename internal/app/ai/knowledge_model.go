@@ -69,6 +69,7 @@ const (
 // Compile stages
 const (
 	CompileStagePreparing            = "preparing"
+	CompileStageMapping              = "mapping"
 	CompileStageCallingLLM           = "calling_llm"
 	CompileStageWritingNodes         = "writing_nodes"
 	CompileStageGeneratingEmbeddings = "generating_embeddings"

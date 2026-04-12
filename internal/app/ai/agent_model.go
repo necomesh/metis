@@ -91,7 +91,8 @@ type Agent struct {
 	Workspace     string          `json:"workspace" gorm:"size:512"`
 
 	// common
-	Instructions string `json:"instructions" gorm:"type:text"`
+	Instructions     string          `json:"instructions" gorm:"type:text"`
+	SuggestedPrompts json.RawMessage `json:"suggestedPrompts" gorm:"type:text"`
 }
 
 func (Agent) TableName() string { return "ai_agents" }
@@ -117,6 +118,7 @@ type AgentResponse struct {
 	NodeID       *uint           `json:"nodeId,omitempty"`
 	Workspace    string          `json:"workspace,omitempty"`
 	Instructions string          `json:"instructions,omitempty"`
+	SuggestedPrompts json.RawMessage `json:"suggestedPrompts,omitempty"`
 	CreatedAt    time.Time       `json:"createdAt"`
 	UpdatedAt    time.Time       `json:"updatedAt"`
 }
@@ -143,6 +145,7 @@ func (a *Agent) ToResponse() AgentResponse {
 		NodeID:        a.NodeID,
 		Workspace:     a.Workspace,
 		Instructions:  a.Instructions,
+		SuggestedPrompts: a.SuggestedPrompts,
 		CreatedAt:     a.CreatedAt,
 		UpdatedAt:     a.UpdatedAt,
 	}
@@ -204,6 +207,7 @@ type AgentSession struct {
 	UserID  uint   `json:"userId" gorm:"not null;index"`
 	Status  string `json:"status" gorm:"size:16;not null;default:running"`
 	Title   string `json:"title" gorm:"size:256"`
+	Pinned  bool   `json:"pinned" gorm:"not null;default:false"`
 }
 
 func (AgentSession) TableName() string { return "ai_agent_sessions" }
@@ -214,6 +218,7 @@ type AgentSessionResponse struct {
 	UserID    uint      `json:"userId"`
 	Status    string    `json:"status"`
 	Title     string    `json:"title"`
+	Pinned    bool      `json:"pinned"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
@@ -225,6 +230,7 @@ func (s *AgentSession) ToResponse() AgentSessionResponse {
 		UserID:    s.UserID,
 		Status:    s.Status,
 		Title:     s.Title,
+		Pinned:    s.Pinned,
 		CreatedAt: s.CreatedAt,
 		UpdatedAt: s.UpdatedAt,
 	}

@@ -97,3 +97,27 @@ func (s *SessionService) StoreMessage(sessionID uint, role, content string, meta
 func (s *SessionService) UpdateStatus(id uint, status string) error {
 	return s.repo.UpdateStatus(id, status)
 }
+
+func (s *SessionService) Update(id uint, updates map[string]interface{}) error {
+	return s.repo.Update(id, updates)
+}
+
+func (s *SessionService) EditMessage(sessionID, messageID uint, content string) (*SessionMessage, error) {
+	msg, err := s.repo.FindMessageByID(messageID, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Update message content
+	if err := s.repo.UpdateMessageContent(messageID, content); err != nil {
+		return nil, err
+	}
+
+	// Delete all messages after this one
+	if err := s.repo.DeleteMessagesAfterSequence(sessionID, msg.Sequence); err != nil {
+		return nil, err
+	}
+
+	msg.Content = content
+	return msg, nil
+}

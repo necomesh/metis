@@ -365,7 +365,49 @@
       "completed": "Completed",
       "cancelled": "Cancelled",
       "error": "Error"
-    }
+    },
+    "thinkingProcess": "Thinking",
+    "thinkingDuration": "Thinking ({{duration}}s)",
+    "planTitle": "Execution Plan",
+    "planCompleted": "Plan completed ({{steps}} steps · {{duration}}s)",
+    "planProgress": "{{current}}/{{total}}",
+    "welcome": "How can I help you today?",
+    "suggestedPrompts": "Suggested",
+    "defaultPrompts": {
+      "assistant": [
+        "Explain this concept in simple terms",
+        "Help me analyze this problem",
+        "Summarize the key points",
+        "Give me a step-by-step guide"
+      ],
+      "coding": [
+        "Help me debug this code",
+        "Explain how this works",
+        "Optimize this function",
+        "Write tests for this module"
+      ]
+    },
+    "dateGroups": {
+      "today": "Today",
+      "yesterday": "Yesterday",
+      "last7Days": "Last 7 Days",
+      "last30Days": "Last 30 Days",
+      "older": "Older"
+    },
+    "pinned": "Pinned",
+    "pin": "Pin",
+    "unpin": "Unpin",
+    "rename": "Rename",
+    "edit": "Edit",
+    "saveAndRegenerate": "Save & Regenerate",
+    "cancelEdit": "Cancel",
+    "stopped": "Generation stopped",
+    "continueGenerating": "Continue Generating",
+    "retry": "Retry",
+    "generationError": "Generation failed",
+    "tokenSpeed": "{{speed}} tok/s",
+    "duration": "{{duration}}s",
+    "tokens": "{{count}} tokens"
   },
   "knowledge": {
     "create": "New Knowledge Base",
@@ -475,6 +517,7 @@
     },
     "compileStage": {
       "preparing": "Preparing",
+      "mapping": "Mapping",
       "calling_llm": "AI Analyzing",
       "writing_nodes": "Writing Nodes",
       "generating_embeddings": "Generating Embeddings",

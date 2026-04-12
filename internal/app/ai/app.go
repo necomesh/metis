@@ -194,10 +194,13 @@ func (a *AIApp) Routes(api *gin.RouterGroup) {
 		sessions.POST("", sessionH.Create)
 		sessions.GET("", sessionH.List)
 		sessions.GET("/:sid", sessionH.Get)
+		sessions.PUT("/:sid", sessionH.Update)
 		sessions.DELETE("/:sid", sessionH.Delete)
 		sessions.POST("/:sid/messages", sessionH.SendMessage)
+		sessions.PUT("/:sid/messages/:mid", sessionH.EditMessage)
 		sessions.GET("/:sid/stream", sessionH.Stream)
 		sessions.POST("/:sid/cancel", sessionH.Cancel)
+		sessions.POST("/:sid/continue", sessionH.Continue)
 	}
 
 	memoryH := do.MustInvoke[*MemoryHandler](a.injector)

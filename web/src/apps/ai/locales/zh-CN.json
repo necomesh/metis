@@ -365,7 +365,49 @@
       "completed": "已完成",
       "cancelled": "已取消",
       "error": "错误"
-    }
+    },
+    "thinkingProcess": "思考中",
+    "thinkingDuration": "思考过程（{{duration}}s）",
+    "planTitle": "执行计划",
+    "planCompleted": "计划完成（{{steps}} 步 · {{duration}}s）",
+    "planProgress": "{{current}}/{{total}}",
+    "welcome": "有什么我可以帮你的？",
+    "suggestedPrompts": "建议提示",
+    "defaultPrompts": {
+      "assistant": [
+        "用简单的语言解释这个概念",
+        "帮我分析这个问题",
+        "总结关键要点",
+        "给我一个分步指南"
+      ],
+      "coding": [
+        "帮我调试这段代码",
+        "解释这段代码的工作原理",
+        "优化这个函数",
+        "为这个模块编写测试"
+      ]
+    },
+    "dateGroups": {
+      "today": "今天",
+      "yesterday": "昨天",
+      "last7Days": "最近 7 天",
+      "last30Days": "最近 30 天",
+      "older": "更早"
+    },
+    "pinned": "已置顶",
+    "pin": "置顶",
+    "unpin": "取消置顶",
+    "rename": "重命名",
+    "edit": "编辑",
+    "saveAndRegenerate": "保存并重新生成",
+    "cancelEdit": "取消",
+    "stopped": "生成已停止",
+    "continueGenerating": "继续生成",
+    "retry": "重试",
+    "generationError": "生成失败",
+    "tokenSpeed": "{{speed}} tok/s",
+    "duration": "{{duration}}s",
+    "tokens": "{{count}} tokens"
   },
   "knowledge": {
     "title": "知识库管理",
@@ -451,6 +493,15 @@
       "completed": "已完成",
       "failed": "失败"
     },
+    "compileStage": {
+      "preparing": "准备中",
+      "mapping": "映射中",
+      "calling_llm": "AI分析中",
+      "writing_nodes": "写入节点",
+      "generating_embeddings": "生成向量索引",
+      "completed": "已完成",
+      "idle": "空闲"
+    },
     "nodes": {
       "title": "节点标题",
       "summary": "摘要",
@@ -476,6 +527,7 @@
     },
     "compileStage": {
       "preparing": "准备中",
+      "mapping": "映射中",
       "calling_llm": "AI 分析中",
       "writing_nodes": "写入节点",
       "generating_embeddings": "生成向量索引",

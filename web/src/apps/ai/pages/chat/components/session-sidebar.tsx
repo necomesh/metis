@@ -1,11 +1,19 @@
+import { useState, useMemo, useCallback, useRef, useEffect } from "react"
 import { useNavigate } from "react-router"
 import { useTranslation } from "react-i18next"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { Plus, MessageSquare, Trash2 } from "lucide-react"
+import { Plus, MessageSquare, MoreHorizontal, Pencil, Trash2 } from "lucide-react"
 import { sessionApi, type AgentSession } from "@/lib/api"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { cn } from "@/lib/utils"
 
 interface SessionSidebarProps {
@@ -14,17 +22,101 @@ interface SessionSidebarProps {
   collapsed?: boolean
 }
 
+type DateGroup = "today" | "yesterday" | "last7Days" | "last30Days" | "older"
+
+function getDateGroup(dateStr: string): DateGroup {
+  const date = new Date(dateStr)
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const yesterday = new Date(today)
+  yesterday.setDate(yesterday.getDate() - 1)
+  const last7 = new Date(today)
+  last7.setDate(last7.getDate() - 7)
+  const last30 = new Date(today)
+  last30.setDate(last30.getDate() - 30)
+
+  if (date >= today) return "today"
+  if (date >= yesterday) return "yesterday"
+  if (date >= last7) return "last7Days"
+  if (date >= last30) return "last30Days"
+  return "older"
+}
+
+function groupSessionsByDate(sessions: AgentSession[]): Map<DateGroup, AgentSession[]> {
+  const groups = new Map<DateGroup, AgentSession[]>()
+  const order: DateGroup[] = ["today", "yesterday", "last7Days", "last30Days", "older"]
+  for (const key of order) groups.set(key, [])
+
+  for (const s of sessions) {
+    const group = getDateGroup(s.createdAt)
+    groups.get(group)!.push(s)
+  }
+
+  // Remove empty groups
+  for (const key of order) {
+    if (groups.get(key)!.length === 0) groups.delete(key)
+  }
+  return groups
+}
+
+// Inline rename input
+function InlineRename({
+  initialValue,
+  onSave,
+  onCancel,
+}: {
+  initialValue: string
+  onSave: (value: string) => void
+  onCancel: () => void
+}) {
+  const [value, setValue] = useState(initialValue)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    inputRef.current?.focus()
+    inputRef.current?.select()
+  }, [])
+
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      value={value}
+      onChange={(e) => setValue(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault()
+          const trimmed = value.trim()
+          if (trimmed) onSave(trimmed)
+        } else if (e.key === "Escape") {
+          onCancel()
+        }
+      }}
+      onBlur={() => {
+        const trimmed = value.trim()
+        if (trimmed && trimmed !== initialValue) onSave(trimmed)
+        else onCancel()
+      }}
+      className="flex-1 text-sm bg-transparent border-b border-primary focus:outline-none truncate"
+    />
+  )
+}
+
 export function SessionSidebar({ agentId, currentSessionId, collapsed = false }: SessionSidebarProps) {
-  const { t } = useTranslation(["ai"])
+  const { t } = useTranslation(["ai", "common"])
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const [renamingId, setRenamingId] = useState<number | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<AgentSession | null>(null)
 
   const { data } = useQuery({
     queryKey: ["ai-sessions", agentId],
     queryFn: () => sessionApi.list({ agentId, pageSize: 50 }),
     enabled: !!agentId,
   })
-  const sessions = data?.items ?? []
+  const sessions = useMemo(() => data?.items ?? [], [data])
+
+  const grouped = useMemo(() => groupSessionsByDate(sessions), [sessions])
 
   const createMutation = useMutation({
     mutationFn: () => sessionApi.create(agentId!),
@@ -40,13 +132,27 @@ export function SessionSidebar({ agentId, currentSessionId, collapsed = false }:
     onSuccess: (_, sid) => {
       queryClient.invalidateQueries({ queryKey: ["ai-sessions"] })
       toast.success(t("ai:chat.sessionDeleted"))
-      if (sid === currentSessionId) {
-        navigate("/ai/chat")
-      }
+      setDeleteTarget(null)
+      if (sid === currentSessionId) navigate("/ai/chat")
     },
     onError: (err) => toast.error(err.message),
   })
 
+  const renameMutation = useMutation({
+    mutationFn: ({ sid, title }: { sid: number; title: string }) =>
+      sessionApi.update(sid, { title }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["ai-sessions"] })
+      setRenamingId(null)
+    },
+    onError: (err) => toast.error(err.message),
+  })
+
+  const handleRename = useCallback((sid: number, title: string) => {
+    renameMutation.mutate({ sid, title })
+  }, [renameMutation])
+
+  // Collapsed mode
   if (collapsed) {
     return (
       <div className="w-12 border-r flex flex-col shrink-0 transition-all duration-200">
@@ -86,6 +192,7 @@ export function SessionSidebar({ agentId, currentSessionId, collapsed = false }:
     )
   }
 
+  // Expanded mode
   return (
     <div className="w-64 border-r flex flex-col shrink-0 transition-all duration-200 hidden md:flex">
       <div className="p-3 border-b">
@@ -101,36 +208,90 @@ export function SessionSidebar({ agentId, currentSessionId, collapsed = false }:
         </Button>
       </div>
       <ScrollArea className="flex-1">
-        <div className="p-2 space-y-0.5">
+        <div className="p-2">
           {sessions.length === 0 ? (
             <p className="text-xs text-muted-foreground text-center py-4">{t("ai:chat.noSessions")}</p>
           ) : (
-            sessions.map((s: AgentSession) => (
-              <div
-                key={s.id}
-                className={cn(
-                  "group flex items-center gap-2 rounded-md px-2.5 py-2 cursor-pointer hover:bg-accent text-sm",
-                  s.id === currentSessionId && "bg-accent",
-                )}
-                onClick={() => navigate(`/ai/chat/${s.id}`)}
-              >
-                <MessageSquare className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                <span className="flex-1 truncate">{s.title || `#${s.id}`}</span>
-                <button
-                  type="button"
-                  className="opacity-0 group-hover:opacity-100 shrink-0 p-0.5 rounded hover:bg-destructive/10"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    deleteMutation.mutate(s.id)
-                  }}
-                >
-                  <Trash2 className="h-3 w-3 text-destructive" />
-                </button>
+            Array.from(grouped.entries()).map(([groupKey, groupSessions]) => (
+              <div key={groupKey} className="mb-3">
+                <div className="px-2.5 py-1 text-[10px] font-medium text-muted-foreground/60 uppercase tracking-wider">
+                  {t(`ai:chat.dateGroups.${groupKey}`)}
+                </div>
+                <div className="space-y-0.5">
+                  {groupSessions.map((s: AgentSession) => (
+                    <div
+                      key={s.id}
+                      className={cn(
+                        "group flex items-center gap-2 rounded-md px-2.5 py-2 cursor-pointer hover:bg-accent text-sm",
+                        s.id === currentSessionId && "bg-accent",
+                      )}
+                      onClick={() => navigate(`/ai/chat/${s.id}`)}
+                      onDoubleClick={(e) => {
+                        e.stopPropagation()
+                        setRenamingId(s.id)
+                      }}
+                    >
+                      <MessageSquare className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                      {renamingId === s.id ? (
+                        <InlineRename
+                          initialValue={s.title || `#${s.id}`}
+                          onSave={(title) => handleRename(s.id, title)}
+                          onCancel={() => setRenamingId(null)}
+                        />
+                      ) : (
+                        <span className="flex-1 truncate">{s.title || `#${s.id}`}</span>
+                      )}
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            className="opacity-0 group-hover:opacity-100 shrink-0 p-0.5 rounded hover:bg-muted"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <MoreHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-36">
+                          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); setRenamingId(s.id) }}>
+                            <Pencil className="h-3.5 w-3.5 mr-2" />
+                            {t("ai:chat.rename")}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onClick={(e) => { e.stopPropagation(); setDeleteTarget(s) }}
+                          >
+                            <Trash2 className="h-3.5 w-3.5 mr-2" />
+                            {t("common:delete")}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  ))}
+                </div>
               </div>
             ))
           )}
         </div>
       </ScrollArea>
+
+      {/* Delete confirmation dialog */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("ai:chat.deleteSession")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("ai:chat.deleteSessionDesc")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common:cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+              disabled={deleteMutation.isPending}
+            >
+              {t("common:delete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

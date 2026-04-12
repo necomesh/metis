@@ -10,10 +10,13 @@ const (
 	EventTypeToolResult   = "tool_result"
 	EventTypePlan         = "plan"
 	EventTypeStepStart    = "step_start"
-	EventTypeDone         = "done"
-	EventTypeCancelled    = "cancelled"
-	EventTypeError        = "error"
-	EventTypeMemoryUpdate = "memory_update"
+	EventTypeThinkingDelta = "thinking_delta"
+	EventTypeThinkingDone  = "thinking_done"
+	EventTypeStepDone      = "step_done"
+	EventTypeDone          = "done"
+	EventTypeCancelled     = "cancelled"
+	EventTypeError         = "error"
+	EventTypeMemoryUpdate  = "memory_update"
 )
 
 // Event is the unified event emitted by all executors.
@@ -25,7 +28,7 @@ type Event struct {
 	Turn  int    `json:"turn,omitempty"`
 	Model string `json:"model,omitempty"`
 
-	// content_delta
+	// content_delta / thinking_delta
 	Text string `json:"text,omitempty"`
 
 	// tool_call
@@ -40,7 +43,7 @@ type Event struct {
 	// plan
 	Steps []PlanStep `json:"steps,omitempty"`
 
-	// step_start
+	// step_start / step_done
 	StepIndex   int    `json:"step_index,omitempty"`
 	Description string `json:"description,omitempty"`
 
