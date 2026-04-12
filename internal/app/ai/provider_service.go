@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/samber/do/v2"
+	"gorm.io/gorm"
 
 	"metis/internal/pkg/crypto"
 )
@@ -49,7 +50,10 @@ func (s *ProviderService) Create(name, providerType, baseURL, apiKey string) (*P
 func (s *ProviderService) Get(id uint) (*Provider, error) {
 	p, err := s.repo.FindByID(id)
 	if err != nil {
-		return nil, ErrProviderNotFound
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrProviderNotFound
+		}
+		return nil, err
 	}
 	return p, nil
 }

@@ -118,7 +118,9 @@
     "builtin": {
       "empty": "暂无内建工具",
       "enableSuccess": "工具已启用",
-      "disableSuccess": "工具已禁用"
+      "disableSuccess": "工具已禁用",
+      "toolsEnabled": "个已启用",
+      "drawerHint": "开启后，绑定此工具箱的 Agent 将可以调用对应能力。"
     },
     "toolkits": {
       "knowledge": {
@@ -132,6 +134,24 @@
       "code": {
         "name": "代码执行",
         "description": "在沙箱环境中执行 Python 和 Bash 脚本。"
+      }
+    },
+    "toolDefs": {
+      "search_knowledge": {
+        "name": "搜索知识库",
+        "description": "根据关键词在知识库中搜索相关文档。"
+      },
+      "read_document": {
+        "name": "读取文档",
+        "description": "读取知识库中某篇文档的完整内容。"
+      },
+      "http_request": {
+        "name": "HTTP 请求",
+        "description": "向外部 URL 发起 HTTP 请求并获取响应。"
+      },
+      "execute_script": {
+        "name": "执行脚本",
+        "description": "在沙箱中运行 Python 或 Bash 脚本，返回输出结果。"
       }
     },
     "mcp": {
@@ -277,6 +297,7 @@
       "uploadSuccess": "文件上传成功",
       "addUrlSuccess": "URL 来源已添加",
       "deleteSuccess": "来源已删除",
+      "showingFirst": "显示前 {{count}} 条（共 {{total}} 条来源）",
       "dropHere": "拖拽文件到这里，或点击选择",
       "uploading": "上传中...",
       "uploadBtn": "上传 {{count}} 个文件",
@@ -307,7 +328,20 @@
       "hasContent": "有内容",
       "empty": "暂无节点（尚未编译）",
       "loadingContent": "加载中...",
-      "noContent": "（无内容）"
+      "noContent": "（无内容）",
+      "sources": "来源",
+      "viewSource": "查看来源",
+      "showingFirst": "显示前 {{count}} 条（共 {{total}} 个节点）"
+    },
+    "recall": {
+      "title": "召回测试",
+      "searchPlaceholder": "输入查询文本测试召回效果...",
+      "search": "搜索",
+      "empty": "输入查询文本测试知识召回",
+      "noResults": "无匹配结果",
+      "edgeCount": "条关联",
+      "viewContent": "查看内容",
+      "hideContent": "收起内容"
     },
     "graph": {
       "viewGraph": "图谱视图",

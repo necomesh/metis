@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { useTranslation } from "react-i18next"
+import { toast } from "sonner"
 import { api } from "@/lib/api"
 import {
   AlertDialog,
@@ -29,6 +30,7 @@ export function KickDialog({ open, onOpenChange, sessionId, username }: KickDial
       queryClient.invalidateQueries({ queryKey: ["sessions"] })
       onOpenChange(false)
     },
+    onError: (err) => toast.error(err.message),
   })
 
   return (

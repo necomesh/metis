@@ -1,5 +1,6 @@
 import { useEffect } from "react"
 import { useTranslation } from "react-i18next"
+import { toast } from "sonner"
 import { useForm } from "react-hook-form"
 import { z } from "zod"
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -77,6 +78,7 @@ export function AnnouncementSheet({ open, onOpenChange, announcement }: Announce
       queryClient.invalidateQueries({ queryKey: ["notifications-unread-count"] })
       onOpenChange(false)
     },
+    onError: (err) => toast.error(err.message),
   })
 
   const updateMutation = useMutation({
@@ -86,6 +88,7 @@ export function AnnouncementSheet({ open, onOpenChange, announcement }: Announce
       queryClient.invalidateQueries({ queryKey: ["announcements"] })
       onOpenChange(false)
     },
+    onError: (err) => toast.error(err.message),
   })
 
   function onSubmit(values: FormValues) {

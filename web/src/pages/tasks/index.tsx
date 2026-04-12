@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
+import { toast } from "sonner"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router"
 import { Clock, Play, Pause, Zap, Activity, CheckCircle, XCircle, Timer } from "lucide-react"
@@ -96,6 +97,7 @@ export function Component() {
       queryClient.invalidateQueries({ queryKey: ["tasks"] })
       queryClient.invalidateQueries({ queryKey: ["task-stats"] })
     },
+    onError: (err) => toast.error(err.message),
   })
 
   const resumeMutation = useMutation({
@@ -104,6 +106,7 @@ export function Component() {
       queryClient.invalidateQueries({ queryKey: ["tasks"] })
       queryClient.invalidateQueries({ queryKey: ["task-stats"] })
     },
+    onError: (err) => toast.error(err.message),
   })
 
   const triggerMutation = useMutation({
@@ -112,6 +115,7 @@ export function Component() {
       queryClient.invalidateQueries({ queryKey: ["tasks"] })
       queryClient.invalidateQueries({ queryKey: ["task-stats"] })
     },
+    onError: (err) => toast.error(err.message),
   })
 
   const statCards = [

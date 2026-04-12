@@ -11,6 +11,7 @@ import {
   SheetDescription,
   SheetFooter,
 } from "@/components/ui/sheet"
+import { formatBytes } from "@/lib/utils"
 
 const ACCEPTED_EXTENSIONS = [".md", ".txt", ".pdf", ".docx", ".xlsx", ".pptx"]
 const ACCEPTED_MIME = [
@@ -27,12 +28,6 @@ interface SourceUploadProps {
   onOpenChange: (open: boolean) => void
   kbId: number
   onSuccess: () => void
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 export function SourceUpload({ open, onOpenChange, kbId, onSuccess }: SourceUploadProps) {

@@ -55,7 +55,7 @@ func (h *LicenseeHandler) Create(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "create")
+	c.Set("audit_action", "licensee.create")
 	c.Set("audit_resource", "licensee")
 
 	bi := req.BusinessInfo
@@ -148,7 +148,7 @@ func (h *LicenseeHandler) Update(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "update")
+	c.Set("audit_action", "licensee.update")
 	c.Set("audit_resource", "licensee")
 	c.Set("audit_resource_id", c.Param("id"))
 
@@ -190,9 +190,9 @@ func (h *LicenseeHandler) UpdateStatus(c *gin.Context) {
 		return
 	}
 
-	action := "archive"
+	action := "licensee.archive"
 	if req.Status == LicenseeStatusActive {
-		action = "unarchive"
+		action = "licensee.unarchive"
 	}
 	c.Set("audit_action", action)
 	c.Set("audit_resource", "licensee")

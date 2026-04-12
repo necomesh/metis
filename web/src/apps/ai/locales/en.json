@@ -118,7 +118,9 @@
     "builtin": {
       "empty": "No built-in tools",
       "enableSuccess": "Tool enabled",
-      "disableSuccess": "Tool disabled"
+      "disableSuccess": "Tool disabled",
+      "toolsEnabled": "enabled",
+      "drawerHint": "When enabled, Agents bound to this toolkit can use the corresponding capabilities."
     },
     "toolkits": {
       "knowledge": {
@@ -132,6 +134,24 @@
       "code": {
         "name": "Code Execution",
         "description": "Execute Python and Bash scripts in a sandboxed environment."
+      }
+    },
+    "toolDefs": {
+      "search_knowledge": {
+        "name": "Search Knowledge",
+        "description": "Search for relevant documents in a knowledge base by keyword."
+      },
+      "read_document": {
+        "name": "Read Document",
+        "description": "Read the full content of a specific document from a knowledge base."
+      },
+      "http_request": {
+        "name": "HTTP Request",
+        "description": "Make an HTTP request to an external URL and get the response."
+      },
+      "execute_script": {
+        "name": "Execute Script",
+        "description": "Run a Python or Bash script in a sandbox and return the output."
       }
     },
     "mcp": {
@@ -277,6 +297,7 @@
       "uploadSuccess": "Files uploaded successfully",
       "addUrlSuccess": "URL source added",
       "deleteSuccess": "Source deleted",
+      "showingFirst": "Showing first {{count}} of {{total}} sources",
       "dropHere": "Drag & drop files here, or click to select",
       "uploading": "Uploading...",
       "uploadBtn": "Upload {{count}} file(s)",
@@ -307,7 +328,20 @@
       "hasContent": "Has Content",
       "empty": "No nodes (not compiled yet)",
       "loadingContent": "Loading...",
-      "noContent": "(no content)"
+      "noContent": "(no content)",
+      "sources": "Sources",
+      "viewSource": "View Source",
+      "showingFirst": "Showing first {{count}} of {{total}} nodes"
+    },
+    "recall": {
+      "title": "Recall Test",
+      "searchPlaceholder": "Enter query to test recall...",
+      "search": "Search",
+      "empty": "Enter a query to test knowledge recall",
+      "noResults": "No matching results",
+      "edgeCount": "edges",
+      "viewContent": "View Content",
+      "hideContent": "Hide Content"
     },
     "graph": {
       "viewGraph": "Graph View",

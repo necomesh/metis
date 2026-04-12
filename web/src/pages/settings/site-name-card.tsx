@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next"
+import { toast } from "sonner"
 import { useForm } from "react-hook-form"
 import { z } from "zod"
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -43,6 +44,7 @@ export function SiteNameCard({ appName }: { appName: string }) {
       queryClient.invalidateQueries({ queryKey: ["site-info"] })
       form.reset(form.getValues())
     },
+    onError: (err) => toast.error(err.message),
   })
 
   return (

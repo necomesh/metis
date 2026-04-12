@@ -2,9 +2,15 @@ package ai
 
 import (
 	"encoding/json"
+	"errors"
 	"time"
 
 	"metis/internal/model"
+)
+
+var (
+	errEmbeddingNotConfigured = errors.New("embedding not configured for this knowledge base")
+	errEmbeddingEmpty         = errors.New("embedding API returned empty result")
 )
 
 // Knowledge base compile statuses
@@ -64,48 +70,53 @@ const (
 
 type KnowledgeBase struct {
 	model.BaseModel
-	Name           string     `json:"name" gorm:"size:128;not null"`
-	Description    string     `json:"description" gorm:"type:text"`
-	CompileStatus  string     `json:"compileStatus" gorm:"size:16;not null;default:idle"`
-	CompileMethod  string     `json:"compileMethod" gorm:"size:64;not null;default:knowledge_graph"`
-	CompileModelID *uint      `json:"compileModelId" gorm:"index"`
-	CompiledAt     *time.Time `json:"compiledAt"`
-	AutoCompile    bool       `json:"autoCompile" gorm:"not null;default:false"`
-	SourceCount    int        `json:"sourceCount" gorm:"not null;default:0"`
-	NodeCount      int        `json:"nodeCount" gorm:"not null;default:0"`
+	Name                string     `json:"name" gorm:"size:128;not null"`
+	Description         string     `json:"description" gorm:"type:text"`
+	CompileStatus       string     `json:"compileStatus" gorm:"size:16;not null;default:idle"`
+	CompileMethod       string     `json:"compileMethod" gorm:"size:64;not null;default:knowledge_graph"`
+	CompileModelID      *uint      `json:"compileModelId" gorm:"index"`
+	EmbeddingProviderID *uint      `json:"embeddingProviderId" gorm:"index"`
+	EmbeddingModelID    string     `json:"embeddingModelId" gorm:"size:128"`
+	CompiledAt          *time.Time `json:"compiledAt"`
+	AutoCompile         bool       `json:"autoCompile" gorm:"not null;default:false"`
+	SourceCount         int        `json:"sourceCount" gorm:"not null;default:0"`
 }
 
 func (KnowledgeBase) TableName() string { return "ai_knowledge_bases" }
 
 type KnowledgeBaseResponse struct {
-	ID             uint       `json:"id"`
-	Name           string     `json:"name"`
-	Description    string     `json:"description"`
-	CompileStatus  string     `json:"compileStatus"`
-	CompileMethod  string     `json:"compileMethod"`
-	CompileModelID *uint      `json:"compileModelId"`
-	CompiledAt     *time.Time `json:"compiledAt"`
-	AutoCompile    bool       `json:"autoCompile"`
-	SourceCount    int        `json:"sourceCount"`
-	NodeCount      int        `json:"nodeCount"`
-	CreatedAt      time.Time  `json:"createdAt"`
-	UpdatedAt      time.Time  `json:"updatedAt"`
+	ID                  uint       `json:"id"`
+	Name                string     `json:"name"`
+	Description         string     `json:"description"`
+	CompileStatus       string     `json:"compileStatus"`
+	CompileMethod       string     `json:"compileMethod"`
+	CompileModelID      *uint      `json:"compileModelId"`
+	EmbeddingProviderID *uint      `json:"embeddingProviderId"`
+	EmbeddingModelID    string     `json:"embeddingModelId"`
+	CompiledAt          *time.Time `json:"compiledAt"`
+	AutoCompile         bool       `json:"autoCompile"`
+	SourceCount         int        `json:"sourceCount"`
+	NodeCount           int        `json:"nodeCount"`
+	EdgeCount           int        `json:"edgeCount"`
+	CreatedAt           time.Time  `json:"createdAt"`
+	UpdatedAt           time.Time  `json:"updatedAt"`
 }
 
 func (kb *KnowledgeBase) ToResponse() KnowledgeBaseResponse {
 	return KnowledgeBaseResponse{
-		ID:             kb.ID,
-		Name:           kb.Name,
-		Description:    kb.Description,
-		CompileStatus:  kb.CompileStatus,
-		CompileMethod:  kb.CompileMethod,
-		CompileModelID: kb.CompileModelID,
-		CompiledAt:     kb.CompiledAt,
-		AutoCompile:    kb.AutoCompile,
-		SourceCount:    kb.SourceCount,
-		NodeCount:      kb.NodeCount,
-		CreatedAt:      kb.CreatedAt,
-		UpdatedAt:      kb.UpdatedAt,
+		ID:                  kb.ID,
+		Name:                kb.Name,
+		Description:         kb.Description,
+		CompileStatus:       kb.CompileStatus,
+		CompileMethod:       kb.CompileMethod,
+		CompileModelID:      kb.CompileModelID,
+		EmbeddingProviderID: kb.EmbeddingProviderID,
+		EmbeddingModelID:    kb.EmbeddingModelID,
+		CompiledAt:          kb.CompiledAt,
+		AutoCompile:         kb.AutoCompile,
+		SourceCount:         kb.SourceCount,
+		CreatedAt:           kb.CreatedAt,
+		UpdatedAt:           kb.UpdatedAt,
 	}
 }
 
@@ -173,44 +184,39 @@ func (s *KnowledgeSource) ToResponse() KnowledgeSourceResponse {
 	}
 }
 
-// --- KnowledgeNode ---
+// --- KnowledgeNode (FalkorDB) ---
+// KnowledgeNode is a pure data struct representing a node in FalkorDB.
+// It is NOT a GORM model — nodes are stored exclusively in FalkorDB graphs.
 
 type KnowledgeNode struct {
-	model.BaseModel
-	KbID       uint            `json:"kbId" gorm:"not null;index"`
-	Title      string          `json:"title" gorm:"size:256;not null"`
-	Summary    string          `json:"summary" gorm:"type:text"`
-	Content    *string         `json:"content" gorm:"type:text"`
-	NodeType   string          `json:"nodeType" gorm:"size:16;not null;default:concept"`
-	SourceIDs  json.RawMessage `json:"sourceIds" gorm:"type:text"`
-	CompiledAt *time.Time      `json:"compiledAt"`
+	ID         string    `json:"id"`
+	Title      string    `json:"title"`
+	Summary    string    `json:"summary"`
+	Content    *string   `json:"content"`
+	NodeType   string    `json:"nodeType"`
+	SourceIDs  string    `json:"sourceIds"`
+	CompiledAt int64     `json:"compiledAt"`
 }
 
-func (KnowledgeNode) TableName() string { return "ai_knowledge_nodes" }
-
 type KnowledgeNodeResponse struct {
-	ID         uint            `json:"id"`
-	KbID       uint            `json:"kbId"`
+	ID         string          `json:"id"`
 	Title      string          `json:"title"`
 	Summary    string          `json:"summary"`
 	Content    *string         `json:"content,omitempty"`
 	HasContent bool            `json:"hasContent"`
 	NodeType   string          `json:"nodeType"`
 	SourceIDs  json.RawMessage `json:"sourceIds"`
-	EdgeCount  int             `json:"edgeCount,omitempty"`
-	CompiledAt *time.Time      `json:"compiledAt"`
-	CreatedAt  time.Time       `json:"createdAt"`
-	UpdatedAt  time.Time       `json:"updatedAt"`
+	EdgeCount  int             `json:"edgeCount"`
+	CompiledAt int64           `json:"compiledAt"`
 }
 
 func (n *KnowledgeNode) ToResponse() KnowledgeNodeResponse {
-	sourceIDs := n.SourceIDs
-	if len(sourceIDs) == 0 {
+	sourceIDs := json.RawMessage(n.SourceIDs)
+	if len(sourceIDs) == 0 || string(sourceIDs) == "" {
 		sourceIDs = json.RawMessage("[]")
 	}
 	return KnowledgeNodeResponse{
 		ID:         n.ID,
-		KbID:       n.KbID,
 		Title:      n.Title,
 		Summary:    n.Summary,
 		Content:    n.Content,
@@ -218,35 +224,28 @@ func (n *KnowledgeNode) ToResponse() KnowledgeNodeResponse {
 		NodeType:   n.NodeType,
 		SourceIDs:  sourceIDs,
 		CompiledAt: n.CompiledAt,
-		CreatedAt:  n.CreatedAt,
-		UpdatedAt:  n.UpdatedAt,
 	}
 }
 
-// --- KnowledgeEdge ---
+// --- KnowledgeEdge (FalkorDB) ---
+// KnowledgeEdge is a pure data struct representing an edge in FalkorDB.
 
 type KnowledgeEdge struct {
-	ID          uint   `json:"id" gorm:"primaryKey"`
-	KbID        uint   `json:"kbId" gorm:"not null;index"`
-	FromNodeID  uint   `json:"fromNodeId" gorm:"not null;index"`
-	ToNodeID    uint   `json:"toNodeId" gorm:"not null;index"`
-	Relation    string `json:"relation" gorm:"size:32;not null"`
-	Description string `json:"description" gorm:"size:512"`
+	FromNodeID  string `json:"fromNodeId"`
+	ToNodeID    string `json:"toNodeId"`
+	Relation    string `json:"relation"`
+	Description string `json:"description"`
 }
 
-func (KnowledgeEdge) TableName() string { return "ai_knowledge_edges" }
-
 type KnowledgeEdgeResponse struct {
-	ID          uint   `json:"id"`
-	FromNodeID  uint   `json:"fromNodeId"`
-	ToNodeID    uint   `json:"toNodeId"`
+	FromNodeID  string `json:"fromNodeId"`
+	ToNodeID    string `json:"toNodeId"`
 	Relation    string `json:"relation"`
 	Description string `json:"description,omitempty"`
 }
 
 func (e *KnowledgeEdge) ToResponse() KnowledgeEdgeResponse {
 	return KnowledgeEdgeResponse{
-		ID:          e.ID,
 		FromNodeID:  e.FromNodeID,
 		ToNodeID:    e.ToNodeID,
 		Relation:    e.Relation,

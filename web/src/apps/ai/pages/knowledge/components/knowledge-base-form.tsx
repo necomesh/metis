@@ -55,6 +55,8 @@ function useKnowledgeBaseSchema() {
     compileMethod: z.string(),
     providerId: z.string().optional(),
     compileModelId: z.coerce.number().optional(),
+    embeddingProviderId: z.string().optional(),
+    embeddingModelId: z.string().optional(),
     autoCompile: z.boolean(),
   })
 }
@@ -81,7 +83,7 @@ export function KnowledgeBaseForm({ open, onOpenChange, knowledgeBase }: Knowled
   })
   const providers = providersData?.items ?? []
 
-  // For edit mode: resolve the provider from the selected model
+  // For edit mode: resolve the provider from the selected compile model
   const { data: editModelDetail } = useQuery({
     queryKey: ["ai-model-detail", knowledgeBase?.compileModelId],
     queryFn: () =>
@@ -100,13 +102,16 @@ export function KnowledgeBaseForm({ open, onOpenChange, knowledgeBase }: Knowled
       compileMethod: "knowledge_graph",
       providerId: "",
       compileModelId: undefined,
+      embeddingProviderId: "",
+      embeddingModelId: "",
       autoCompile: false,
     },
   })
 
   const selectedProviderId = form.watch("providerId") ?? ""
+  const selectedEmbeddingProviderId = form.watch("embeddingProviderId") ?? ""
 
-  // Fetch models filtered by selected provider
+  // Fetch LLM models filtered by selected provider
   const { data: modelsData } = useQuery({
     queryKey: ["ai-models-llm", selectedProviderId],
     queryFn: () =>
@@ -117,6 +122,17 @@ export function KnowledgeBaseForm({ open, onOpenChange, knowledgeBase }: Knowled
   })
   const llmModels = modelsData?.items ?? []
 
+  // Fetch embedding models filtered by selected embedding provider
+  const { data: embModelsData } = useQuery({
+    queryKey: ["ai-models-embedding", selectedEmbeddingProviderId],
+    queryFn: () =>
+      api.get<PaginatedResponse<ModelOption>>(
+        `/api/v1/ai/models?type=embedding&providerId=${selectedEmbeddingProviderId}&pageSize=100`,
+      ),
+    enabled: open && selectedEmbeddingProviderId !== "",
+  })
+  const embeddingModels = embModelsData?.items ?? []
+
   // Compute default form values based on mode
   const resetValues = useMemo(() => {
     if (knowledgeBase) {
@@ -126,6 +142,8 @@ export function KnowledgeBaseForm({ open, onOpenChange, knowledgeBase }: Knowled
         compileMethod: knowledgeBase.compileMethod || "knowledge_graph",
         providerId: editProviderId,
         compileModelId: knowledgeBase.compileModelId || undefined,
+        embeddingProviderId: knowledgeBase.embeddingProviderId ? String(knowledgeBase.embeddingProviderId) : "",
+        embeddingModelId: knowledgeBase.embeddingModelId || "",
         autoCompile: knowledgeBase.autoCompile,
       }
     }
@@ -135,6 +153,8 @@ export function KnowledgeBaseForm({ open, onOpenChange, knowledgeBase }: Knowled
       compileMethod: "knowledge_graph",
       providerId: "",
       compileModelId: undefined as number | undefined,
+      embeddingProviderId: "",
+      embeddingModelId: "",
       autoCompile: false,
     }
   }, [knowledgeBase, editProviderId])
@@ -150,10 +170,19 @@ export function KnowledgeBaseForm({ open, onOpenChange, knowledgeBase }: Knowled
     form.setValue("compileModelId", undefined)
   }
 
+  function handleEmbeddingProviderChange(value: string) {
+    form.setValue("embeddingProviderId", value)
+    form.setValue("embeddingModelId", "")
+  }
+
   const createMutation = useMutation({
     mutationFn: (values: FormValues) => {
-      const { name, description, compileMethod, compileModelId, autoCompile } = values
-      return api.post("/api/v1/ai/knowledge-bases", { name, description, compileMethod, compileModelId, autoCompile })
+      const { name, description, compileMethod, compileModelId, autoCompile, embeddingProviderId, embeddingModelId } = values
+      return api.post("/api/v1/ai/knowledge-bases", {
+        name, description, compileMethod, compileModelId, autoCompile,
+        embeddingProviderId: embeddingProviderId ? Number(embeddingProviderId) : null,
+        embeddingModelId: embeddingModelId || "",
+      })
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["ai-knowledge-bases"] })
@@ -165,8 +194,12 @@ export function KnowledgeBaseForm({ open, onOpenChange, knowledgeBase }: Knowled
 
   const updateMutation = useMutation({
     mutationFn: (values: FormValues) => {
-      const { name, description, compileMethod, compileModelId, autoCompile } = values
-      return api.put(`/api/v1/ai/knowledge-bases/${knowledgeBase!.id}`, { name, description, compileMethod, compileModelId, autoCompile })
+      const { name, description, compileMethod, compileModelId, autoCompile, embeddingProviderId, embeddingModelId } = values
+      return api.put(`/api/v1/ai/knowledge-bases/${knowledgeBase!.id}`, {
+        name, description, compileMethod, compileModelId, autoCompile,
+        embeddingProviderId: embeddingProviderId ? Number(embeddingProviderId) : null,
+        embeddingModelId: embeddingModelId || "",
+      })
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["ai-knowledge-bases"] })
@@ -253,7 +286,7 @@ export function KnowledgeBaseForm({ open, onOpenChange, knowledgeBase }: Knowled
                 </FormItem>
               )}
             />
-            {/* Provider (cascade step 1) */}
+            {/* Compile Provider (cascade step 1) */}
             <FormField
               control={form.control}
               name="providerId"
@@ -277,7 +310,7 @@ export function KnowledgeBaseForm({ open, onOpenChange, knowledgeBase }: Knowled
                 </FormItem>
               )}
             />
-            {/* Model (cascade step 2) */}
+            {/* Compile Model (cascade step 2) */}
             <FormField
               control={form.control}
               name="compileModelId"
@@ -297,6 +330,59 @@ export function KnowledgeBaseForm({ open, onOpenChange, knowledgeBase }: Knowled
                     <SelectContent>
                       {llmModels.map((m) => (
                         <SelectItem key={m.id} value={String(m.id)}>
+                          {m.displayName}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            {/* Embedding Provider (cascade step 1) */}
+            <FormField
+              control={form.control}
+              name="embeddingProviderId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t("ai:knowledge.embeddingProvider")}</FormLabel>
+                  <Select value={field.value ?? ""} onValueChange={handleEmbeddingProviderChange}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder={t("ai:knowledge.selectEmbeddingProvider")} />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {providers.map((p) => (
+                        <SelectItem key={p.id} value={String(p.id)}>
+                          {p.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FormItem>
+              )}
+            />
+            {/* Embedding Model (cascade step 2) */}
+            <FormField
+              control={form.control}
+              name="embeddingModelId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t("ai:knowledge.embeddingModel")}</FormLabel>
+                  <Select
+                    value={field.value ?? ""}
+                    onValueChange={field.onChange}
+                    disabled={selectedEmbeddingProviderId === ""}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder={t("ai:knowledge.selectEmbeddingModel")} />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {embeddingModels.map((m) => (
+                        <SelectItem key={m.id} value={m.modelId}>
                           {m.displayName}
                         </SelectItem>
                       ))}

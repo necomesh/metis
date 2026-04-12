@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
+import { toast } from "sonner"
 import { useQuery, useMutation } from "@tanstack/react-query"
 import { ChevronRight, ChevronDown } from "lucide-react"
 import { api } from "@/lib/api"
@@ -205,6 +206,7 @@ export function PermissionDialog({ open, onOpenChange, role }: PermissionDialogP
         apiPolicies: currentPerms?.apiPolicies || [],
       }),
     onSuccess: () => onOpenChange(false),
+    onError: (err) => toast.error(err.message),
   })
 
   const totalCount = menuTree ? collectAllIds(menuTree).length : 0

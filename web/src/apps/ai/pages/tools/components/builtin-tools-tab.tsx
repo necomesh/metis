@@ -7,8 +7,6 @@ import { api } from "@/lib/api"
 import { toast } from "sonner"
 import { Switch } from "@/components/ui/switch"
 import { Badge } from "@/components/ui/badge"
-import { Separator } from "@/components/ui/separator"
-import { Label } from "@/components/ui/label"
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
 } from "@/components/ui/sheet"
@@ -87,7 +85,7 @@ export function BuiltinToolsTab() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {groups.map((group) => {
           const Icon = TOOLKIT_ICONS[group.toolkit] ?? Wrench
-          const activeCount = group.tools.filter((t) => t.isActive).length
+          const activeCount = group.tools.filter((tool) => tool.isActive).length
           const totalCount = group.tools.length
 
           return (
@@ -106,7 +104,7 @@ export function BuiltinToolsTab() {
                     {t(`ai:tools.toolkits.${group.toolkit}.name`)}
                   </h3>
                   <p className="text-xs text-muted-foreground">
-                    {activeCount}/{totalCount} {t("ai:statusLabels.active").toLowerCase()}
+                    {activeCount}/{totalCount} {t("ai:tools.builtin.toolsEnabled")}
                   </p>
                 </div>
                 <Badge variant={activeCount > 0 ? "default" : "secondary"} className="shrink-0">
@@ -129,7 +127,6 @@ export function BuiltinToolsTab() {
               group={activeDrawerGroup}
               canUpdate={canUpdate}
               toggleMutation={toggleMutation}
-              t={t}
             />
           )}
         </SheetContent>
@@ -142,13 +139,12 @@ function ToolkitDetail({
   group,
   canUpdate,
   toggleMutation,
-  t,
 }: {
   group: ToolkitGroup
   canUpdate: boolean
   toggleMutation: ReturnType<typeof useMutation<unknown, Error, { id: number; isActive: boolean }>>
-  t: (key: string, defaultValue?: string) => string
 }) {
+  const { t } = useTranslation(["ai", "common"])
   const Icon = TOOLKIT_ICONS[group.toolkit] ?? Wrench
 
   return (
@@ -162,36 +158,28 @@ function ToolkitDetail({
           {t(`ai:tools.toolkits.${group.toolkit}.description`)}
         </SheetDescription>
       </SheetHeader>
-      <div className="flex flex-col gap-4 px-4">
+      <div className="flex flex-col gap-3 px-4">
+        <p className="text-xs text-muted-foreground">
+          {t("ai:tools.builtin.drawerHint")}
+        </p>
         {group.tools.map((tool) => (
-          <div key={tool.id} className="rounded-lg border bg-card p-4 space-y-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex-1 min-w-0">
-                <h4 className="text-sm font-medium">{tool.displayName}</h4>
-                <p className="text-xs text-muted-foreground font-mono">{tool.name}</p>
-              </div>
-              <Switch
-                checked={tool.isActive}
-                disabled={!canUpdate || toggleMutation.isPending}
-                onCheckedChange={(checked) =>
-                  toggleMutation.mutate({ id: tool.id, isActive: checked })
-                }
-              />
+          <div
+            key={tool.id}
+            className="flex items-center gap-3 rounded-lg border p-3 transition-colors"
+          >
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium">{t(`ai:tools.toolDefs.${tool.name}.name`, tool.displayName)}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {t(`ai:tools.toolDefs.${tool.name}.description`, tool.description)}
+              </p>
             </div>
-            <p className="text-sm text-muted-foreground">{tool.description}</p>
-            {tool.parametersSchema && Object.keys(tool.parametersSchema).length > 0 && (
-              <>
-                <Separator />
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Parameters
-                  </Label>
-                  <div className="rounded-md border bg-muted/30 p-3 text-xs font-mono whitespace-pre-wrap max-h-48 overflow-y-auto">
-                    {JSON.stringify(tool.parametersSchema, null, 2)}
-                  </div>
-                </div>
-              </>
-            )}
+            <Switch
+              checked={tool.isActive}
+              disabled={!canUpdate || toggleMutation.isPending}
+              onCheckedChange={(checked) =>
+                toggleMutation.mutate({ id: tool.id, isActive: checked })
+              }
+            />
           </div>
         ))}
       </div>

@@ -24,6 +24,17 @@ func (r *UserConnectionRepo) FindByUserID(userID uint) ([]model.UserConnection, 
 	return conns, nil
 }
 
+func (r *UserConnectionRepo) FindByUserIDs(userIDs []uint) ([]model.UserConnection, error) {
+	if len(userIDs) == 0 {
+		return nil, nil
+	}
+	var conns []model.UserConnection
+	if err := r.db.Where("user_id IN (?)", userIDs).Find(&conns).Error; err != nil {
+		return nil, err
+	}
+	return conns, nil
+}
+
 func (r *UserConnectionRepo) FindByProviderAndExternalID(provider, externalID string) (*model.UserConnection, error) {
 	var conn model.UserConnection
 	if err := r.db.Where("provider = ? AND external_id = ?", provider, externalID).First(&conn).Error; err != nil {

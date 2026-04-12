@@ -24,8 +24,7 @@ func (a *AIApp) Name() string { return "ai" }
 func (a *AIApp) Models() []any {
 	return []any{
 		&Provider{}, &AIModel{}, &AILog{},
-		&KnowledgeBase{}, &KnowledgeSource{}, &KnowledgeNode{},
-		&KnowledgeEdge{}, &KnowledgeLog{},
+		&KnowledgeBase{}, &KnowledgeSource{}, &KnowledgeLog{},
 		// Tool registry
 		&Tool{}, &MCPServer{}, &Skill{},
 		&AgentTool{}, &AgentMCPServer{}, &AgentSkill{},
@@ -44,13 +43,15 @@ func (a *AIApp) Providers(i do.Injector) {
 	do.Provide(i, NewModelService)
 	do.Provide(i, NewProviderHandler)
 	do.Provide(i, NewModelHandler)
+	// FalkorDB
+	do.Provide(i, NewFalkorDBClient)
 	// Knowledge
 	do.Provide(i, NewKnowledgeBaseRepo)
 	do.Provide(i, NewKnowledgeSourceRepo)
-	do.Provide(i, NewKnowledgeNodeRepo)
-	do.Provide(i, NewKnowledgeEdgeRepo)
+	do.Provide(i, NewKnowledgeGraphRepo)
 	do.Provide(i, NewKnowledgeBaseService)
 	do.Provide(i, NewKnowledgeSourceService)
+	do.Provide(i, NewKnowledgeEmbeddingService)
 	do.Provide(i, NewKnowledgeBaseHandler)
 	do.Provide(i, NewKnowledgeSourceHandler)
 	do.Provide(i, NewKnowledgeNodeHandler)

@@ -41,7 +41,7 @@ func (h *NodeHandler) Create(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "create")
+	c.Set("audit_action", "node.create")
 	c.Set("audit_resource", "node")
 
 	result, err := h.nodeSvc.Create(req.Name, JSONMap(req.Labels))
@@ -129,7 +129,7 @@ func (h *NodeHandler) Update(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "update")
+	c.Set("audit_action", "node.update")
 	c.Set("audit_resource", "node")
 	c.Set("audit_resource_id", c.Param("id"))
 
@@ -164,7 +164,7 @@ func (h *NodeHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "delete")
+	c.Set("audit_action", "node.delete")
 	c.Set("audit_resource", "node")
 	c.Set("audit_resource_id", c.Param("id"))
 
@@ -188,7 +188,7 @@ func (h *NodeHandler) RotateToken(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "rotate_token")
+	c.Set("audit_action", "node.rotateToken")
 	c.Set("audit_resource", "node")
 	c.Set("audit_resource_id", c.Param("id"))
 

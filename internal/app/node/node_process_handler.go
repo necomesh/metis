@@ -40,7 +40,7 @@ func (h *NodeProcessHandler) Bind(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "bind_process")
+	c.Set("audit_action", "nodeProcess.bind")
 	c.Set("audit_resource", "node_process")
 	c.Set("audit_resource_id", c.Param("id"))
 
@@ -99,7 +99,7 @@ func (h *NodeProcessHandler) Unbind(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "unbind_process")
+	c.Set("audit_action", "nodeProcess.unbind")
 	c.Set("audit_resource", "node_process")
 	c.Set("audit_resource_id", c.Param("id"))
 
@@ -129,7 +129,7 @@ func (h *NodeProcessHandler) Start(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "start_process")
+	c.Set("audit_action", "nodeProcess.start")
 	c.Set("audit_resource", "node_process")
 	c.Set("audit_resource_id", c.Param("id"))
 
@@ -159,7 +159,7 @@ func (h *NodeProcessHandler) Stop(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "stop_process")
+	c.Set("audit_action", "nodeProcess.stop")
 	c.Set("audit_resource", "node_process")
 	c.Set("audit_resource_id", c.Param("id"))
 
@@ -189,7 +189,7 @@ func (h *NodeProcessHandler) Restart(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "restart_process")
+	c.Set("audit_action", "nodeProcess.restart")
 	c.Set("audit_resource", "node_process")
 	c.Set("audit_resource_id", c.Param("id"))
 
@@ -219,7 +219,7 @@ func (h *NodeProcessHandler) Reload(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "reload_process")
+	c.Set("audit_action", "nodeProcess.reload")
 	c.Set("audit_resource", "node_process")
 	c.Set("audit_resource_id", c.Param("id"))
 

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from "react"
 import { useTranslation } from "react-i18next"
+import { toast } from "sonner"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import {
   DndContext,
@@ -277,12 +278,14 @@ export function Component() {
   const deleteMutation = useMutation({
     mutationFn: (id: number) => api.delete(`/api/v1/menus/${id}`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["menus"] }),
+    onError: (err) => toast.error(err.message),
   })
 
   const sortMutation = useMutation({
     mutationFn: (items: { id: number; sort: number }[]) =>
       api.put("/api/v1/menus/sort", { items }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["menus"] }),
+    onError: (err) => toast.error(err.message),
   })
 
   // Default expand all on first load

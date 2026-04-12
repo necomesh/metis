@@ -96,7 +96,7 @@ func (h *KnowledgeSourceHandler) Create(c *gin.Context) {
 			h.extractSvc.EnqueueExtract(src.ID)
 		}
 
-		c.Set("audit_action", "create")
+		c.Set("audit_action", "knowledgeSource.create")
 		c.Set("audit_resource", "ai_knowledge_source")
 		c.Set("audit_resource_id", strconv.Itoa(int(src.ID)))
 		c.Set("audit_summary", "Uploaded source: "+src.FileName)
@@ -154,7 +154,7 @@ func (h *KnowledgeSourceHandler) Create(c *gin.Context) {
 		h.extractSvc.EnqueueExtract(src.ID)
 	}
 
-	c.Set("audit_action", "create")
+	c.Set("audit_action", "knowledgeSource.create")
 	c.Set("audit_resource", "ai_knowledge_source")
 	c.Set("audit_resource_id", strconv.Itoa(int(src.ID)))
 
@@ -209,7 +209,7 @@ func (h *KnowledgeSourceHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "delete")
+	c.Set("audit_action", "knowledgeSource.delete")
 	c.Set("audit_resource", "ai_knowledge_source")
 	c.Set("audit_resource_id", c.Param("sid"))
 

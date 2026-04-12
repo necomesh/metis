@@ -47,7 +47,7 @@ func (h *ProviderHandler) Create(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "create")
+	c.Set("audit_action", "provider.create")
 	c.Set("audit_resource", "ai_provider")
 	c.Set("audit_resource_id", strconv.Itoa(int(p.ID)))
 	c.Set("audit_summary", "Created AI provider: "+p.Name)
@@ -123,7 +123,7 @@ func (h *ProviderHandler) Update(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "update")
+	c.Set("audit_action", "provider.update")
 	c.Set("audit_resource", "ai_provider")
 	c.Set("audit_resource_id", strconv.Itoa(int(p.ID)))
 	c.Set("audit_summary", "Updated AI provider: "+p.Name)
@@ -139,7 +139,7 @@ func (h *ProviderHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "delete")
+	c.Set("audit_action", "provider.delete")
 	c.Set("audit_resource", "ai_provider")
 	c.Set("audit_resource_id", c.Param("id"))
 

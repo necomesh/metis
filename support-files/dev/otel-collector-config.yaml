@@ -1,0 +1,61 @@
+receivers:
+  otlp/grpc:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+  otlp/http:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+        traces_url_path: /v1/traces
+        metrics_url_path: /v1/metrics
+        logs_url_path: /v1/logs
+
+processors:
+  # 1. 内存保护 — 必须第一个，防止 OOM 时数据积压把 collector 压垮
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  # 2. 资源探测 — 自动补全 host.name / os.type 等基础属性
+  resourcedetection:
+    detectors: [env, system]
+    timeout: 5s
+    override: false
+
+  # 3. 批处理 — 最后一步，聚合后再写 ClickHouse，减少写入次数
+  batch:
+    timeout: 5s
+    send_batch_size: 1000
+
+exporters:
+  clickhouse:
+    endpoint: tcp://clickhouse:9000
+    database: otel
+    logs_table_name: otel_logs
+    traces_table_name: otel_traces
+    metrics_table_name: otel_metrics
+    ttl: 72h
+    timeout: 10s
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+
+service:
+  pipelines:
+    logs:
+      receivers: [otlp/grpc, otlp/http]
+      processors: [memory_limiter, resourcedetection, batch]
+      exporters: [clickhouse]
+    metrics:
+      receivers: [otlp/grpc, otlp/http]
+      processors: [memory_limiter, resourcedetection, batch]
+      exporters: [clickhouse]
+    traces:
+      receivers: [otlp/grpc, otlp/http]
+      processors: [memory_limiter, resourcedetection, batch]
+      exporters: [clickhouse]

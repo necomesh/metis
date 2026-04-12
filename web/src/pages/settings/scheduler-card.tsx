@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next"
+import { toast } from "sonner"
 import { useForm } from "react-hook-form"
 import { z } from "zod"
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -61,6 +62,7 @@ export function SchedulerCard() {
       queryClient.invalidateQueries({ queryKey: ["settings", "scheduler"] })
       form.reset(form.getValues())
     },
+    onError: (err) => toast.error(err.message),
   })
 
   if (isLoading) {

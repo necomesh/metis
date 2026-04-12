@@ -51,9 +51,12 @@ export interface KnowledgeBaseItem {
   description: string
   sourceCount: number
   nodeCount: number
+  edgeCount: number
   compileStatus: string
   compileMethod: string
   compileModelId: number
+  embeddingProviderId: number | null
+  embeddingModelId: string
   autoCompile: boolean
   createdAt: string
   updatedAt: string

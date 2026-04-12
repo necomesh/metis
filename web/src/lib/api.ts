@@ -159,7 +159,7 @@ async function authorizedFetch(
 async function handleErrorResponse(res: Response): Promise<never> {
   // Password expired — redirect to change password
   if (res.status === 409) {
-    let message = '密码已过期，请修改密码';
+    let message = 'Password has expired';
     try {
       const body = (await res.json()) as ApiResponse<unknown>;
       message = body.message || message;

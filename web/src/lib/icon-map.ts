@@ -1,7 +1,11 @@
 import {
+  BookOpen,
+  Brain,
   Building2,
+  Cog,
   Home,
   Settings,
+  Server,
   Users,
   Shield,
   Menu,
@@ -31,8 +35,12 @@ import {
 } from 'lucide-react';
 
 const icons = {
+  BookOpen,
+  Brain,
+  Cog,
   Home,
   Settings,
+  Server,
   Users,
   Shield,
   Menu,

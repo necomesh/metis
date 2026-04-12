@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
+import { toast } from "sonner"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { Plus, Search, Shield, Pencil, Trash2, ShieldCheck } from "lucide-react"
 import { api } from "@/lib/api"
@@ -62,6 +63,7 @@ export function Component() {
   const deleteMutation = useMutation({
     mutationFn: (id: number) => api.delete(`/api/v1/roles/${id}`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["roles"] }),
+    onError: (err) => toast.error(err.message),
   })
 
   function handleCreate() {

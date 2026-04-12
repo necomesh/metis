@@ -70,13 +70,12 @@ func (r *KnowledgeBaseRepo) Delete(id uint) error {
 	return r.db.Delete(&KnowledgeBase{}, id).Error
 }
 
-func (r *KnowledgeBaseRepo) UpdateCounts(id uint) error {
+func (r *KnowledgeBaseRepo) UpdateSourceCount(id uint) error {
 	return r.db.Exec(`
 		UPDATE ai_knowledge_bases SET
-			source_count = (SELECT COUNT(*) FROM ai_knowledge_sources WHERE kb_id = ? AND deleted_at IS NULL),
-			node_count = (SELECT COUNT(*) FROM ai_knowledge_nodes WHERE kb_id = ? AND deleted_at IS NULL)
+			source_count = (SELECT COUNT(*) FROM ai_knowledge_sources WHERE kb_id = ? AND deleted_at IS NULL)
 		WHERE id = ?
-	`, id, id, id).Error
+	`, id, id).Error
 }
 
 func (r *KnowledgeBaseRepo) DB() *gorm.DB {

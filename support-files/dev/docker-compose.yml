@@ -1,14 +1,59 @@
 services:
-  victoria-trace:
-    image: docker.xuanyuan.run/victoriametrics/victoria-traces:v0.8.0
+  clickhouse:
+    image: docker.xuanyuan.run/clickhouse/clickhouse-server:latest
     restart: always
     volumes:
-      - victoria-trace:/victoria-trace-data
+      - clickhouse:/var/lib/clickhouse
     ports:
-      - "10428:10428"
+      - "8123:8123"   # HTTP interface
+      - "9000:9000"   # Native protocol
+    environment:
+      CLICKHOUSE_DB: otel
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+
+  traefik:
+    image: docker.xuanyuan.run/library/traefik:v3
+    restart: always
     command:
-      - "--storageDataPath=/victoria-trace-data"
-      - "--retentionPeriod=168h"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.otlp-http.address=:4318"
+      - "--api.insecure=true"
+    ports:
+      - "4318:4318"   # OTLP HTTP (via Traefik)
+      - "8888:8080"   # Traefik dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  otel-collector:
+    image: docker.xuanyuan.run/otel/opentelemetry-collector-contrib:latest
+    restart: always
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC (直连)
+    depends_on:
+      - clickhouse
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.otlp.entrypoints=otlp-http"
+      - "traefik.http.routers.otlp.rule=PathPrefix(`/`)"
+      - "traefik.http.services.otlp.loadbalancer.server.port=4318"
+
+  falkordb:
+    image: docker.xuanyuan.run/falkordb/falkordb:latest
+    restart: always
+    volumes:
+      - falkordb:/data
+    ports:
+      - "6379:6379"
+      - "3010:3000"   # FalkorDB Browser
 
 volumes:
-  victoria-trace:
+  clickhouse:
+  falkordb:

@@ -68,7 +68,7 @@ func (h *ProductHandler) Create(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "create")
+	c.Set("audit_action", "product.create")
 	c.Set("audit_resource", "license_product")
 
 	product, err := h.productSvc.CreateProduct(req.Name, req.Code, req.Description)
@@ -155,7 +155,7 @@ func (h *ProductHandler) Update(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "update")
+	c.Set("audit_action", "product.update")
 	c.Set("audit_resource", "license_product")
 	c.Set("audit_resource_id", c.Param("id"))
 
@@ -189,7 +189,7 @@ func (h *ProductHandler) UpdateSchema(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "update")
+	c.Set("audit_action", "product.update")
 	c.Set("audit_resource", "license_product_schema")
 	c.Set("audit_resource_id", c.Param("id"))
 
@@ -223,7 +223,7 @@ func (h *ProductHandler) UpdateStatus(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "update")
+	c.Set("audit_action", "product.update")
 	c.Set("audit_resource", "license_product_status")
 	c.Set("audit_resource_id", c.Param("id"))
 
@@ -251,7 +251,7 @@ func (h *ProductHandler) RotateKey(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "rotate_key")
+	c.Set("audit_action", "product.rotateKey")
 	c.Set("audit_resource", "license_product_key")
 	c.Set("audit_resource_id", c.Param("id"))
 
@@ -318,7 +318,7 @@ func (h *PlanHandler) Create(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "create")
+	c.Set("audit_action", "plan.create")
 	c.Set("audit_resource", "license_plan")
 
 	plan, err := h.planSvc.CreatePlan(productID, req.Name, req.ConstraintValues, req.SortOrder)
@@ -349,7 +349,7 @@ func (h *PlanHandler) Update(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "update")
+	c.Set("audit_action", "plan.update")
 	c.Set("audit_resource", "license_plan")
 	c.Set("audit_resource_id", c.Param("id"))
 
@@ -378,7 +378,7 @@ func (h *PlanHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "delete")
+	c.Set("audit_action", "plan.delete")
 	c.Set("audit_resource", "license_plan")
 	c.Set("audit_resource_id", c.Param("id"))
 
@@ -408,7 +408,7 @@ func (h *PlanHandler) SetDefault(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "update")
+	c.Set("audit_action", "plan.setDefault")
 	c.Set("audit_resource", "license_plan_default")
 	c.Set("audit_resource_id", c.Param("id"))
 

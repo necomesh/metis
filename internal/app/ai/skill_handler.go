@@ -69,11 +69,15 @@ func (h *SkillHandler) ImportGitHub(c *gin.Context) {
 			handler.Fail(c, http.StatusBadRequest, err.Error())
 			return
 		}
+		if errors.Is(err, ErrNotImplemented) {
+			handler.Fail(c, http.StatusNotImplemented, err.Error())
+			return
+		}
 		handler.Fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	c.Set("audit_action", "create")
+	c.Set("audit_action", "skill.create")
 	c.Set("audit_resource", "ai_skill")
 	c.Set("audit_resource_id", strconv.Itoa(int(skill.ID)))
 	c.Set("audit_summary", "Imported skill from GitHub: "+skill.Name)
@@ -105,7 +109,7 @@ func (h *SkillHandler) Upload(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "create")
+	c.Set("audit_action", "skill.create")
 	c.Set("audit_resource", "ai_skill")
 	c.Set("audit_resource_id", strconv.Itoa(int(skill.ID)))
 	c.Set("audit_summary", "Uploaded skill: "+skill.Name)
@@ -141,7 +145,7 @@ func (h *SkillHandler) Update(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "update")
+	c.Set("audit_action", "skill.update")
 	c.Set("audit_resource", "ai_skill")
 	c.Set("audit_resource_id", strconv.Itoa(int(skill.ID)))
 	c.Set("audit_summary", "Updated skill: "+skill.Name)
@@ -181,7 +185,7 @@ func (h *SkillHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "delete")
+	c.Set("audit_action", "skill.delete")
 	c.Set("audit_resource", "ai_skill")
 	c.Set("audit_resource_id", c.Param("id"))
 

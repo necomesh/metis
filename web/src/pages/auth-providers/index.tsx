@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useTranslation } from "react-i18next"
+import { toast } from "sonner"
 import { Pencil, KeyRound } from "lucide-react"
 import { useState } from "react"
 import { api } from "@/lib/api"
@@ -45,6 +46,7 @@ export function Component() {
       api.patch(`/api/v1/admin/auth-providers/${key}/toggle`),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["auth-providers"] }),
+    onError: (err) => toast.error(err.message),
   })
 
   function handleEdit(provider: AuthProvider) {

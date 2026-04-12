@@ -2,6 +2,7 @@ package ai
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/samber/do/v2"
 	"gorm.io/gorm"
@@ -14,16 +15,14 @@ var (
 type KnowledgeBaseService struct {
 	repo       *KnowledgeBaseRepo
 	sourceRepo *KnowledgeSourceRepo
-	nodeRepo   *KnowledgeNodeRepo
-	edgeRepo   *KnowledgeEdgeRepo
+	graphRepo  *KnowledgeGraphRepo
 }
 
 func NewKnowledgeBaseService(i do.Injector) (*KnowledgeBaseService, error) {
 	return &KnowledgeBaseService{
 		repo:       do.MustInvoke[*KnowledgeBaseRepo](i),
 		sourceRepo: do.MustInvoke[*KnowledgeSourceRepo](i),
-		nodeRepo:   do.MustInvoke[*KnowledgeNodeRepo](i),
-		edgeRepo:   do.MustInvoke[*KnowledgeEdgeRepo](i),
+		graphRepo:  do.MustInvoke[*KnowledgeGraphRepo](i),
 	}, nil
 }
 
@@ -48,9 +47,13 @@ func (s *KnowledgeBaseService) Update(kb *KnowledgeBase) error {
 }
 
 func (s *KnowledgeBaseService) Delete(id uint) error {
-	// Delete associated data
-	s.edgeRepo.DeleteByKbID(id)
-	s.nodeRepo.DeleteByKbID(id)
-	s.sourceRepo.DeleteByKbID(id)
+	// Delete FalkorDB graph (contains all nodes and edges)
+	if err := s.graphRepo.DeleteGraph(id); err != nil {
+		return fmt.Errorf("delete graph: %w", err)
+	}
+	// Delete GORM sources
+	if err := s.sourceRepo.DeleteByKbID(id); err != nil {
+		return fmt.Errorf("delete sources: %w", err)
+	}
 	return s.repo.Delete(id)
 }

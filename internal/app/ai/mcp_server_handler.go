@@ -68,7 +68,7 @@ func (h *MCPServerHandler) Create(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "create")
+	c.Set("audit_action", "mcpServer.create")
 	c.Set("audit_resource", "ai_mcp_server")
 	c.Set("audit_resource_id", strconv.Itoa(int(m.ID)))
 	c.Set("audit_summary", "Created MCP server: "+m.Name)
@@ -161,7 +161,7 @@ func (h *MCPServerHandler) Update(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "update")
+	c.Set("audit_action", "mcpServer.update")
 	c.Set("audit_resource", "ai_mcp_server")
 	c.Set("audit_resource_id", strconv.Itoa(int(m.ID)))
 	c.Set("audit_summary", "Updated MCP server: "+m.Name)
@@ -176,7 +176,7 @@ func (h *MCPServerHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "delete")
+	c.Set("audit_action", "mcpServer.delete")
 	c.Set("audit_resource", "ai_mcp_server")
 	c.Set("audit_resource_id", c.Param("id"))
 
@@ -200,9 +200,5 @@ func (h *MCPServerHandler) TestConnection(c *gin.Context) {
 	}
 
 	// TODO: implement actual MCP SSE connection test
-	// For now, just validate configuration
-	handler.OK(c, gin.H{
-		"success": true,
-		"message": "configuration is valid (actual connection test not yet implemented)",
-	})
+	handler.Fail(c, http.StatusNotImplemented, "MCP SSE connection test is not yet implemented")
 }

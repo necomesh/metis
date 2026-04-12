@@ -62,7 +62,7 @@ func (h *ProcessDefHandler) Create(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "create")
+	c.Set("audit_action", "processDef.create")
 	c.Set("audit_resource", "process_def")
 
 	pd := &ProcessDef{
@@ -166,7 +166,7 @@ func (h *ProcessDefHandler) Update(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "update")
+	c.Set("audit_action", "processDef.update")
 	c.Set("audit_resource", "process_def")
 	c.Set("audit_resource_id", c.Param("id"))
 
@@ -229,7 +229,7 @@ func (h *ProcessDefHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "delete")
+	c.Set("audit_action", "processDef.delete")
 	c.Set("audit_resource", "process_def")
 	c.Set("audit_resource_id", c.Param("id"))
 

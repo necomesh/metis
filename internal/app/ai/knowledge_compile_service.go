@@ -16,26 +16,26 @@ import (
 )
 
 type KnowledgeCompileService struct {
-	kbRepo     *KnowledgeBaseRepo
-	sourceRepo *KnowledgeSourceRepo
-	nodeRepo   *KnowledgeNodeRepo
-	edgeRepo   *KnowledgeEdgeRepo
-	logRepo    *KnowledgeLogRepo
-	modelRepo  *ModelRepo
-	encKey     crypto.EncryptionKey
-	engine     *scheduler.Engine
+	kbRepo       *KnowledgeBaseRepo
+	sourceRepo   *KnowledgeSourceRepo
+	graphRepo    *KnowledgeGraphRepo
+	logRepo      *KnowledgeLogRepo
+	modelRepo    *ModelRepo
+	embeddingSvc *KnowledgeEmbeddingService
+	encKey       crypto.EncryptionKey
+	engine       *scheduler.Engine
 }
 
 func NewKnowledgeCompileService(i do.Injector) (*KnowledgeCompileService, error) {
 	return &KnowledgeCompileService{
-		kbRepo:     do.MustInvoke[*KnowledgeBaseRepo](i),
-		sourceRepo: do.MustInvoke[*KnowledgeSourceRepo](i),
-		nodeRepo:   do.MustInvoke[*KnowledgeNodeRepo](i),
-		edgeRepo:   do.MustInvoke[*KnowledgeEdgeRepo](i),
-		logRepo:    do.MustInvoke[*KnowledgeLogRepo](i),
-		modelRepo:  do.MustInvoke[*ModelRepo](i),
-		encKey:     do.MustInvoke[crypto.EncryptionKey](i),
-		engine:     do.MustInvoke[*scheduler.Engine](i),
+		kbRepo:       do.MustInvoke[*KnowledgeBaseRepo](i),
+		sourceRepo:   do.MustInvoke[*KnowledgeSourceRepo](i),
+		graphRepo:    do.MustInvoke[*KnowledgeGraphRepo](i),
+		logRepo:      do.MustInvoke[*KnowledgeLogRepo](i),
+		modelRepo:    do.MustInvoke[*ModelRepo](i),
+		embeddingSvc: do.MustInvoke[*KnowledgeEmbeddingService](i),
+		encKey:       do.MustInvoke[crypto.EncryptionKey](i),
+		engine:       do.MustInvoke[*scheduler.Engine](i),
 	}, nil
 }
 
@@ -77,10 +77,11 @@ func (s *KnowledgeCompileService) HandleCompile(ctx context.Context, payload jso
 		return fmt.Errorf("find kb %d: %w", p.KbID, err)
 	}
 
-	// If recompile, clear existing nodes and edges
+	// If recompile, delete the entire FalkorDB graph
 	if p.Recompile {
-		s.edgeRepo.DeleteByKbID(kb.ID)
-		s.nodeRepo.DeleteByKbID(kb.ID)
+		if err := s.graphRepo.DeleteGraph(kb.ID); err != nil {
+			return fmt.Errorf("delete graph for kb %d: %w", kb.ID, err)
+		}
 	}
 
 	// Get completed sources
@@ -90,18 +91,27 @@ func (s *KnowledgeCompileService) HandleCompile(ctx context.Context, payload jso
 	}
 	if len(sources) == 0 {
 		kb.CompileStatus = CompileStatusError
-		s.kbRepo.Update(kb)
+		if updateErr := s.kbRepo.Update(kb); updateErr != nil {
+			slog.Error("failed to update kb status", "kb_id", kb.ID, "error", updateErr)
+		}
 		return fmt.Errorf("no completed sources to compile")
 	}
 
-	// Get existing nodes for incremental compilation
-	existingNodes, _ := s.nodeRepo.FindByKbID(kb.ID)
+	// Get existing nodes for incremental compilation (from FalkorDB)
+	existingNodes, _ := s.graphRepo.FindAllNodes(kb.ID)
+
+	// Drop vector index before writing (avoid HNSW concurrent write bug)
+	if err := s.graphRepo.DropVectorIndex(kb.ID); err != nil {
+		slog.Warn("failed to drop vector index", "kb_id", kb.ID, "error", err)
+	}
 
 	// Resolve the LLM client from the configured model
 	llmClient, modelIDStr, err := s.resolveLLMClient(kb)
 	if err != nil {
 		kb.CompileStatus = CompileStatusError
-		s.kbRepo.Update(kb)
+		if updateErr := s.kbRepo.Update(kb); updateErr != nil {
+			slog.Error("failed to update kb status", "kb_id", kb.ID, "error", updateErr)
+		}
 		return fmt.Errorf("resolve LLM client: %w", err)
 	}
 
@@ -120,7 +130,9 @@ func (s *KnowledgeCompileService) HandleCompile(ctx context.Context, payload jso
 	})
 	if err != nil {
 		kb.CompileStatus = CompileStatusError
-		s.kbRepo.Update(kb)
+		if updateErr := s.kbRepo.Update(kb); updateErr != nil {
+			slog.Error("failed to update kb status", "kb_id", kb.ID, "error", updateErr)
+		}
 		s.logRepo.Create(&KnowledgeLog{
 			KbID:         kb.ID,
 			Action:       KnowledgeLogCompile,
@@ -134,7 +146,9 @@ func (s *KnowledgeCompileService) HandleCompile(ctx context.Context, payload jso
 	output, err := s.parseLLMOutput(resp.Content)
 	if err != nil {
 		kb.CompileStatus = CompileStatusError
-		s.kbRepo.Update(kb)
+		if updateErr := s.kbRepo.Update(kb); updateErr != nil {
+			slog.Error("failed to update kb status", "kb_id", kb.ID, "error", updateErr)
+		}
 		s.logRepo.Create(&KnowledgeLog{
 			KbID:         kb.ID,
 			Action:       KnowledgeLogCompile,
@@ -144,16 +158,28 @@ func (s *KnowledgeCompileService) HandleCompile(ctx context.Context, payload jso
 		return fmt.Errorf("parse output: %w", err)
 	}
 
-	// Write nodes and edges
+	// Write nodes and edges to FalkorDB
 	stats, err := s.writeCompileOutput(kb.ID, output, sources)
 	if err != nil {
 		kb.CompileStatus = CompileStatusError
-		s.kbRepo.Update(kb)
+		if updateErr := s.kbRepo.Update(kb); updateErr != nil {
+			slog.Error("failed to update kb status", "kb_id", kb.ID, "error", updateErr)
+		}
 		return fmt.Errorf("write output: %w", err)
 	}
 
 	// Generate index node
 	s.generateIndexNode(kb.ID)
+
+	// Create full-text index
+	if err := s.graphRepo.CreateFullTextIndex(kb.ID); err != nil {
+		slog.Warn("failed to create full-text index", "kb_id", kb.ID, "error", err)
+	}
+
+	// Generate embeddings and rebuild vector index
+	if err := s.embeddingSvc.GenerateEmbeddings(ctx, kb.ID); err != nil {
+		slog.Error("failed to generate embeddings", "kb_id", kb.ID, "error", err)
+	}
 
 	// Run lint
 	lintIssues := s.runLint(kb.ID)
@@ -162,8 +188,12 @@ func (s *KnowledgeCompileService) HandleCompile(ctx context.Context, payload jso
 	now := time.Now()
 	kb.CompileStatus = CompileStatusCompleted
 	kb.CompiledAt = &now
-	s.kbRepo.Update(kb)
-	s.kbRepo.UpdateCounts(kb.ID)
+	if err := s.kbRepo.Update(kb); err != nil {
+		slog.Error("failed to update kb status after compile", "kb_id", kb.ID, "error", err)
+	}
+	if err := s.kbRepo.UpdateSourceCount(kb.ID); err != nil {
+		slog.Error("failed to update kb source count", "kb_id", kb.ID, "error", err)
+	}
 
 	// Write log
 	action := KnowledgeLogCompile
@@ -223,7 +253,7 @@ type compileStats struct {
 
 func (s *KnowledgeCompileService) writeCompileOutput(kbID uint, output *compileOutput, sources []KnowledgeSource) (*compileStats, error) {
 	stats := &compileStats{}
-	now := time.Now()
+	now := time.Now().Unix()
 
 	// Build source title → ID map
 	sourceMap := make(map[string]uint)
@@ -231,22 +261,18 @@ func (s *KnowledgeCompileService) writeCompileOutput(kbID uint, output *compileO
 		sourceMap[src.Title] = src.ID
 	}
 
-	// Process new nodes
+	// Process new nodes — upsert by title into FalkorDB
 	for _, n := range output.Nodes {
-		sourceIDs := resolveSourceIDs(n.Sources, sourceMap)
-		sourceIDsJSON, _ := json.Marshal(sourceIDs)
-
 		node := &KnowledgeNode{
-			KbID:       kbID,
 			Title:      n.Title,
 			Summary:    n.Summary,
 			Content:    n.Content,
 			NodeType:   NodeTypeConcept,
-			SourceIDs:  sourceIDsJSON,
-			CompiledAt: &now,
+			SourceIDs:  resolveSourceIDsJSON(n.Sources, sourceMap),
+			CompiledAt: now,
 		}
-		if err := s.nodeRepo.Create(node); err != nil {
-			slog.Error("failed to create node", "title", n.Title, "error", err)
+		if err := s.graphRepo.UpsertNodeByTitle(kbID, node); err != nil {
+			slog.Error("failed to upsert node", "title", n.Title, "error", err)
 			continue
 		}
 		stats.created++
@@ -254,76 +280,43 @@ func (s *KnowledgeCompileService) writeCompileOutput(kbID uint, output *compileO
 
 	// Process updated nodes
 	for _, n := range output.UpdatedNodes {
-		existing, err := s.nodeRepo.FindByKbIDAndTitle(kbID, n.Title)
-		if err != nil {
-			slog.Warn("updated node not found, creating as new", "title", n.Title)
-			sourceIDs := resolveSourceIDs(n.Sources, sourceMap)
-			sourceIDsJSON, _ := json.Marshal(sourceIDs)
-			node := &KnowledgeNode{
-				KbID:       kbID,
-				Title:      n.Title,
-				Summary:    n.Summary,
-				Content:    n.Content,
-				NodeType:   NodeTypeConcept,
-				SourceIDs:  sourceIDsJSON,
-				CompiledAt: &now,
-			}
-			s.nodeRepo.Create(node)
-			stats.created++
+		node := &KnowledgeNode{
+			Title:      n.Title,
+			Summary:    n.Summary,
+			Content:    n.Content,
+			NodeType:   NodeTypeConcept,
+			SourceIDs:  resolveSourceIDsJSON(n.Sources, sourceMap),
+			CompiledAt: now,
+		}
+		if err := s.graphRepo.UpsertNodeByTitle(kbID, node); err != nil {
+			slog.Error("failed to upsert updated node", "title", n.Title, "error", err)
 			continue
 		}
-
-		existing.Summary = n.Summary
-		if n.Content != nil {
-			existing.Content = n.Content
-		}
-		sourceIDs := resolveSourceIDs(n.Sources, sourceMap)
-		sourceIDsJSON, _ := json.Marshal(sourceIDs)
-		existing.SourceIDs = sourceIDsJSON
-		existing.CompiledAt = &now
-		s.nodeRepo.Update(existing)
 		stats.updated++
 	}
 
 	// Resolve edges from all nodes (new + updated)
 	allNodeOutputs := append(output.Nodes, output.UpdatedNodes...)
 	for _, n := range allNodeOutputs {
-		fromNode, err := s.nodeRepo.FindByKbIDAndTitle(kbID, n.Title)
-		if err != nil {
-			continue
-		}
-
 		for _, rel := range n.Related {
-			toNode, err := s.nodeRepo.FindByKbIDAndTitle(kbID, rel.Concept)
-			if err != nil {
-				// Create empty concept node
+			// Ensure target node exists (create empty concept if not)
+			if _, err := s.graphRepo.FindNodeByTitle(kbID, rel.Concept); err != nil {
 				emptyNode := &KnowledgeNode{
-					KbID:       kbID,
 					Title:      rel.Concept,
 					NodeType:   NodeTypeConcept,
-					CompiledAt: &now,
+					CompiledAt: now,
 				}
-				if createErr := s.nodeRepo.Create(emptyNode); createErr != nil {
+				if err := s.graphRepo.UpsertNodeByTitle(kbID, emptyNode); err != nil {
 					continue
 				}
-				toNode = emptyNode
 				stats.created++
 			}
 
-			relation := rel.Relation
-			if relation == "" {
-				relation = EdgeRelationRelated
+			if err := s.graphRepo.CreateEdge(kbID, n.Title, rel.Concept, rel.Relation, ""); err != nil {
+				slog.Error("failed to create edge", "from", n.Title, "to", rel.Concept, "error", err)
+				continue
 			}
-
-			edge := &KnowledgeEdge{
-				KbID:       kbID,
-				FromNodeID: fromNode.ID,
-				ToNodeID:   toNode.ID,
-				Relation:   relation,
-			}
-			if err := s.edgeRepo.Create(edge); err == nil {
-				stats.edges++
-			}
+			stats.edges++
 		}
 	}
 
@@ -331,7 +324,7 @@ func (s *KnowledgeCompileService) writeCompileOutput(kbID uint, output *compileO
 }
 
 func (s *KnowledgeCompileService) generateIndexNode(kbID uint) {
-	nodes, err := s.nodeRepo.FindByKbID(kbID)
+	nodes, err := s.graphRepo.FindAllNodes(kbID)
 	if err != nil {
 		return
 	}
@@ -340,6 +333,7 @@ func (s *KnowledgeCompileService) generateIndexNode(kbID uint) {
 	sb.WriteString("# Knowledge Index\n\n")
 	sb.WriteString("| Concept | Summary |\n")
 	sb.WriteString("|---------|--------|\n")
+	conceptCount := 0
 	for _, n := range nodes {
 		if n.NodeType == NodeTypeIndex {
 			continue
@@ -349,40 +343,34 @@ func (s *KnowledgeCompileService) generateIndexNode(kbID uint) {
 			hasContent = "—"
 		}
 		sb.WriteString(fmt.Sprintf("| %s %s | %s |\n", n.Title, hasContent, n.Summary))
+		conceptCount++
 	}
 
 	indexContent := sb.String()
-	now := time.Now()
+	summary := fmt.Sprintf("Index of %d concepts", conceptCount)
 
-	indexNode, err := s.nodeRepo.FindIndexNode(kbID)
-	if err != nil {
-		// Create new index
-		s.nodeRepo.Create(&KnowledgeNode{
-			KbID:       kbID,
-			Title:      "Knowledge Index",
-			Summary:    fmt.Sprintf("Index of %d concepts", len(nodes)-1),
-			Content:    &indexContent,
-			NodeType:   NodeTypeIndex,
-			CompiledAt: &now,
-		})
-	} else {
-		indexNode.Content = &indexContent
-		indexNode.Summary = fmt.Sprintf("Index of %d concepts", len(nodes)-1)
-		indexNode.CompiledAt = &now
-		s.nodeRepo.Update(indexNode)
+	node := &KnowledgeNode{
+		Title:      "Knowledge Index",
+		Summary:    summary,
+		Content:    &indexContent,
+		NodeType:   NodeTypeIndex,
+		CompiledAt: time.Now().Unix(),
+	}
+	if err := s.graphRepo.UpsertNodeByTitle(kbID, node); err != nil {
+		slog.Error("failed to upsert index node", "kb_id", kbID, "error", err)
 	}
 }
 
 func (s *KnowledgeCompileService) runLint(kbID uint) int {
 	issues := 0
 
-	orphans, _ := s.edgeRepo.CountOrphanNodes(kbID)
+	orphans, _ := s.graphRepo.CountOrphanNodes(kbID)
 	issues += int(orphans)
 
-	sparse, _ := s.edgeRepo.CountSparseNodes(kbID)
+	sparse, _ := s.graphRepo.CountSparseNodes(kbID)
 	issues += int(sparse)
 
-	contradictions, _ := s.edgeRepo.CountContradictions(kbID)
+	contradictions, _ := s.graphRepo.CountContradictions(kbID)
 	issues += int(contradictions)
 
 	if issues > 0 {
@@ -420,10 +408,8 @@ func (s *KnowledgeCompileService) buildCompilePrompt(sources []KnowledgeSource, 
 }
 
 func (s *KnowledgeCompileService) parseLLMOutput(content string) (*compileOutput, error) {
-	// Try to extract JSON from the response
 	jsonStr := content
 
-	// Handle markdown code blocks
 	if idx := strings.Index(content, "```json"); idx != -1 {
 		start := idx + 7
 		end := strings.Index(content[start:], "```")
@@ -432,7 +418,6 @@ func (s *KnowledgeCompileService) parseLLMOutput(content string) (*compileOutput
 		}
 	} else if idx := strings.Index(content, "```"); idx != -1 {
 		start := idx + 3
-		// Skip to next line
 		if nl := strings.Index(content[start:], "\n"); nl != -1 {
 			start = start + nl + 1
 		}
@@ -472,16 +457,6 @@ func (s *KnowledgeCompileService) TaskDefs() []scheduler.TaskDef {
 			Handler:     s.HandleCompile,
 		},
 	}
-}
-
-func resolveSourceIDs(titles []string, sourceMap map[string]uint) []uint {
-	var ids []uint
-	for _, title := range titles {
-		if id, ok := sourceMap[title]; ok {
-			ids = append(ids, id)
-		}
-	}
-	return ids
 }
 
 const compileSystemPrompt = `You are a knowledge compiler. Your job is to read source documents and compile them into a knowledge graph of concept nodes with relationships.

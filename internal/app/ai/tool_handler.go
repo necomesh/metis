@@ -71,7 +71,7 @@ func (h *ToolHandler) Update(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "update")
+	c.Set("audit_action", "tool.update")
 	c.Set("audit_resource", "ai_tool")
 	c.Set("audit_resource_id", strconv.Itoa(int(t.ID)))
 	c.Set("audit_summary", "Toggled tool: "+t.Name)

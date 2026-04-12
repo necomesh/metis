@@ -1,5 +1,6 @@
 import { useEffect } from "react"
 import { useTranslation } from "react-i18next"
+import { toast } from "sonner"
 import { useForm } from "react-hook-form"
 import { z } from "zod"
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -101,6 +102,7 @@ export function ProviderSheet({ open, onOpenChange, provider }: Props) {
       queryClient.invalidateQueries({ queryKey: ["auth-providers"] })
       onOpenChange(false)
     },
+    onError: (err) => toast.error(err.message),
   })
 
   return (

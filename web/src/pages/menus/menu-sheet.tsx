@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from "react"
 import { useTranslation } from "react-i18next"
+import { toast } from "sonner"
 import { useForm } from "react-hook-form"
 import { z } from "zod"
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -136,6 +137,7 @@ export function MenuSheet({ open, onOpenChange, menu, parentId }: MenuSheetProps
       queryClient.invalidateQueries({ queryKey: ["menus"] })
       onOpenChange(false)
     },
+    onError: (err) => toast.error(err.message),
   })
 
   const updateMutation = useMutation({
@@ -148,6 +150,7 @@ export function MenuSheet({ open, onOpenChange, menu, parentId }: MenuSheetProps
       queryClient.invalidateQueries({ queryKey: ["menus"] })
       onOpenChange(false)
     },
+    onError: (err) => toast.error(err.message),
   })
 
   function onSubmit(values: FormValues) {

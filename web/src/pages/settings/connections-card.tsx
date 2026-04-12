@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useTranslation } from "react-i18next"
+import { toast } from "sonner"
 import { api } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import {
@@ -67,6 +68,7 @@ export function ConnectionsCard() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["connections"] })
     },
+    onError: (err) => toast.error(err.message),
   })
 
   async function handleBind(providerKey: string) {

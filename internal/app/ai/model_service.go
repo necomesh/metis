@@ -9,6 +9,7 @@ import (
 
 	"github.com/samber/do/v2"
 	openai "github.com/sashabaranov/go-openai"
+	"gorm.io/gorm"
 
 	"metis/internal/pkg/crypto"
 )
@@ -45,7 +46,10 @@ func (s *ModelService) Create(m *AIModel) error {
 func (s *ModelService) Get(id uint) (*AIModel, error) {
 	m, err := s.repo.FindByID(id)
 	if err != nil {
-		return nil, ErrModelNotFound
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrModelNotFound
+		}
+		return nil, err
 	}
 	return m, nil
 }

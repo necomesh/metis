@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/samber/do/v2"
+	"gorm.io/gorm"
 
 	"metis/internal/pkg/crypto"
 )
@@ -21,6 +22,7 @@ var (
 	ErrInvalidSkillPackage = errors.New("invalid skill package: manifest.json is required")
 	ErrInvalidManifest     = errors.New("invalid manifest.json format")
 	ErrInvalidGitHubURL    = errors.New("invalid GitHub URL")
+	ErrNotImplemented      = errors.New("GitHub skill import is not yet implemented")
 )
 
 type SkillService struct {
@@ -77,33 +79,19 @@ type ImportGitHubReq struct {
 }
 
 func (s *SkillService) InstallFromGitHub(sourceURL string) (*Skill, error) {
-	// Validate URL format
 	if !strings.Contains(sourceURL, "github.com") {
 		return nil, ErrInvalidGitHubURL
 	}
-
-	// TODO: implement actual GitHub API fetching
-	// For now, create a placeholder skill record with the source URL
-	// Full implementation requires: parse URL → GitHub API → fetch manifest.json + instructions + tools
-	skill := &Skill{
-		Name:       extractRepoSkillName(sourceURL),
-		DisplayName: extractRepoSkillName(sourceURL),
-		SourceType: SkillSourceGitHub,
-		SourceURL:  sourceURL,
-		AuthType:   AuthTypeNone,
-		IsActive:   true,
-	}
-
-	if err := s.repo.Create(skill); err != nil {
-		return nil, err
-	}
-	return skill, nil
+	return nil, ErrNotImplemented
 }
 
 func (s *SkillService) Get(id uint) (*Skill, error) {
 	skill, err := s.repo.FindByID(id)
 	if err != nil {
-		return nil, ErrSkillNotFound
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrSkillNotFound
+		}
+		return nil, err
 	}
 	return skill, nil
 }

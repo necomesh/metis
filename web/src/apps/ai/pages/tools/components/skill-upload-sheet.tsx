@@ -8,16 +8,11 @@ import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter,
 } from "@/components/ui/sheet"
 import { TOKEN_KEY } from "@/lib/constants"
+import { formatBytes } from "@/lib/utils"
 
 interface SkillUploadSheetProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 export function SkillUploadSheet({ open, onOpenChange }: SkillUploadSheetProps) {

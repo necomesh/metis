@@ -41,15 +41,20 @@ func (h *UserHandler) List(c *gin.Context) {
 
 	// Convert to response (strip passwords)
 	items := make([]model.UserResponse, len(result.Items))
+	userIDs := make([]uint, len(result.Items))
 	for i, u := range result.Items {
 		items[i] = u.ToResponse()
-		// Attach connections for login method display
-		if conns, err := h.connRepo.FindByUserID(u.ID); err == nil {
-			connResps := make([]model.UserConnectionResponse, len(conns))
-			for j, c := range conns {
-				connResps[j] = c.ToResponse()
-			}
-			items[i].Connections = connResps
+		userIDs[i] = u.ID
+	}
+
+	// Batch load connections for login method display
+	if conns, err := h.connRepo.FindByUserIDs(userIDs); err == nil {
+		connsByUser := make(map[uint][]model.UserConnectionResponse)
+		for _, c := range conns {
+			connsByUser[c.UserID] = append(connsByUser[c.UserID], c.ToResponse())
+		}
+		for i, u := range result.Items {
+			items[i].Connections = connsByUser[u.ID]
 		}
 	}
 

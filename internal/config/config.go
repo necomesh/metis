@@ -16,11 +16,19 @@ var ErrConfigNotFound = errors.New("config file not found")
 // MetisConfig holds infrastructure-level configuration (equivalent to WordPress's wp-config.php).
 // Application-level settings are stored in the DB SystemConfig table.
 type MetisConfig struct {
-	DBDriver         string `yaml:"db_driver"`
-	DBDSN            string `yaml:"db_dsn"`
-	SecretKey        string `yaml:"secret_key"`
-	JWTSecret        string `yaml:"jwt_secret"`
-	LicenseKeySecret string `yaml:"license_key_secret"`
+	DBDriver         string          `yaml:"db_driver"`
+	DBDSN            string          `yaml:"db_dsn"`
+	SecretKey        string          `yaml:"secret_key"`
+	JWTSecret        string          `yaml:"jwt_secret"`
+	LicenseKeySecret string          `yaml:"license_key_secret"`
+	FalkorDB         *FalkorDBConfig `yaml:"falkordb,omitempty"`
+}
+
+// FalkorDBConfig holds FalkorDB connection settings (only required for AI edition).
+type FalkorDBConfig struct {
+	Addr     string `yaml:"addr"`
+	Password string `yaml:"password,omitempty"`
+	Database int    `yaml:"database,omitempty"`
 }
 
 // Load reads and parses metis.yaml from the given path.

@@ -1,6 +1,7 @@
 import { useRef, useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { useTranslation } from "react-i18next"
+import { toast } from "sonner"
 import { Upload, Trash2 } from "lucide-react"
 import { api } from "@/lib/api"
 import { Button } from "@/components/ui/button"
@@ -26,6 +27,7 @@ export function LogoCard({ hasLogo }: { hasLogo: boolean }) {
       setLogoKey((k) => k + 1)
       queryClient.invalidateQueries({ queryKey: ["site-info"] })
     },
+    onError: (err) => toast.error(err.message),
   })
 
   const deleteMutation = useMutation({
@@ -34,6 +36,7 @@ export function LogoCard({ hasLogo }: { hasLogo: boolean }) {
       setLogoKey((k) => k + 1)
       queryClient.invalidateQueries({ queryKey: ["site-info"] })
     },
+    onError: (err) => toast.error(err.message),
   })
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {

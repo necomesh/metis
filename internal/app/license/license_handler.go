@@ -71,7 +71,7 @@ func (h *LicenseHandler) Issue(c *gin.Context) {
 
 	userID, _ := c.Get("userId")
 
-	c.Set("audit_action", "issue")
+	c.Set("audit_action", "license.issue")
 	c.Set("audit_resource", "license")
 
 	license, err := h.licenseSvc.IssueLicense(IssueLicenseParams{
@@ -181,7 +181,7 @@ func (h *LicenseHandler) Revoke(c *gin.Context) {
 
 	userID, _ := c.Get("userId")
 
-	c.Set("audit_action", "revoke")
+	c.Set("audit_action", "license.revoke")
 	c.Set("audit_resource", "license")
 	c.Set("audit_resource_id", c.Param("id"))
 

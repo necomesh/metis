@@ -70,7 +70,7 @@ func (h *ModelHandler) Create(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "create")
+	c.Set("audit_action", "model.create")
 	c.Set("audit_resource", "ai_model")
 	c.Set("audit_resource_id", strconv.Itoa(int(m.ID)))
 	c.Set("audit_summary", "Created AI model: "+m.DisplayName)
@@ -160,7 +160,7 @@ func (h *ModelHandler) Update(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "update")
+	c.Set("audit_action", "model.update")
 	c.Set("audit_resource", "ai_model")
 	c.Set("audit_resource_id", strconv.Itoa(int(m.ID)))
 	c.Set("audit_summary", "Updated AI model: "+m.DisplayName)
@@ -175,7 +175,7 @@ func (h *ModelHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "delete")
+	c.Set("audit_action", "model.delete")
 	c.Set("audit_resource", "ai_model")
 	c.Set("audit_resource_id", c.Param("id"))
 
@@ -193,7 +193,7 @@ func (h *ModelHandler) SetDefault(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "update")
+	c.Set("audit_action", "model.setDefault")
 	c.Set("audit_resource", "ai_model")
 	c.Set("audit_resource_id", c.Param("id"))
 	c.Set("audit_summary", "Set as default model")
@@ -213,7 +213,7 @@ func (h *ModelHandler) SyncModels(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "sync")
+	c.Set("audit_action", "model.sync")
 	c.Set("audit_resource", "ai_model")
 	c.Set("audit_resource_id", c.Param("id"))
 	c.Set("audit_summary", "Synced models from provider")

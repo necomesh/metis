@@ -72,7 +72,9 @@ func (s *KnowledgeExtractService) HandleExtract(ctx context.Context, payload jso
 	if extractErr != nil {
 		src.ExtractStatus = ExtractStatusError
 		src.ErrorMessage = extractErr.Error()
-		s.sourceRepo.Update(src)
+		if err := s.sourceRepo.Update(src); err != nil {
+			slog.Error("failed to update source status after extract error", "source_id", src.ID, "error", err)
+		}
 		return extractErr
 	}
 
@@ -84,14 +86,16 @@ func (s *KnowledgeExtractService) HandleExtract(ctx context.Context, payload jso
 		return err
 	}
 
-	s.kbRepo.UpdateCounts(src.KbID)
+	if err := s.kbRepo.UpdateSourceCount(src.KbID); err != nil {
+		slog.Error("failed to update kb counts after extract", "kb_id", src.KbID, "error", err)
+	}
 
 	// Auto-compile if enabled
 	kb, err := s.kbRepo.FindByID(src.KbID)
 	if err == nil && kb.AutoCompile {
-		s.engine.Enqueue("ai-knowledge-compile", json.RawMessage(
-			fmt.Sprintf(`{"kbId":%d}`, kb.ID),
-		))
+		if err := s.enqueueCompile(kb.ID, false); err != nil {
+			slog.Error("failed to enqueue auto-compile", "kb_id", kb.ID, "error", err)
+		}
 	}
 
 	return nil
@@ -164,9 +168,11 @@ func (s *KnowledgeExtractService) crawlChildPages(ctx context.Context, parent *K
 			continue
 		}
 
-		s.engine.Enqueue("ai-source-extract", json.RawMessage(
+		if err := s.engine.Enqueue("ai-source-extract", json.RawMessage(
 			fmt.Sprintf(`{"sourceId":%d}`, child.ID),
-		))
+		)); err != nil {
+			slog.Error("failed to enqueue child source extract", "source_id", child.ID, "error", err)
+		}
 	}
 }
 
@@ -199,6 +205,16 @@ func (s *KnowledgeExtractService) EnqueueExtract(sourceID uint) error {
 	return s.engine.Enqueue("ai-source-extract", json.RawMessage(
 		fmt.Sprintf(`{"sourceId":%d}`, sourceID),
 	))
+}
+
+// enqueueCompile enqueues a knowledge compile task using a typed payload.
+func (s *KnowledgeExtractService) enqueueCompile(kbID uint, recompile bool) error {
+	payload := compilePayload{KbID: kbID, Recompile: recompile}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return s.engine.Enqueue("ai-knowledge-compile", json.RawMessage(b))
 }
 
 func (s *KnowledgeExtractService) TaskDefs() []scheduler.TaskDef {
@@ -262,7 +278,9 @@ func (s *KnowledgeExtractService) HandleCrawl(ctx context.Context, _ json.RawMes
 			slog.Error("crawl: extract failed", "source_id", src.ID, "error", extractErr)
 			crawlNow := time.Now()
 			src.LastCrawledAt = &crawlNow
-			s.sourceRepo.Update(&src)
+			if err := s.sourceRepo.Update(&src); err != nil {
+				slog.Error("crawl: update source failed after extract error", "source_id", src.ID, "error", err)
+			}
 			continue
 		}
 
@@ -286,15 +304,17 @@ func (s *KnowledgeExtractService) HandleCrawl(ctx context.Context, _ json.RawMes
 
 	// Update counts and trigger auto-compile for affected KBs
 	for kbID := range affectedKBs {
-		s.kbRepo.UpdateCounts(kbID)
+		if err := s.kbRepo.UpdateSourceCount(kbID); err != nil {
+			slog.Error("crawl: update kb counts failed", "kb_id", kbID, "error", err)
+		}
 		kb, err := s.kbRepo.FindByID(kbID)
 		if err != nil {
 			continue
 		}
 		if kb.AutoCompile {
-			s.engine.Enqueue("ai-knowledge-compile", json.RawMessage(
-				fmt.Sprintf(`{"kbId":%d}`, kbID),
-			))
+			if err := s.enqueueCompile(kbID, false); err != nil {
+				slog.Error("crawl: failed to enqueue auto-compile", "kb_id", kbID, "error", err)
+			}
 		}
 	}
 
