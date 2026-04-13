@@ -9,7 +9,7 @@ export interface TokenResponse {
   createdAt: string
 }
 
-export interface CreateTokenResponse extends TokenResponse {}
+export type CreateTokenResponse = TokenResponse
 
 export const observeApi = {
   listTokens: () => api.get<TokenResponse[]>("/api/v1/observe/tokens"),

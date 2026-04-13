@@ -1,8 +1,22 @@
 # Purpose
 
-TBD
+Define backend APIs and business rules for assigning users to departments and positions, including primary position enforcement.
 
 ## Requirements
+
+### Requirement: Assign multiple positions to a single user
+The system SHALL allow a user to hold multiple department/position combinations via a `UserPosition` association table.
+
+#### Scenario: Assign a primary and secondary position
+- **WHEN** an admin assigns two positions to a user, marking one as primary
+- **THEN** both associations are persisted and exactly one is marked primary
+
+### Requirement: Enforce single primary position per user
+The system SHALL guarantee that a user has at most one primary position at any time.
+
+#### Scenario: Switch primary position
+- **WHEN** an admin assigns a new primary position to a user who already has one
+- **THEN** the previous primary position is automatically demoted to non-primary and the new one becomes primary
 
 ### Requirement: Personnel assignment API
 The system SHALL expose endpoints to retrieve, add, and remove a user's position assignments. The batch replace endpoint is removed in favor of incremental operations.
