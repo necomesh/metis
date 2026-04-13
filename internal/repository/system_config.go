@@ -18,7 +18,7 @@ func NewSysConfig(i do.Injector) (*SysConfigRepo, error) {
 
 func (r *SysConfigRepo) Get(key string) (*model.SystemConfig, error) {
 	var cfg model.SystemConfig
-	if err := r.db.Where("`key` = ?", key).First(&cfg).Error; err != nil {
+	if err := r.db.Where("\"key\" = ?", key).First(&cfg).Error; err != nil {
 		return nil, err
 	}
 	return &cfg, nil
@@ -37,7 +37,7 @@ func (r *SysConfigRepo) Set(cfg *model.SystemConfig) error {
 }
 
 func (r *SysConfigRepo) Delete(key string) error {
-	result := r.db.Where("`key` = ?", key).Delete(&model.SystemConfig{})
+	result := r.db.Where("\"key\" = ?", key).Delete(&model.SystemConfig{})
 	if result.Error != nil {
 		return result.Error
 	}

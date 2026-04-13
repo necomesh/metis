@@ -696,7 +696,7 @@ export function Component() {
       {/* Bind process sheet */}
       <Sheet open={bindDialogOpen} onOpenChange={(open) => {
         setBindDialogOpen(open)
-        if (!open) { setSelectedProcessDef(""); setOverrideVarsText("") }
+        if (!open) { setSelectedProcessDef("") }
       }}>
         <SheetContent className="sm:max-w-md overflow-y-auto">
           <SheetHeader>

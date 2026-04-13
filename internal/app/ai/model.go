@@ -74,7 +74,7 @@ type Provider struct {
 	Type            string     `json:"type" gorm:"size:32;not null"`
 	Protocol        string     `json:"protocol" gorm:"size:32;not null"`
 	BaseURL         string     `json:"baseUrl" gorm:"size:512;not null"`
-	APIKeyEncrypted []byte     `json:"-" gorm:"column:api_key_encrypted;type:blob"`
+	APIKeyEncrypted []byte     `json:"-" gorm:"column:api_key_encrypted;type:bytes"`
 	Status          string     `json:"status" gorm:"size:16;not null;default:inactive"`
 	HealthCheckedAt *time.Time `json:"healthCheckedAt"`
 }

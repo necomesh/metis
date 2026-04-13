@@ -4,7 +4,6 @@ import { useTranslation } from "react-i18next"
 import { z } from "zod"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { useNavigate } from "react-router"
 import { api } from "@/lib/api"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -61,7 +60,6 @@ interface ProductSheetProps {
 
 export function ProductSheet({ open, onOpenChange, product }: ProductSheetProps) {
   const { t } = useTranslation(["license", "common"])
-  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const isEditing = product !== null
   const schema = useProductSchema()
@@ -84,11 +82,11 @@ export function ProductSheet({ open, onOpenChange, product }: ProductSheetProps)
   const createMutation = useMutation({
     mutationFn: (values: FormValues) =>
       api.post<ProductItem>("/api/v1/license/products", values),
-    onSuccess: (created) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["license-products"] })
+      queryClient.invalidateQueries({ queryKey: ["license-products-published"] })
       onOpenChange(false)
       toast.success(t("license:products.createSuccess"))
-      navigate(`/license/products/${created.id}?tab=schema`)
     },
     onError: (err) => toast.error(err.message),
   })
@@ -101,6 +99,7 @@ export function ProductSheet({ open, onOpenChange, product }: ProductSheetProps)
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["license-products"] })
+      queryClient.invalidateQueries({ queryKey: ["license-products-published"] })
       queryClient.invalidateQueries({ queryKey: ["license-product"] })
       onOpenChange(false)
       toast.success(t("license:products.updateSuccess"))

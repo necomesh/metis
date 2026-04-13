@@ -45,6 +45,18 @@ services:
       - "traefik.http.routers.otlp.rule=PathPrefix(`/`)"
       - "traefik.http.services.otlp.loadbalancer.server.port=4318"
 
+  postgres:
+    image: docker.xuanyuan.run/library/postgres:17
+    restart: always
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: metis
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: metis
+
   falkordb:
     image: docker.xuanyuan.run/falkordb/falkordb:latest
     restart: always
@@ -56,4 +68,5 @@ services:
 
 volumes:
   clickhouse:
+  postgres:
   falkordb:

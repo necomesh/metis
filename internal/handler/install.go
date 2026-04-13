@@ -31,15 +31,15 @@ import (
 
 // InstallHandler handles the installation wizard API.
 type InstallHandler struct {
-	db                *database.DB
 	injector          do.Injector
 	engine            *gin.Engine
 	overrideProviders func(do.Injector)
+	installed         bool
 }
 
 // NewInstall creates an InstallHandler.
-func NewInstall(db *database.DB, injector do.Injector, engine *gin.Engine, overrideProviders func(do.Injector)) *InstallHandler {
-	return &InstallHandler{db: db, injector: injector, engine: engine, overrideProviders: overrideProviders}
+func NewInstall(injector do.Injector, engine *gin.Engine, overrideProviders func(do.Injector)) *InstallHandler {
+	return &InstallHandler{injector: injector, engine: engine, overrideProviders: overrideProviders}
 }
 
 // RegisterInstallRoutes registers install-only routes on the Gin engine.
@@ -52,8 +52,7 @@ func (h *InstallHandler) RegisterInstallRoutes(r *gin.Engine) {
 
 // Status returns the installation state.
 func (h *InstallHandler) Status(c *gin.Context) {
-	installed := seed.IsInstalled(h.db.DB)
-	OK(c, gin.H{"installed": installed})
+	OK(c, gin.H{"installed": h.installed})
 }
 
 // CheckDBRequest is the request body for testing a database connection.
@@ -68,7 +67,7 @@ type CheckDBRequest struct {
 
 // CheckDB tests a database connection.
 func (h *InstallHandler) CheckDB(c *gin.Context) {
-	if seed.IsInstalled(h.db.DB) {
+	if h.installed {
 		Fail(c, http.StatusForbidden, "system already installed")
 		return
 	}
@@ -130,7 +129,7 @@ type ExecuteRequest struct {
 
 // Execute performs the full installation.
 func (h *InstallHandler) Execute(c *gin.Context) {
-	if seed.IsInstalled(h.db.DB) {
+	if h.installed {
 		Fail(c, http.StatusForbidden, "system already installed")
 		return
 	}
@@ -168,17 +167,11 @@ func (h *InstallHandler) Execute(c *gin.Context) {
 		return
 	}
 
-	// 3. If postgres, switch to the new DB
-	var db *database.DB
-	if req.DBDriver == "postgres" {
-		var err error
-		db, err = database.Open("postgres", cfg.DBDSN)
-		if err != nil {
-			Fail(c, http.StatusBadRequest, "database connection failed: "+err.Error())
-			return
-		}
-	} else {
-		db = h.db // reuse existing SQLite connection
+	// 3. Open database connection based on user's choice
+	db, err := database.Open(cfg.DBDriver, cfg.DBDSN)
+	if err != nil {
+		Fail(c, http.StatusBadRequest, "database connection failed: "+err.Error())
+		return
 	}
 
 	// 4. AutoMigrate
@@ -249,11 +242,11 @@ func (h *InstallHandler) Execute(c *gin.Context) {
 		}
 	}
 
-	// 8. Register IOC providers (needed for UserService)
+	// 8. Register IOC providers (needed for UserService and hot switch)
 	do.OverrideValue(h.injector, cfg)
-	if db != h.db {
-		do.OverrideValue(h.injector, db)
-	}
+	do.OverrideValue(h.injector, db)
+	do.Provide(h.injector, repository.NewSysConfig)
+	do.Provide(h.injector, service.NewSysConfig)
 	h.overrideProviders(h.injector)
 
 	// 9. Create admin user via UserService
@@ -284,6 +277,9 @@ func (h *InstallHandler) Execute(c *gin.Context) {
 		Fail(c, http.StatusInternalServerError, "failed to write config: "+err.Error())
 		return
 	}
+
+	// Mark installed so Status endpoint returns true
+	h.installed = true
 
 	// 11. Hot switch: register all business services and routes
 	if err := h.hotSwitch(cfg, db, enforcer); err != nil {

@@ -37,7 +37,8 @@ interface GraphLink {
 export function KnowledgeGraphView({ kbId, highlightedNodeIds }: { kbId: number; highlightedNodeIds?: Set<string> }) {
   const { t } = useTranslation(["ai", "common"])
   const containerRef = useRef<HTMLDivElement>(null)
-  const graphRef = useRef<{ zoomToFit: (ms?: number, px?: number) => void; zoom: (k: number, ms?: number) => void }>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const graphRef = useRef<any>(undefined)
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null)
   const [selectedEdge, setSelectedEdge] = useState<GraphLink | null>(null)
   const [containerSize, setContainerSize] = useState<{ w: number; h: number } | null>(null)
@@ -300,10 +301,12 @@ export function KnowledgeGraphView({ kbId, highlightedNodeIds }: { kbId: number;
           // Tooltip: 悬停显示完整标题和节点信息
           nodeLabel={(node: GraphNode) => `${node.name}\n类型: ${t(`ai:knowledge.graph.nodeTypes.${node.nodeType}`)}\n关联数: ${node.edgeCount}`}
           // 增加节点间距，减少重叠
-          d3Force={(engine: { force: (name: string) => { strength?: (v: number) => void; distance?: (v: number) => void } | undefined }) => {
-            engine.force("charge")?.strength?.(-300)
-            engine.force("link")?.distance?.(80)
-          }}
+          {...{
+            d3Force: (engine: { force: (name: string) => { strength?: (v: number) => void; distance?: (v: number) => void } | undefined }) => {
+              engine.force("charge")?.strength?.(-300)
+              engine.force("link")?.distance?.(80)
+            },
+          } as any}
         />
       )}
       {/* Legend */}

@@ -352,7 +352,7 @@ export function Component() {
 
   const session = sessionData?.session
   const agentId = session?.agentId
-  const agentName = (session as Record<string, unknown>)?.agentName as string | undefined
+  const agentName = (session as unknown as Record<string, unknown>)?.agentName as string | undefined
   const hasMessages = messages.length > 0 || isStreaming
   const showWelcome = !hasMessages && !isStreaming
 
@@ -411,7 +411,7 @@ export function Component() {
           {showWelcome ? (
             <WelcomeScreen
               agentName={agentName ?? session?.title}
-              agentType={(session as Record<string, unknown>)?.agentType as string | undefined}
+              agentType={(session as unknown as Record<string, unknown>)?.agentType as string | undefined}
               onPromptClick={(prompt) => handleSend(prompt)}
             />
           ) : (

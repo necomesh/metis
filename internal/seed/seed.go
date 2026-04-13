@@ -187,7 +187,7 @@ var defaultConfigs = []model.SystemConfig{
 func seedDefaultConfigs(db *gorm.DB) {
 	for _, cfg := range defaultConfigs {
 		var existing model.SystemConfig
-		if err := db.Where("`key` = ?", cfg.Key).First(&existing).Error; err == nil {
+		if err := db.Where("\"key\" = ?", cfg.Key).First(&existing).Error; err == nil {
 			continue
 		}
 		if err := db.Create(&cfg).Error; err != nil {
@@ -219,18 +219,18 @@ func seedAuthProviders(db *gorm.DB) {
 
 // SetSiteName updates the system.app_name config during installation.
 func SetSiteName(db *gorm.DB, name string) error {
-	return db.Where("`key` = ?", "system.app_name").Assign(model.SystemConfig{Value: name}).FirstOrCreate(&model.SystemConfig{Key: "system.app_name"}).Error
+	return db.Where("\"key\" = ?", "system.app_name").Assign(model.SystemConfig{Value: name}).FirstOrCreate(&model.SystemConfig{Key: "system.app_name"}).Error
 }
 
 // SetLocaleTimezone updates the system.locale and system.timezone configs during installation.
 func SetLocaleTimezone(db *gorm.DB, locale, timezone string) error {
 	if locale != "" {
-		if err := db.Where("`key` = ?", "system.locale").Assign(model.SystemConfig{Value: locale}).FirstOrCreate(&model.SystemConfig{Key: "system.locale"}).Error; err != nil {
+		if err := db.Where("\"key\" = ?", "system.locale").Assign(model.SystemConfig{Value: locale}).FirstOrCreate(&model.SystemConfig{Key: "system.locale"}).Error; err != nil {
 			return err
 		}
 	}
 	if timezone != "" {
-		if err := db.Where("`key` = ?", "system.timezone").Assign(model.SystemConfig{Value: timezone}).FirstOrCreate(&model.SystemConfig{Key: "system.timezone"}).Error; err != nil {
+		if err := db.Where("\"key\" = ?", "system.timezone").Assign(model.SystemConfig{Value: timezone}).FirstOrCreate(&model.SystemConfig{Key: "system.timezone"}).Error; err != nil {
 			return err
 		}
 	}
@@ -240,7 +240,7 @@ func SetLocaleTimezone(db *gorm.DB, locale, timezone string) error {
 // SetInstalled marks the system as installed.
 func SetInstalled(db *gorm.DB) error {
 	cfg := model.SystemConfig{Key: "app.installed", Value: "true", Remark: "系统安装标记"}
-	return db.Where("`key` = ?", "app.installed").Assign(cfg).FirstOrCreate(&cfg).Error
+	return db.Where("\"key\" = ?", "app.installed").Assign(cfg).FirstOrCreate(&cfg).Error
 }
 
 // SetOTelConfig updates OTel-related configs during installation.
@@ -252,7 +252,7 @@ func SetOTelConfig(db *gorm.DB, enabled, endpoint, serviceName, sampleRate strin
 		{Key: "otel.sample_rate", Value: sampleRate},
 	}
 	for _, cfg := range configs {
-		if err := db.Where("`key` = ?", cfg.Key).Assign(cfg).FirstOrCreate(&cfg).Error; err != nil {
+		if err := db.Where("\"key\" = ?", cfg.Key).Assign(cfg).FirstOrCreate(&cfg).Error; err != nil {
 			return err
 		}
 	}
@@ -262,7 +262,7 @@ func SetOTelConfig(db *gorm.DB, enabled, endpoint, serviceName, sampleRate strin
 // IsInstalled checks if the system has been installed.
 func IsInstalled(db *gorm.DB) bool {
 	var cfg model.SystemConfig
-	if err := db.Where("`key` = ? AND value = ?", "app.installed", "true").First(&cfg).Error; err != nil {
+	if err := db.Where("\"key\" = ? AND value = ?", "app.installed", "true").First(&cfg).Error; err != nil {
 		return false
 	}
 	return true

@@ -40,7 +40,7 @@ func GetEncryptionKey(db *gorm.DB) ([]byte, error) {
 		// 2. Try SystemConfig
 		const cfgKey = "security.encryption_key"
 		var cfg model.SystemConfig
-		if err := db.Where("`key` = ?", cfgKey).First(&cfg).Error; err == nil {
+		if err := db.Where("\"key\" = ?", cfgKey).First(&cfg).Error; err == nil {
 			decoded, err := hex.DecodeString(cfg.Value)
 			if err == nil && len(decoded) == 32 {
 				encKey = decoded

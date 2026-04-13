@@ -89,7 +89,7 @@ type MCPServer struct {
 	Args                json.RawMessage `json:"args" gorm:"type:text"`             // STDIO args
 	Env                 json.RawMessage `json:"env" gorm:"type:text"`              // STDIO env vars
 	AuthType            string          `json:"authType" gorm:"size:32;not null;default:none"`
-	AuthConfigEncrypted []byte          `json:"-" gorm:"column:auth_config_encrypted;type:blob"`
+	AuthConfigEncrypted []byte          `json:"-" gorm:"column:auth_config_encrypted;type:bytes"`
 	IsActive            bool            `json:"isActive" gorm:"not null;default:true"`
 }
 
@@ -142,7 +142,7 @@ type Skill struct {
 	Instructions        string          `json:"instructions" gorm:"type:text"`
 	ToolsSchema         json.RawMessage `json:"toolsSchema" gorm:"type:text"`
 	AuthType            string          `json:"authType" gorm:"size:32;not null;default:none"`
-	AuthConfigEncrypted []byte          `json:"-" gorm:"column:auth_config_encrypted;type:blob"`
+	AuthConfigEncrypted []byte          `json:"-" gorm:"column:auth_config_encrypted;type:bytes"`
 	IsActive            bool            `json:"isActive" gorm:"not null;default:true"`
 }
 

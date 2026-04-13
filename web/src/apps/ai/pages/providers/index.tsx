@@ -69,7 +69,8 @@ function groupByType(models: ModelItem[]) {
 
 interface ModelGroupedListProps {
   models: ModelItem[]
-  t: (key: string, defaultValue?: string) => string
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  t: any
   canSetDefault: boolean
   canUpdate: boolean
   canDelete: boolean

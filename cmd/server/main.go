@@ -42,25 +42,20 @@ func main() {
 	// 2. IOC container
 	injector := do.New()
 
-	// If config exists, provide it to IOC so database.New can use it
+	// 3. Check installation state and connect database
+	var db *database.DB
+	installed := false
+
 	if cfg != nil {
+		// Config exists — provide to IOC and connect database
 		do.ProvideValue(injector, cfg)
+		do.Provide(injector, database.New)
+		do.Provide(injector, repository.NewSysConfig)
+		do.Provide(injector, service.NewSysConfig)
+		db = do.MustInvoke[*database.DB](injector)
+		installed = seed.IsInstalled(db.DB)
 	}
-
-	// 3. Connect database (defaults to SQLite in install mode)
-	do.Provide(injector, database.New)
-	do.Provide(injector, repository.NewSysConfig)
-	do.Provide(injector, service.NewSysConfig)
-
-	db := do.MustInvoke[*database.DB](injector)
-
-	// In install mode, ensure the system_configs table exists
-	if cfg == nil {
-		database.AutoMigrateKernel(db.DB)
-	}
-
-	// 4. Check installation state
-	installed := cfg != nil && seed.IsInstalled(db.DB)
+	// If cfg == nil → first run, skip DB entirely; install wizard handles it
 
 	// Gin engine
 	gin.SetMode(gin.ReleaseMode)
@@ -77,7 +72,7 @@ func main() {
 		// Token blacklist (needed for hot switch)
 		do.ProvideValue(injector, token.NewBlacklist())
 
-		installHandler := handler.NewInstall(db, injector, r, overrideKernelProviders)
+		installHandler := handler.NewInstall(injector, r, overrideKernelProviders)
 		installHandler.RegisterInstallRoutes(r)
 		handler.RegisterStatic(r)
 

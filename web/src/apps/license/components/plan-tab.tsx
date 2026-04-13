@@ -83,22 +83,24 @@ function constraintPreview(
   const parts: string[] = []
   for (const mod of schema) {
     const modValues = values[mod.key]
+    const modLabel = mod.label || mod.key
     if (!modValues) continue
     if (!modValues.enabled) {
-      parts.push(t("license:plans.moduleOff", { label: mod.label }))
+      parts.push(t("license:plans.moduleOff", { label: modLabel }))
       continue
     }
     if (mod.features.length === 0) {
-      parts.push(t("license:plans.moduleOn", { label: mod.label }))
+      parts.push(t("license:plans.moduleOn", { label: modLabel }))
     } else {
       const featureParts = mod.features
         .filter((f) => modValues[f.key] !== undefined)
         .map((f) => {
           const val = modValues[f.key]
-          if (Array.isArray(val)) return `${f.label}: ${val.join(",")}`
-          return `${f.label}: ${val}`
+          const label = f.label || f.key
+          if (Array.isArray(val)) return `${label}: ${val.join(",")}`
+          return `${label}: ${val}`
         })
-      parts.push(`${mod.label}(${featureParts.join(", ")})`)
+      parts.push(`${modLabel}(${featureParts.join(", ")})`)
     }
   }
   return parts.join(" | ") || t("license:plans.noConfig")

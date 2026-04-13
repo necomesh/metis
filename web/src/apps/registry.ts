@@ -15,5 +15,5 @@ export function getAppRoutes(): RouteObject[] {
   return modules.flatMap((m) => m.routes)
 }
 
-// App module imports are in App.tsx to avoid circular dependency.
-// gen-registry.sh manages this list for production builds.
+// App module imports are in _bootstrap.ts to avoid circular dependency.
+// gen-registry.sh manages _bootstrap.ts for filtered builds.

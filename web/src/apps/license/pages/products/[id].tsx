@@ -118,6 +118,7 @@ export function Component() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["license-product", id] })
       queryClient.invalidateQueries({ queryKey: ["license-products"] })
+      queryClient.invalidateQueries({ queryKey: ["license-products-published"] })
       toast.success(t("license:products.statusUpdateSuccess"))
     },
     onError: (err) => toast.error(err.message),
@@ -139,17 +140,11 @@ export function Component() {
   })
 
   const modules = Array.isArray(product?.constraintSchema) ? product.constraintSchema : []
-  const hasSchema = modules.length > 0
-  const hasPlans = (product?.planCount ?? 0) > 0
   const requestedTab = searchParams.get("tab")
   const activeTab =
     requestedTab === "info" || requestedTab === "schema" || requestedTab === "plans" || requestedTab === "keys"
       ? requestedTab
-      : !hasSchema
-        ? "schema"
-        : !hasPlans
-          ? "plans"
-          : "info"
+      : "info"
 
   if (isLoading || !product) {
     return (
@@ -255,14 +250,7 @@ export function Component() {
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleTabChange(hasSchema ? (hasPlans ? "keys" : "plans") : "schema")}
-            >
-              {!hasSchema ? t("license:products.constraintDef") : !hasPlans ? t("license:products.planManagement") : t("license:products.keyManagement")}
-            </Button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
             {canUpdate && actions.length > 0 && (
               <>
                 {actions.map((action) => {
@@ -343,34 +331,36 @@ export function Component() {
           </div>
 
           {canManageKey && (
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="outline" size="sm">
-                  <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-                  {t("license:products.rotateKey")}
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>{t("license:products.confirmRotateKey")}</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    {t("license:products.rotateKeyDesc")}
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>{t("common:cancel")}</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={() => rotateKeyMutation.mutate()}
-                    disabled={rotateKeyMutation.isPending}
-                  >
-                    {rotateKeyMutation.isPending ? (
-                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                    ) : null}
-                    {t("license:products.confirmRotate")}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+            <div className="flex justify-end">
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" size="sm">
+                    <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                    {t("license:products.rotateKey")}
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>{t("license:products.confirmRotateKey")}</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      {t("license:products.rotateKeyDesc")}
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>{t("common:cancel")}</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={() => rotateKeyMutation.mutate()}
+                      disabled={rotateKeyMutation.isPending}
+                    >
+                      {rotateKeyMutation.isPending ? (
+                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                      ) : null}
+                      {t("license:products.confirmRotate")}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
           )}
         </TabsContent>
       </Tabs>

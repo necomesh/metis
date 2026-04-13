@@ -19,7 +19,7 @@ ifdef APPS
 endif
 	cd ./web && bun run build
 ifdef APPS
-	./scripts/gen-registry.sh
+	APPS= ./scripts/gen-registry.sh
 endif
 
 web-dev:

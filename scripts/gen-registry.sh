@@ -1,45 +1,37 @@
 #!/bin/bash
-# gen-registry.sh — Generate web/src/apps/registry.ts for production builds.
+# gen-registry.sh — Generate web/src/apps/_bootstrap.ts for filtered builds.
 # Usage: APPS=system,ai ./scripts/gen-registry.sh
 #
-# If APPS is not set, restores the git version (full-featured).
+# If APPS is not set, restores the full version (all app modules).
 
 set -euo pipefail
 
-REGISTRY="web/src/apps/registry.ts"
+BOOTSTRAP="web/src/apps/_bootstrap.ts"
 
-# No APPS specified → restore git version
+# No APPS specified → restore full version
 if [ -z "${APPS:-}" ]; then
-  git checkout -- "$REGISTRY" 2>/dev/null || true
-  echo "[gen-registry] restored full registry from git"
+  if ! git checkout -- "$BOOTSTRAP" 2>/dev/null; then
+    # File not in git yet — write the full default
+    cat > "$BOOTSTRAP" << 'FULL'
+// App module side-effect imports.
+// gen-registry.sh replaces this file for filtered builds (APPS=...).
+import "./ai/module"
+import "./license/module"
+import "./node/module"
+FULL
+  fi
+  echo "[gen-registry] restored full _bootstrap.ts"
   exit 0
 fi
 
-# Generate filtered registry
-cat > "$REGISTRY" << 'HEADER'
-import type { RouteObject } from "react-router"
-
-export interface AppModule {
-  name: string
-  routes: RouteObject[]
-}
-
-const modules: AppModule[] = []
-
-export function registerApp(m: AppModule) {
-  modules.push(m)
-}
-
-export function getAppRoutes(): RouteObject[] {
-  return modules.flatMap((m) => m.routes)
-}
-
+# Generate filtered bootstrap (only side-effect imports, no circular dep)
+cat > "$BOOTSTRAP" << 'HEADER'
 // Auto-generated — do not edit. Run without APPS to restore full version.
 HEADER
 
 for app in $(echo "$APPS" | tr ',' '\n'); do
   [ "$app" = "system" ] && continue  # system is kernel, no app module
-  echo "import './${app}/module'" >> "$REGISTRY"
+  echo "import './${app}/module'" >> "$BOOTSTRAP"
 done
 
-echo "[gen-registry] generated registry with APPS=$APPS"
+echo "[gen-registry] generated _bootstrap.ts with APPS=$APPS"
