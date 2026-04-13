@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 @openspec
 ## Project Overview
 
-Metis is a Go 1.25 web application with an embedded React frontend. It compiles to a single binary that serves both API and static assets. The backend uses Gin + GORM + samber/do (IOC), the frontend uses Vite 8 + React 19 + TypeScript 6 + React Compiler.
+Metis is a Go 1.26 web application with an embedded React frontend. It compiles to a single binary that serves both API and static assets. The backend uses Gin + GORM + samber/do (IOC), the frontend uses Vite 8 + React 19 + TypeScript 6 + React Compiler.
 
 ## Build & Run Commands
 
@@ -26,7 +26,8 @@ make release-license  # Cross-compile license edition → dist/
 
 # Frontend
 make web-build        # Build frontend for production
-cd web && bun run lint  # ESLint (includes React Compiler rules)
+cd web && bun run lint     # ESLint (includes React Compiler rules)
+cd web && bun run preview  # Preview production build locally
 ```
 
 For development, run `make dev` and `make web-dev` in separate terminals. The Vite dev server at :3000 proxies `/api/*` to the Go server at :8080. On first run, open `http://localhost:3000` — the install wizard will guide you through database selection, site setup, and admin account creation.
@@ -48,7 +49,9 @@ make build APPS=system,ai                        # 内核 + AI（前端裁剪，
 
 **CLI subcommands**: None — all configuration is handled via the browser-based install wizard and `config.yml`.
 
-**Package manager**: Frontend uses **bun** (`bun run dev`, `bun run build`). No Go tests exist yet.
+**Package manager**: Frontend uses **bun** (`bun run dev`, `bun run build`).
+
+**Tests**: Run Go tests with `go test ./...`. There is currently one test file (`internal/app/ai/data_stream_test.go`); no frontend tests exist yet.
 
 ## Architecture
 
