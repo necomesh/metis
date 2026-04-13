@@ -7,6 +7,13 @@ const (
 	RoleUser  = "user"
 )
 
+// ManagerInfo is the lightweight manager representation embedded in UserResponse.
+type ManagerInfo struct {
+	ID       uint   `json:"id"`
+	Username string `json:"username"`
+	Avatar   string `json:"avatar"`
+}
+
 type User struct {
 	BaseModel
 	Username            string     `json:"username" gorm:"uniqueIndex;size:64;not null"`
@@ -18,6 +25,8 @@ type User struct {
 	Timezone            string     `json:"timezone" gorm:"size:50"`
 	RoleID              uint       `json:"roleId" gorm:"not null;default:0"`
 	Role                Role       `json:"role" gorm:"foreignKey:RoleID"`
+	ManagerID           *uint      `json:"managerId" gorm:"default:null;index"`
+	Manager             *User      `json:"manager,omitempty" gorm:"foreignKey:ManagerID"`
 	IsActive            bool       `json:"isActive" gorm:"not null;default:true"`
 	PasswordChangedAt   *time.Time `json:"passwordChangedAt,omitempty" gorm:"default:null"`
 	ForcePasswordReset  bool       `json:"forcePasswordReset" gorm:"not null;default:false"`
@@ -41,6 +50,8 @@ type UserResponse struct {
 	Locale              string                   `json:"locale"`
 	Timezone            string                   `json:"timezone"`
 	Role                RoleResponse             `json:"role"`
+	ManagerID           *uint                    `json:"managerId,omitempty"`
+	Manager             *ManagerInfo             `json:"manager,omitempty"`
 	IsActive            bool                     `json:"isActive"`
 	HasPassword         bool                     `json:"hasPassword"`
 	TwoFactorEnabled    bool                     `json:"twoFactorEnabled"`
@@ -54,7 +65,7 @@ type UserResponse struct {
 }
 
 func (u *User) ToResponse() UserResponse {
-	return UserResponse{
+	resp := UserResponse{
 		ID:       u.ID,
 		Username: u.Username,
 		Email:    u.Email,
@@ -67,6 +78,7 @@ func (u *User) ToResponse() UserResponse {
 			Name: u.Role.Name,
 			Code: u.Role.Code,
 		},
+		ManagerID:           u.ManagerID,
 		IsActive:            u.IsActive,
 		HasPassword:         u.HasPassword(),
 		TwoFactorEnabled:    u.TwoFactorEnabled,
@@ -77,6 +89,14 @@ func (u *User) ToResponse() UserResponse {
 		CreatedAt:           u.CreatedAt,
 		UpdatedAt:           u.UpdatedAt,
 	}
+	if u.Manager != nil {
+		resp.Manager = &ManagerInfo{
+			ID:       u.Manager.ID,
+			Username: u.Manager.Username,
+			Avatar:   u.Manager.Avatar,
+		}
+	}
+	return resp
 }
 
 // IsLocked returns true if the account is currently locked.

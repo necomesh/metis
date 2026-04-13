@@ -33,6 +33,66 @@ func (r *RoleRepo) FindByCode(code string) (*model.Role, error) {
 	return &role, nil
 }
 
+// FindByIDWithDeptScope loads a role and its custom department scope entries.
+func (r *RoleRepo) FindByIDWithDeptScope(id uint) (*model.Role, []uint, error) {
+	role, err := r.FindByID(id)
+	if err != nil {
+		return nil, nil, err
+	}
+	deptIDs, err := r.GetCustomDeptIDs(id)
+	if err != nil {
+		return nil, nil, err
+	}
+	return role, deptIDs, nil
+}
+
+// GetCustomDeptIDs returns the configured department IDs for a CUSTOM-scope role.
+func (r *RoleRepo) GetCustomDeptIDs(roleID uint) ([]uint, error) {
+	var entries []model.RoleDeptScope
+	if err := r.db.Where("role_id = ?", roleID).Find(&entries).Error; err != nil {
+		return nil, err
+	}
+	ids := make([]uint, len(entries))
+	for i, e := range entries {
+		ids[i] = e.DepartmentID
+	}
+	return ids, nil
+}
+
+// SetCustomDeptIDs atomically replaces the custom department set for a role.
+func (r *RoleRepo) SetCustomDeptIDs(roleID uint, deptIDs []uint) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("role_id = ?", roleID).Delete(&model.RoleDeptScope{}).Error; err != nil {
+			return err
+		}
+		if len(deptIDs) == 0 {
+			return nil
+		}
+		entries := make([]model.RoleDeptScope, len(deptIDs))
+		for i, id := range deptIDs {
+			entries[i] = model.RoleDeptScope{RoleID: roleID, DepartmentID: id}
+		}
+		return tx.Create(&entries).Error
+	})
+}
+
+// GetScopeByCode returns the DataScope and custom dept IDs for the given role code.
+// Used by DataScopeMiddleware.
+func (r *RoleRepo) GetScopeByCode(code string) (model.DataScope, []uint, error) {
+	role, err := r.FindByCode(code)
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return model.DataScopeAll, nil, nil
+		}
+		return model.DataScopeAll, nil, err
+	}
+	if role.DataScope != model.DataScopeCustom {
+		return role.DataScope, nil, nil
+	}
+	deptIDs, err := r.GetCustomDeptIDs(role.ID)
+	return role.DataScope, deptIDs, err
+}
+
 func (r *RoleRepo) List(page, pageSize int) ([]model.Role, int64, error) {
 	var total int64
 	if err := r.db.Model(&model.Role{}).Count(&total).Error; err != nil {

@@ -9,5 +9,6 @@ import (
 	_ "metis/internal/app/ai"
 	_ "metis/internal/app/license"
 	_ "metis/internal/app/node"
+	_ "metis/internal/app/observe"
 	_ "metis/internal/app/org"
 )

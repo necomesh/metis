@@ -29,6 +29,25 @@
   },
   "permission": {
     "title": "Assign Permissions — {{name}}",
-    "selectedCount": "{{checked}} / {{total}} selected"
+    "selectedCount": "{{checked}} / {{total}} selected",
+    "tabMenu": "Menu Permissions",
+    "tabDataScope": "Data Scope"
+  },
+  "dataScope": {
+    "label": "Data Scope",
+    "description": "Controls which data records this role can view",
+    "all": "All Data",
+    "allDesc": "Can view all data in the system",
+    "deptAndSub": "Dept & Subordinates",
+    "deptAndSubDesc": "Can only view data from own department and its sub-departments",
+    "dept": "Dept Only",
+    "deptDesc": "Can only view data from own department, excluding sub-departments",
+    "self": "Self Only",
+    "selfDesc": "Can only view data created by themselves",
+    "custom": "Custom Departments",
+    "customDesc": "Manually specify the visible department scope",
+    "selectDepts": "Select visible departments",
+    "noDeptTree": "Org module is not enabled, cannot configure custom scope",
+    "deptSelected": "{{count}} departments selected"
   }
 }

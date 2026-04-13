@@ -68,11 +68,16 @@ func (h *AssignmentHandler) AddUserPosition(c *gin.Context) {
 
 	up, err := h.svc.AddUserPosition(userID, req.DepartmentID, req.PositionID, req.IsPrimary)
 	if err != nil {
-		if errors.Is(err, ErrAlreadyAssigned) {
+		switch {
+		case errors.Is(err, ErrAlreadyAssigned),
+			errors.Is(err, ErrDepartmentNotFound),
+			errors.Is(err, ErrDepartmentInactive),
+			errors.Is(err, ErrPositionNotFound),
+			errors.Is(err, ErrPositionInactive):
 			handler.Fail(c, http.StatusBadRequest, err.Error())
-			return
+		default:
+			handler.Fail(c, http.StatusInternalServerError, err.Error())
 		}
-		handler.Fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -97,6 +102,10 @@ func (h *AssignmentHandler) RemoveUserPosition(c *gin.Context) {
 	c.Set("audit_resource_id", strconv.FormatUint(uint64(assignID), 10))
 
 	if err := h.svc.RemoveUserPosition(userID, assignID); err != nil {
+		if errors.Is(err, ErrAssignmentNotFound) {
+			handler.Fail(c, http.StatusNotFound, err.Error())
+			return
+		}
 		handler.Fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -183,6 +192,10 @@ func (h *AssignmentHandler) SetPrimary(c *gin.Context) {
 	}
 
 	if err := h.svc.SetPrimary(userID, assignID); err != nil {
+		if errors.Is(err, ErrAssignmentNotFound) {
+			handler.Fail(c, http.StatusNotFound, err.Error())
+			return
+		}
 		handler.Fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}

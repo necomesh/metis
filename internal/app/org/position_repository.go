@@ -53,9 +53,6 @@ func (r *PositionRepo) List(params PositionListParams) ([]Position, int64, error
 	if params.Page < 1 {
 		params.Page = 1
 	}
-	if params.PageSize < 1 {
-		params.PageSize = 20
-	}
 
 	base := r.db.Model(&Position{})
 	if params.Keyword != "" {
@@ -69,8 +66,13 @@ func (r *PositionRepo) List(params PositionListParams) ([]Position, int64, error
 	}
 
 	var items []Position
-	offset := (params.Page - 1) * params.PageSize
-	if err := base.Offset(offset).Limit(params.PageSize).Order("sort ASC, level DESC, id ASC").Find(&items).Error; err != nil {
+	query := base.Order("sort ASC, level DESC, id ASC")
+	if params.PageSize > 0 {
+		offset := (params.Page - 1) * params.PageSize
+		query = query.Offset(offset).Limit(params.PageSize)
+	}
+	// pageSize=0 means return all (no pagination)
+	if err := query.Find(&items).Error; err != nil {
 		return nil, 0, err
 	}
 	return items, total, nil

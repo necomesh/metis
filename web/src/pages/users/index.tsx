@@ -57,6 +57,7 @@ interface UserConnection {
 type UserWithAuth = User & {
   hasPassword?: boolean
   connections?: UserConnection[]
+  manager?: { id: number; username: string } | null
 }
 
 const providerIcons: Record<string, string> = {
@@ -188,6 +189,7 @@ export function Component() {
               <TableHead className="min-w-[180px]">{t("users:email")}</TableHead>
               <TableHead className="min-w-[140px]">{t("users:phone")}</TableHead>
               <TableHead className="w-[110px] text-center">{t("users:role")}</TableHead>
+              <TableHead className="w-[120px]">{t("users:manager")}</TableHead>
               <TableHead className="w-[120px] text-center">{t("users:loginMethod")}</TableHead>
               <TableHead className="w-[100px] text-center">{t("common:status")}</TableHead>
               <TableHead className="w-[150px] text-center">{t("common:createdAt")}</TableHead>
@@ -196,10 +198,10 @@ export function Component() {
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <DataTableLoadingRow colSpan={9} />
+              <DataTableLoadingRow colSpan={10} />
             ) : users.length === 0 ? (
               <DataTableEmptyRow
-                colSpan={9}
+                colSpan={10}
                 icon={Users}
                 title={t("users:noUsers")}
                 description={t("users:noUsersDescription")}
@@ -225,6 +227,9 @@ export function Component() {
                     <Badge variant={user.role?.code === "admin" ? "default" : "secondary"}>
                       {user.role?.name || t("users:noRoleAssigned")}
                     </Badge>
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {user.manager ? user.manager.username : <span className="text-muted-foreground/50">—</span>}
                   </TableCell>
                   <TableCell className="text-center">
                     <div className="flex justify-center">

@@ -53,6 +53,33 @@ func (r *AssignmentRepo) AddPosition(up *UserPosition) error {
 	return r.db.Create(up).Error
 }
 
+// AddPositionWithPrimary creates a new assignment, atomically handling primary status.
+// If setPrimary is true, it demotes any existing primary for this user first.
+// If autoSetPrimary is true and the user has no existing assignments, it sets this as primary.
+func (r *AssignmentRepo) AddPositionWithPrimary(up *UserPosition, setPrimary, autoSetPrimary bool) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if setPrimary {
+			if err := tx.Model(&UserPosition{}).
+				Where("user_id = ?", up.UserID).
+				Update("is_primary", false).Error; err != nil {
+				return err
+			}
+			up.IsPrimary = true
+		} else if autoSetPrimary {
+			var count int64
+			if err := tx.Model(&UserPosition{}).
+				Where("user_id = ?", up.UserID).
+				Count(&count).Error; err != nil {
+				return err
+			}
+			if count == 0 {
+				up.IsPrimary = true
+			}
+		}
+		return tx.Create(up).Error
+	})
+}
+
 func (r *AssignmentRepo) ExistsByUserAndDept(userID, deptID uint) (bool, error) {
 	var count int64
 	if err := r.db.Model(&UserPosition{}).
@@ -87,28 +114,45 @@ func (r *AssignmentRepo) RemovePosition(assignmentID, userID uint) error {
 	})
 }
 
-func (r *AssignmentRepo) UpdatePosition(assignmentID, userID uint, fields map[string]any) error {
-	result := r.db.Model(&UserPosition{}).
-		Where("id = ? AND user_id = ?", assignmentID, userID).
-		Updates(fields)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
+// UpdatePositionWithPrimary updates assignment fields, atomically handling isPrimary changes.
+// If setPrimary is true, it demotes existing primary before setting this one.
+func (r *AssignmentRepo) UpdatePositionWithPrimary(assignmentID, userID uint, fields map[string]any, setPrimary bool) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if setPrimary {
+			if err := tx.Model(&UserPosition{}).
+				Where("user_id = ?", userID).
+				Update("is_primary", false).Error; err != nil {
+				return err
+			}
+			fields["is_primary"] = true
+		}
+		result := tx.Model(&UserPosition{}).
+			Where("id = ? AND user_id = ?", assignmentID, userID).
+			Updates(fields)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
+	})
 }
 
 func (r *AssignmentRepo) SetPrimary(userID uint, assignmentID uint) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		// Verify target assignment exists
+		var target UserPosition
+		if err := tx.Where("id = ? AND user_id = ?", assignmentID, userID).First(&target).Error; err != nil {
+			return err
+		}
 		if err := tx.Model(&UserPosition{}).
 			Where("user_id = ?", userID).
 			Update("is_primary", false).Error; err != nil {
 			return err
 		}
 		return tx.Model(&UserPosition{}).
-			Where("id = ? AND user_id = ?", assignmentID, userID).
+			Where("id = ?", assignmentID).
 			Update("is_primary", true).Error
 	})
 }
@@ -191,18 +235,6 @@ func (r *AssignmentRepo) GetSubDepartmentIDs(parentIDs []uint, activeOnly bool) 
 		return nil, err
 	}
 	return ids, nil
-}
-
-func (r *AssignmentRepo) CountAssignments(filters map[string]any) (int64, error) {
-	var count int64
-	query := r.db.Model(&UserPosition{})
-	for k, v := range filters {
-		query = query.Where(k+" = ?", v)
-	}
-	if err := query.Count(&count).Error; err != nil {
-		return 0, err
-	}
-	return count, nil
 }
 
 func (r *AssignmentRepo) GetUserPrimaryPosition(userID uint) (*UserPosition, error) {

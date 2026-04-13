@@ -12,6 +12,7 @@ var AdminAPIPolicies = [][]string{
 	{"/api/v1/users/:id/reset-password", "POST"},
 	{"/api/v1/users/:id/activate", "POST"},
 	{"/api/v1/users/:id/deactivate", "POST"},
+	{"/api/v1/users/:id/manager-chain", "GET"},
 	// Roles
 	{"/api/v1/roles", "GET"},
 	{"/api/v1/roles", "POST"},
@@ -20,6 +21,7 @@ var AdminAPIPolicies = [][]string{
 	{"/api/v1/roles/:id", "DELETE"},
 	{"/api/v1/roles/:id/permissions", "GET"},
 	{"/api/v1/roles/:id/permissions", "PUT"},
+	{"/api/v1/roles/:id/data-scope", "PUT"},
 	// Menus
 	{"/api/v1/menus/tree", "GET"},
 	{"/api/v1/menus", "POST"},

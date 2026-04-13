@@ -27,6 +27,18 @@ type LocaleProvider interface {
 	Locales() embed.FS
 }
 
+// OrgScopeResolver is an optional interface implemented by the Org App.
+// It resolves the set of department IDs visible to a given user based on
+// their organisational assignments. DataScopeMiddleware uses this interface;
+// when the Org App is not installed the resolver is nil and no dept filtering
+// is applied (equivalent to DataScopeAll).
+type OrgScopeResolver interface {
+	// GetUserDeptScope returns the department IDs the user can access.
+	// For DataScopeDept it returns only the user's directly assigned departments.
+	// For DataScopeDeptAndSub it returns those plus all active sub-departments (BFS).
+	GetUserDeptScope(userID uint, includeSubDepts bool) ([]uint, error)
+}
+
 var apps []App
 
 func Register(a App) { apps = append(apps, a) }

@@ -42,6 +42,10 @@ func (a *OrgApp) Providers(i do.Injector) {
 	do.Provide(i, NewDepartmentHandler)
 	do.Provide(i, NewPositionHandler)
 	do.Provide(i, NewAssignmentHandler)
+	// OrgScopeResolver — satisfies app.OrgScopeResolver interface for DataScopeMiddleware
+	do.ProvideValue[app.OrgScopeResolver](i, &OrgScopeResolverImpl{
+		svc: do.MustInvoke[*AssignmentService](i),
+	})
 }
 
 func (a *OrgApp) Routes(api *gin.RouterGroup) {

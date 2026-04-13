@@ -12,16 +12,17 @@ import (
 )
 
 var (
-	ErrRoleNotFound    = errors.New("error.role.not_found")
-	ErrRoleCodeExists  = errors.New("error.role.code_exists")
-	ErrSystemRole      = errors.New("error.role.system_role")
-	ErrSystemRoleDel   = errors.New("error.role.system_role_delete")
-	ErrRoleHasUsers    = errors.New("error.role.has_users")
+	ErrRoleNotFound     = errors.New("error.role.not_found")
+	ErrRoleCodeExists   = errors.New("error.role.code_exists")
+	ErrSystemRole       = errors.New("error.role.system_role")
+	ErrSystemRoleDel    = errors.New("error.role.system_role_delete")
+	ErrRoleHasUsers     = errors.New("error.role.has_users")
+	ErrDataScopeInvalid = errors.New("error.role.data_scope_invalid")
 )
 
 type RoleService struct {
-	roleRepo    *repository.RoleRepo
-	casbinSvc   *CasbinService
+	roleRepo  *repository.RoleRepo
+	casbinSvc *CasbinService
 }
 
 func NewRole(i do.Injector) (*RoleService, error) {
@@ -48,6 +49,18 @@ func (s *RoleService) GetByID(id uint) (*model.Role, error) {
 	return role, nil
 }
 
+// GetByIDWithDeptScope returns a role plus its custom department IDs (for CUSTOM scope).
+func (s *RoleService) GetByIDWithDeptScope(id uint) (*model.Role, []uint, error) {
+	role, deptIDs, err := s.roleRepo.FindByIDWithDeptScope(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil, ErrRoleNotFound
+		}
+		return nil, nil, err
+	}
+	return role, deptIDs, nil
+}
+
 func (s *RoleService) Create(name, code, description string, sort int) (*model.Role, error) {
 	exists, err := s.roleRepo.ExistsByCode(code)
 	if err != nil {
@@ -62,6 +75,7 @@ func (s *RoleService) Create(name, code, description string, sort int) (*model.R
 		Code:        code,
 		Description: description,
 		Sort:        sort,
+		DataScope:   model.DataScopeAll,
 	}
 	if err := s.roleRepo.Create(role); err != nil {
 		return nil, err
@@ -134,6 +148,41 @@ func (s *RoleService) Update(id uint, params UpdateRoleParams) (*model.Role, err
 	return role, nil
 }
 
+// UpdateDataScope updates a role's data scope policy and custom department set.
+func (s *RoleService) UpdateDataScope(id uint, scope model.DataScope, deptIDs []uint) (*model.Role, error) {
+	if !model.ValidDataScopes[scope] {
+		return nil, ErrDataScopeInvalid
+	}
+
+	role, err := s.roleRepo.FindByID(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrRoleNotFound
+		}
+		return nil, err
+	}
+
+	if role.IsSystem && role.Code == model.RoleAdmin {
+		return nil, ErrSystemRole
+	}
+
+	role.DataScope = scope
+	if err := s.roleRepo.Update(role); err != nil {
+		return nil, err
+	}
+
+	// Always replace custom dept set (clear when not custom)
+	ids := deptIDs
+	if scope != model.DataScopeCustom {
+		ids = nil
+	}
+	if err := s.roleRepo.SetCustomDeptIDs(id, ids); err != nil {
+		return nil, err
+	}
+
+	return role, nil
+}
+
 func (s *RoleService) Delete(id uint) error {
 	role, err := s.roleRepo.FindByID(id)
 	if err != nil {
@@ -159,9 +208,12 @@ func (s *RoleService) Delete(id uint) error {
 		return err
 	}
 
-	// Clean up Casbin policies
+	// Clean up Casbin policies and custom scope
 	if err := s.casbinSvc.SetPoliciesForRole(role.Code, nil); err != nil {
 		slog.Error("failed to clean up casbin policies on role delete", "role", role.Code, "error", err)
+	}
+	if err := s.roleRepo.SetCustomDeptIDs(id, nil); err != nil {
+		slog.Error("failed to clean up role dept scope on role delete", "roleID", id, "error", err)
 	}
 
 	return nil

@@ -123,7 +123,15 @@ func (h *DepartmentHandler) Update(c *gin.Context) {
 	c.Set("audit_resource", "department")
 	c.Set("audit_resource_id", c.Param("id"))
 
-	dept, err := h.svc.Update(id, req.Name, req.Code, req.ParentID, req.ManagerID, req.Sort, req.Description, req.IsActive)
+	dept, err := h.svc.Update(id, UpdateDepartmentInput{
+		Name:        req.Name,
+		Code:        req.Code,
+		ParentID:    req.ParentID,
+		ManagerID:   req.ManagerID,
+		Sort:        req.Sort,
+		Description: req.Description,
+		IsActive:    req.IsActive,
+	})
 	if err != nil {
 		if errors.Is(err, ErrDepartmentNotFound) {
 			handler.Fail(c, http.StatusNotFound, err.Error())

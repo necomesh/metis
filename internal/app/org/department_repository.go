@@ -74,3 +74,20 @@ func (r *DepartmentRepo) HasMembers(deptID uint) (bool, error) {
 	}
 	return count > 0, nil
 }
+
+type IDParent struct {
+	ID       uint
+	ParentID *uint
+}
+
+func (r *DepartmentRepo) ListAllIDsWithParent(activeOnly bool) ([]IDParent, error) {
+	query := r.db.Model(&Department{}).Select("id, parent_id")
+	if activeOnly {
+		query = query.Where("is_active = ?", true)
+	}
+	var items []IDParent
+	if err := query.Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
+}

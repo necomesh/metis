@@ -1,10 +1,12 @@
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { useForm } from "react-hook-form"
 import { z } from "zod"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { ChevronsUpDown, Check, X } from "lucide-react"
 import { api, type PaginatedResponse } from "@/lib/api"
+import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -23,6 +25,11 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
+import {
   Form,
   FormControl,
   FormField,
@@ -38,6 +45,12 @@ interface RoleOption {
   code: string
 }
 
+interface UserOption {
+  id: number
+  username: string
+  email: string
+}
+
 function createCreateSchema(t: (key: string) => string) {
   return z.object({
     username: z.string().min(1, t("users:validation.usernameRequired")).max(64),
@@ -45,6 +58,7 @@ function createCreateSchema(t: (key: string) => string) {
     email: z.string().email(t("users:validation.emailInvalid")).or(z.literal("")).optional(),
     phone: z.string().max(32).optional(),
     roleId: z.coerce.number().min(1, t("users:validation.roleRequired")),
+    managerId: z.number().nullable().optional(),
   })
 }
 
@@ -53,6 +67,7 @@ function createEditSchema(t: (key: string) => string) {
     email: z.string().email(t("users:validation.emailInvalid")).or(z.literal("")).optional(),
     phone: z.string().max(32).optional(),
     roleId: z.coerce.number().min(1, t("users:validation.roleRequired")),
+    managerId: z.number().nullable().optional(),
   })
 }
 
@@ -70,6 +85,20 @@ export function UserSheet({ open, onOpenChange, user }: UserSheetProps) {
   const queryClient = useQueryClient()
   const isEditing = user !== null
 
+  const [managerComboOpen, setManagerComboOpen] = useState(false)
+  const [managerKeyword, setManagerKeyword] = useState("")
+  // Track the selected manager display info separately from the form managerId
+  // Use a stable key to avoid effect-based resets
+  const [managerDisplay, setManagerDisplay] = useState<UserOption | null>(null)
+  const [lastUserId, setLastUserId] = useState<number | undefined>(user?.id)
+
+  // Reset manager display when editing a different user (render-time setState pattern)
+  if (lastUserId !== user?.id) {
+    setLastUserId(user?.id)
+    const userAny = user as (User & { manager?: { id: number; username: string } | null }) | null
+    setManagerDisplay(userAny?.manager ? { id: userAny.manager.id, username: userAny.manager.username, email: "" } : null)
+  }
+
   const { data: rolesData } = useQuery({
     queryKey: ["roles", "all"],
     queryFn: () =>
@@ -77,7 +106,20 @@ export function UserSheet({ open, onOpenChange, user }: UserSheetProps) {
     enabled: open,
   })
 
+  const { data: usersData } = useQuery({
+    queryKey: ["users", "search", managerKeyword],
+    queryFn: async () => {
+      const params = new URLSearchParams({ page: "1", pageSize: "50" })
+      if (managerKeyword) params.set("keyword", managerKeyword)
+      const res = await api.get<PaginatedResponse<UserOption>>(`/api/v1/users?${params}`)
+      return res.items
+    },
+    enabled: open && managerComboOpen,
+  })
+
   const roles = rolesData?.items ?? []
+  // Filter out the current user being edited from manager options
+  const managerOptions = (usersData ?? []).filter((u) => !isEditing || u.id !== user?.id)
 
   const form = useForm<CreateValues>({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -88,18 +130,21 @@ export function UserSheet({ open, onOpenChange, user }: UserSheetProps) {
       email: "",
       phone: "",
       roleId: 0,
+      managerId: null,
     },
   })
 
   useEffect(() => {
     if (open) {
-      if (user) {
+      const userAny = user as (User & { manager?: { id: number; username: string } | null }) | null
+      if (userAny) {
         form.reset({
-          username: user.username,
+          username: userAny.username,
           password: "",
-          email: user.email || "",
-          phone: user.phone || "",
-          roleId: user.role?.id || 0,
+          email: userAny.email || "",
+          phone: userAny.phone || "",
+          roleId: userAny.role?.id || 0,
+          managerId: userAny.manager?.id ?? null,
         })
       } else {
         form.reset({
@@ -108,6 +153,7 @@ export function UserSheet({ open, onOpenChange, user }: UserSheetProps) {
           email: "",
           phone: "",
           roleId: 0,
+          managerId: null,
         })
       }
     }
@@ -137,6 +183,7 @@ export function UserSheet({ open, onOpenChange, user }: UserSheetProps) {
         email: values.email,
         phone: values.phone,
         roleId: values.roleId,
+        managerId: values.managerId,
       })
     } else {
       createMutation.mutate(values)
@@ -234,6 +281,83 @@ export function UserSheet({ open, onOpenChange, user }: UserSheetProps) {
                       ))}
                     </SelectContent>
                   </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            {/* Direct Manager selector */}
+            <FormField
+              control={form.control}
+              name="managerId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t("users:manager")}</FormLabel>
+                  <div className="flex gap-2">
+                    <Popover open={managerComboOpen} onOpenChange={(v) => { setManagerComboOpen(v); if (!v) setManagerKeyword("") }}>
+                      <PopoverTrigger asChild>
+                        <FormControl>
+                          <Button
+                            variant="outline"
+                            role="combobox"
+                            className={cn("flex-1 justify-between font-normal", !managerDisplay && "text-muted-foreground")}
+                          >
+                            {managerDisplay ? managerDisplay.username : t("users:selectManager")}
+                            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                          </Button>
+                        </FormControl>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                        <div className="border-b p-2">
+                          <Input
+                            placeholder={t("users:searchPlaceholder")}
+                            value={managerKeyword}
+                            onChange={(e) => setManagerKeyword(e.target.value)}
+                            className="h-8 border-0 p-0 shadow-none focus-visible:ring-0"
+                          />
+                        </div>
+                        <div className="max-h-52 overflow-auto p-1">
+                          {(!managerOptions || managerOptions.length === 0) ? (
+                            <p className="py-3 text-center text-sm text-muted-foreground">{t("common:noData")}</p>
+                          ) : managerOptions.map((u) => (
+                            <button
+                              key={u.id}
+                              type="button"
+                              onClick={() => {
+                                setManagerDisplay(u)
+                                field.onChange(u.id)
+                                setManagerComboOpen(false)
+                              }}
+                              className={cn(
+                                "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm cursor-pointer hover:bg-accent",
+                                field.value === u.id && "bg-accent"
+                              )}
+                            >
+                              <div className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[10px] shrink-0">
+                                {u.username.charAt(0).toUpperCase()}
+                              </div>
+                              <span>{u.username}</span>
+                              {u.email && <span className="text-xs text-muted-foreground">{u.email}</span>}
+                              {field.value === u.id && <Check className="ml-auto h-4 w-4 shrink-0" />}
+                            </button>
+                          ))}
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                    {managerDisplay && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={() => {
+                          setManagerDisplay(null)
+                          field.onChange(null)
+                        }}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
                   <FormMessage />
                 </FormItem>
               )}

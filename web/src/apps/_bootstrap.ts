@@ -3,4 +3,5 @@
 import "./ai/module"
 import "./license/module"
 import "./node/module"
+import "./observe/module"
 import "./org/module"

@@ -65,6 +65,7 @@ func AutoMigrateKernel(db *gorm.DB) error {
 	return db.AutoMigrate(
 		&model.SystemConfig{},
 		&model.Role{},
+		&model.RoleDeptScope{},
 		&model.Menu{},
 		&model.User{},
 		&model.RefreshToken{},

@@ -160,3 +160,4 @@ type AssignmentItem struct {
 	AssignmentID uint      `json:"assignmentId"`
 	CreatedAt    time.Time `json:"createdAt"`
 }
+

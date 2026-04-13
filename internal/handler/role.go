@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"metis/internal/model"
+	"metis/internal/repository"
 	"metis/internal/service"
 )
 
@@ -15,6 +16,7 @@ type RoleHandler struct {
 	roleSvc   *service.RoleService
 	casbinSvc *service.CasbinService
 	menuSvc   *service.MenuService
+	roleRepo  *repository.RoleRepo
 }
 
 func (h *RoleHandler) List(c *gin.Context) {
@@ -71,7 +73,7 @@ func (h *RoleHandler) Get(c *gin.Context) {
 		return
 	}
 
-	role, err := h.roleSvc.GetByID(id)
+	role, deptIDs, err := h.roleSvc.GetByIDWithDeptScope(id)
 	if err != nil {
 		if errors.Is(err, service.ErrRoleNotFound) {
 			Fail(c, http.StatusNotFound, "role not found")
@@ -81,7 +83,18 @@ func (h *RoleHandler) Get(c *gin.Context) {
 		return
 	}
 
-	OK(c, role)
+	OK(c, gin.H{
+		"id":          role.ID,
+		"name":        role.Name,
+		"code":        role.Code,
+		"description": role.Description,
+		"sort":        role.Sort,
+		"isSystem":    role.IsSystem,
+		"dataScope":   role.DataScope,
+		"deptIds":     deptIDs,
+		"createdAt":   role.CreatedAt,
+		"updatedAt":   role.UpdatedAt,
+	})
 }
 
 type updateRoleReq struct {
@@ -271,4 +284,44 @@ func flattenMenus(menus []model.Menu) map[uint]model.Menu {
 	}
 	walk(menus)
 	return result
+}
+
+type updateDataScopeReq struct {
+	DataScope model.DataScope `json:"dataScope" binding:"required"`
+	DeptIDs   []uint          `json:"deptIds"`
+}
+
+// UpdateDataScope sets the data visibility scope for a role.
+func (h *RoleHandler) UpdateDataScope(c *gin.Context) {
+	id, err := parseIDParam(c)
+	if err != nil {
+		return
+	}
+
+	var req updateDataScopeReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	role, err := h.roleSvc.UpdateDataScope(id, req.DataScope, req.DeptIDs)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrRoleNotFound):
+			Fail(c, http.StatusNotFound, "role not found")
+		case errors.Is(err, service.ErrSystemRole):
+			Fail(c, http.StatusBadRequest, "cannot modify system admin data scope")
+		case errors.Is(err, service.ErrDataScopeInvalid):
+			Fail(c, http.StatusBadRequest, "invalid data scope value")
+		default:
+			Fail(c, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+
+	c.Set("audit_action", "role.update_data_scope")
+	c.Set("audit_resource", "role")
+	c.Set("audit_resource_id", strconv.FormatUint(uint64(id), 10))
+	c.Set("audit_summary", "更新角色数据权限范围")
+	OK(c, role)
 }

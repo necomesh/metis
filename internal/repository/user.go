@@ -35,6 +35,15 @@ func (r *UserRepo) FindByID(id uint) (*model.User, error) {
 	return &user, nil
 }
 
+// FindByIDWithManager loads a user with Role and direct Manager (one level).
+func (r *UserRepo) FindByIDWithManager(id uint) (*model.User, error) {
+	var user model.User
+	if err := r.db.Preload("Role").Preload("Manager").First(&user, id).Error; err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
 func (r *UserRepo) FindByEmail(email string) (*model.User, error) {
 	var user model.User
 	if err := r.db.Preload("Role").Where("email = ? AND email != ''", email).First(&user).Error; err != nil {
@@ -45,10 +54,11 @@ func (r *UserRepo) FindByEmail(email string) (*model.User, error) {
 
 // ListParams holds query parameters for listing users.
 type ListParams struct {
-	Keyword  string
-	IsActive *bool
-	Page     int
-	PageSize int
+	Keyword   string
+	IsActive  *bool
+	Page      int
+	PageSize  int
+	DeptScope *[]uint // nil = no filter; &[]uint{} = self only (unused for users); &[]uint{1,2} = dept filter
 }
 
 // ListResult holds the paginated result.

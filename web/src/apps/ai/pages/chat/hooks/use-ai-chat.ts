@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react"
-import { useChat, type UseChatHelpers } from "@ai-sdk/react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Chat, useChat, type UseChatHelpers } from "@ai-sdk/react"
 import type { ChatTransport, UIMessage, UIMessageChunk } from "ai"
 import { sessionApi, type SessionMessage } from "@/lib/api"
 import { TOKEN_KEY } from "@/lib/constants"
@@ -155,6 +155,13 @@ class SessionTransport implements ChatTransport<UIMessage> {
   }
 }
 
+function fastSnapshot(message: UIMessage): UIMessage {
+  return {
+    ...message,
+    parts: message.parts.map((part) => ({ ...part })),
+  } as UIMessage
+}
+
 export interface UseAiChatOptions {
   onFinish?: () => void
   onError?: (error: Error) => void
@@ -184,14 +191,25 @@ export function useAiChat(
     [transport],
   )
 
+  const chatInstance = useMemo(() => {
+    const chat = new Chat<UIMessage>({
+      id: String(sessionId),
+      transport,
+    })
+    // Override expensive structuredClone with fast shallow clone
+    // to eliminate per-chunk cloning bottleneck during streaming.
+    chat.state.snapshot = fastSnapshot
+    return chat
+  }, [sessionId, transport])
+
+  // Sync dynamic callbacks without recreating the Chat instance
+  useEffect(() => {
+    ;(chatInstance as any).onFinish = options?.onFinish
+    ;(chatInstance as any).onError = options?.onError
+  }, [chatInstance, options?.onFinish, options?.onError])
+
   const chat = useChat({
-    id: String(sessionId),
-    messages: initialSessionMessages
-      ? sessionMessagesToUIMessages(initialSessionMessages)
-      : undefined,
-    transport,
-    onFinish: options?.onFinish,
-    onError: options?.onError,
+    chat: chatInstance,
   })
 
   // Sync server-loaded messages when useChat doesn't pick them up on mount

@@ -15,10 +15,11 @@ import (
 )
 
 var (
-	ErrUsernameExists    = errors.New("error.user.username_exists")
-	ErrUserNotFound      = errors.New("error.user.not_found")
-	ErrCannotSelf        = errors.New("error.user.cannot_self")
-	ErrPasswordViolation = errors.New("error.user.password_violation")
+	ErrUsernameExists      = errors.New("error.user.username_exists")
+	ErrUserNotFound        = errors.New("error.user.not_found")
+	ErrCannotSelf          = errors.New("error.user.cannot_self")
+	ErrPasswordViolation   = errors.New("error.user.password_violation")
+	ErrCircularManagerChain = errors.New("error.user.circular_manager_chain")
 )
 
 type UserService struct {
@@ -44,6 +45,17 @@ func (s *UserService) List(params repository.ListParams) (*repository.ListResult
 
 func (s *UserService) GetByID(id uint) (*model.User, error) {
 	user, err := s.userRepo.FindByID(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrUserNotFound
+		}
+		return nil, err
+	}
+	return user, nil
+}
+
+func (s *UserService) GetByIDWithManager(id uint) (*model.User, error) {
+	user, err := s.userRepo.FindByIDWithManager(id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrUserNotFound
@@ -91,13 +103,21 @@ func (s *UserService) Create(username, password, email, phone string, roleID uin
 }
 
 type UpdateUserParams struct {
-	Email    *string
-	Phone    *string
-	Avatar   *string
-	Locale   *string
-	Timezone *string
-	RoleID   *uint
-	IsActive *bool
+	Email     *string
+	Phone     *string
+	Avatar    *string
+	Locale    *string
+	Timezone  *string
+	RoleID    *uint
+	IsActive  *bool
+	ManagerID *uint // nil = no change; use SetManagerID to clear
+}
+
+// SetManagerID is a sentinel to distinguish "not set" from "clear to null".
+// Pass ManagerID = nil to not touch the field; pass with ClearManager=true to set null.
+type UpdateUserParamsExt struct {
+	UpdateUserParams
+	ClearManager bool
 }
 
 func (s *UserService) Update(id, currentUserID uint, params UpdateUserParams) (*model.User, error) {
@@ -135,12 +155,87 @@ func (s *UserService) Update(id, currentUserID uint, params UpdateUserParams) (*
 	if params.IsActive != nil {
 		user.IsActive = *params.IsActive
 	}
+	if params.ManagerID != nil {
+		if err := s.checkManagerCycle(id, *params.ManagerID); err != nil {
+			return nil, err
+		}
+		user.ManagerID = params.ManagerID
+	}
 
 	if err := s.userRepo.Update(user); err != nil {
 		return nil, err
 	}
-	// Reload to get updated Role association
-	return s.userRepo.FindByID(user.ID)
+	// Reload to get updated Role + Manager associations
+	return s.userRepo.FindByIDWithManager(user.ID)
+}
+
+// ClearManager sets a user's managerID to null.
+func (s *UserService) ClearManager(id uint) (*model.User, error) {
+	user, err := s.userRepo.FindByID(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrUserNotFound
+		}
+		return nil, err
+	}
+	user.ManagerID = nil
+	if err := s.userRepo.Update(user); err != nil {
+		return nil, err
+	}
+	return s.userRepo.FindByIDWithManager(user.ID)
+}
+
+// checkManagerCycle prevents circular manager chains (BFS, max depth 10).
+func (s *UserService) checkManagerCycle(userID, newManagerID uint) error {
+	if userID == newManagerID {
+		return ErrCircularManagerChain
+	}
+	const maxDepth = 10
+	visited := map[uint]bool{userID: true}
+	current := newManagerID
+	for i := 0; i < maxDepth; i++ {
+		if visited[current] {
+			return ErrCircularManagerChain
+		}
+		mgr, err := s.userRepo.FindByID(current)
+		if err != nil {
+			return nil // manager not found → no cycle
+		}
+		if mgr.ManagerID == nil {
+			return nil // reached root
+		}
+		visited[current] = true
+		current = *mgr.ManagerID
+	}
+	return nil
+}
+
+// GetManagerChain returns the ordered list of managers from direct manager up to root (max 10).
+func (s *UserService) GetManagerChain(userID uint) ([]*model.User, error) {
+	user, err := s.userRepo.FindByID(userID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrUserNotFound
+		}
+		return nil, err
+	}
+
+	var chain []*model.User
+	current := user.ManagerID
+	visited := map[uint]bool{userID: true}
+	for current != nil && len(chain) < 10 {
+		if visited[*current] {
+			break // cycle guard
+		}
+		mgr, err := s.userRepo.FindByID(*current)
+		if err != nil {
+			break
+		}
+		chain = append(chain, mgr)
+		visited[*current] = true
+		current = mgr.ManagerID
+	}
+	return chain, nil
 }
 
 func (s *UserService) Delete(id, currentUserID uint) error {

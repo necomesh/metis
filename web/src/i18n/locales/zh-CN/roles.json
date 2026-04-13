@@ -29,6 +29,25 @@
   },
   "permission": {
     "title": "分配权限 — {{name}}",
-    "selectedCount": "已选 {{checked}} / {{total}} 项"
+    "selectedCount": "已选 {{checked}} / {{total}} 项",
+    "tabMenu": "菜单权限",
+    "tabDataScope": "数据权限"
+  },
+  "dataScope": {
+    "label": "数据权限范围",
+    "description": "控制该角色可查看哪些范围的数据记录",
+    "all": "全部数据",
+    "allDesc": "可查看系统中所有数据",
+    "deptAndSub": "本部门及子部门",
+    "deptAndSubDesc": "只能查看所在部门及其下级部门的数据",
+    "dept": "仅本部门",
+    "deptDesc": "只能查看所在部门的数据，不含子部门",
+    "self": "仅本人",
+    "selfDesc": "只能查看自己创建的数据",
+    "custom": "自定义部门",
+    "customDesc": "手动指定可查看的部门范围",
+    "selectDepts": "选择可见部门",
+    "noDeptTree": "未启用组织模块，无法配置自定义范围",
+    "deptSelected": "已选 {{count}} 个部门"
   }
 }

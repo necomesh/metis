@@ -72,7 +72,17 @@ func (s *DepartmentService) Tree() ([]DepartmentTreeNode, error) {
 	return buildDepartmentTree(depts, counts), nil
 }
 
-func (s *DepartmentService) Update(id uint, name, code *string, parentID, managerID *uint, sort *int, description *string, isActive *bool) (*Department, error) {
+type UpdateDepartmentInput struct {
+	Name        *string `json:"name"`
+	Code        *string `json:"code"`
+	ParentID    *uint   `json:"parentId"`
+	ManagerID   *uint   `json:"managerId"`
+	Sort        *int    `json:"sort"`
+	Description *string `json:"description"`
+	IsActive    *bool   `json:"isActive"`
+}
+
+func (s *DepartmentService) Update(id uint, input UpdateDepartmentInput) (*Department, error) {
 	dept, err := s.repo.FindByID(id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -82,29 +92,29 @@ func (s *DepartmentService) Update(id uint, name, code *string, parentID, manage
 	}
 
 	updates := map[string]any{}
-	if name != nil {
-		updates["name"] = *name
+	if input.Name != nil {
+		updates["name"] = *input.Name
 	}
-	if code != nil {
-		if existing, err := s.repo.FindByCode(*code); err == nil && existing.ID != id {
+	if input.Code != nil {
+		if existing, err := s.repo.FindByCode(*input.Code); err == nil && existing.ID != id {
 			return nil, ErrDepartmentCodeExists
 		}
-		updates["code"] = *code
+		updates["code"] = *input.Code
 	}
-	if parentID != nil {
-		updates["parent_id"] = *parentID
+	if input.ParentID != nil {
+		updates["parent_id"] = *input.ParentID
 	}
-	if managerID != nil {
-		updates["manager_id"] = *managerID
+	if input.ManagerID != nil {
+		updates["manager_id"] = *input.ManagerID
 	}
-	if sort != nil {
-		updates["sort"] = *sort
+	if input.Sort != nil {
+		updates["sort"] = *input.Sort
 	}
-	if description != nil {
-		updates["description"] = *description
+	if input.Description != nil {
+		updates["description"] = *input.Description
 	}
-	if isActive != nil {
-		updates["is_active"] = *isActive
+	if input.IsActive != nil {
+		updates["is_active"] = *input.IsActive
 	}
 
 	if len(updates) > 0 {

@@ -5,6 +5,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/samber/do/v2"
 
+	"metis/internal/app"
 	"metis/internal/middleware"
 	"metis/internal/pkg/identity"
 	"metis/internal/pkg/oauth"
@@ -33,6 +34,9 @@ type Handler struct {
 	twoFactor      *TwoFactorHandler
 	identitySource *IdentitySourceHandler
 	sso            *SSOHandler
+	// DataScope dependencies
+	orgScopeResolver app.OrgScopeResolver
+	roleRepo         *repository.RoleRepo
 }
 
 func New(i do.Injector) (*Handler, error) {
@@ -50,12 +54,16 @@ func New(i do.Injector) (*Handler, error) {
 	providerSvc := do.MustInvoke[*service.AuthProviderService](i)
 	connSvc := do.MustInvoke[*service.UserConnectionService](i)
 	connRepo := do.MustInvoke[*repository.UserConnectionRepo](i)
+	roleRepo := do.MustInvoke[*repository.RoleRepo](i)
 	stateMgr := do.MustInvoke[*oauth.StateManager](i)
 	auditSvc := do.MustInvoke[*service.AuditLogService](i)
 	captchaSvc := do.MustInvoke[*service.CaptchaService](i)
 	tfSvc := do.MustInvoke[*service.TwoFactorService](i)
 	identitySvc := do.MustInvoke[*service.IdentitySourceService](i)
 	jwtSecret := do.MustInvoke[[]byte](i)
+
+	// OrgScopeResolver is optional (nil when Org App not installed)
+	orgResolver, _ := do.InvokeAs[app.OrgScopeResolver](i)
 
 	return &Handler{
 		sysCfg:      sysCfg,
@@ -73,7 +81,7 @@ func New(i do.Injector) (*Handler, error) {
 		authProvider: &AuthProviderHandler{svc: providerSvc},
 		captcha:      &CaptchaHandler{captchaSvc: captchaSvc, settingsSvc: settingsSvc},
 		user:         &UserHandler{userSvc: userSvc, connRepo: connRepo},
-		role:         &RoleHandler{roleSvc: roleSvc, casbinSvc: casbinSvc, menuSvc: menuSvc},
+		role:         &RoleHandler{roleSvc: roleSvc, casbinSvc: casbinSvc, menuSvc: menuSvc, roleRepo: roleRepo},
 		menu:         &MenuHandler{menuSvc: menuSvc},
 		task:         &TaskHandler{engine: engine},
 		session:      &SessionHandler{sessionSvc: sessionSvc},
@@ -88,6 +96,8 @@ func New(i do.Injector) (*Handler, error) {
 			authSvc:  authSvc,
 			stateMgr: identity.NewSSOStateManager(),
 		},
+		orgScopeResolver: orgResolver,
+		roleRepo:         roleRepo,
 	}, nil
 }
 
@@ -115,6 +125,7 @@ func (h *Handler) Register(r *gin.Engine, jwtSecret []byte, enforcer *casbin.Enf
 	authed.Use(middleware.JWTAuth(jwtSecret, blacklist))
 	authed.Use(middleware.PasswordExpiry(h.settingsSvc.GetPasswordExpiryDays))
 	authed.Use(middleware.CasbinAuth(enforcer))
+	authed.Use(middleware.DataScopeMiddleware(h.orgScopeResolver, h.roleRepo.GetScopeByCode))
 	authed.Use(middleware.Audit(h.auditSvc))
 	{
 		// Auth routes (whitelisted in CasbinAuth)
@@ -162,6 +173,7 @@ func (h *Handler) Register(r *gin.Engine, jwtSecret []byte, enforcer *casbin.Enf
 		authed.POST("/users/:id/activate", h.user.Activate)
 		authed.POST("/users/:id/deactivate", h.user.Deactivate)
 		authed.POST("/users/:id/unlock", h.user.Unlock)
+		authed.GET("/users/:id/manager-chain", h.user.GetManagerChain)
 
 		// Role management
 		authed.GET("/roles", h.role.List)
@@ -171,6 +183,7 @@ func (h *Handler) Register(r *gin.Engine, jwtSecret []byte, enforcer *casbin.Enf
 		authed.DELETE("/roles/:id", h.role.Delete)
 		authed.GET("/roles/:id/permissions", h.role.GetPermissions)
 		authed.PUT("/roles/:id/permissions", h.role.SetPermissions)
+		authed.PUT("/roles/:id/data-scope", h.role.UpdateDataScope)
 
 		// Menu management
 		authed.GET("/menus/tree", h.menu.GetTree)

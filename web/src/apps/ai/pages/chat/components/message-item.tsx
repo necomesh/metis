@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react"
+import { useState, useCallback, useMemo, useEffect } from "react"
 import { useTranslation } from "react-i18next"
 import { ChevronDown, ChevronRight, Wrench, Copy, Check, RotateCcw, ThumbsUp, ThumbsDown, Pencil, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -223,6 +223,15 @@ export function AIResponse({
 }) {
   const { t } = useTranslation(["ai"])
   const [copied, setCopied] = useState(false)
+  const [showMarkdown, setShowMarkdown] = useState(!isStreaming)
+
+  useEffect(() => {
+    if (!isStreaming) {
+      const timer = setTimeout(() => setShowMarkdown(true), 80)
+      return () => clearTimeout(timer)
+    }
+    setShowMarkdown(false)
+  }, [isStreaming])
 
   const handleCopy = useCallback(async () => {
     try {
@@ -255,10 +264,11 @@ export function AIResponse({
         <div className="text-xs font-medium text-muted-foreground mb-1.5">{agentName}</div>
       )}
       <div className="text-base leading-relaxed">
-        {content ? <MessageResponse>{content}</MessageResponse> : null}
-        {isStreaming && (
-          <span className="inline-block w-2 h-4 bg-foreground/40 ml-1 animate-pulse" />
-        )}
+        {!showMarkdown ? (
+          <div className="whitespace-pre-wrap">{content}</div>
+        ) : content ? (
+          <MessageResponse>{content}</MessageResponse>
+        ) : null}
       </div>
 
       {!isStreaming && content && (
@@ -389,7 +399,7 @@ export function QAPair({
         <AIResponse
           content={mainContent}
           agentName={agentName}
-          isStreaming={!!streamingContent && isStreaming}
+          isStreaming={isStreaming}
           onRegenerate={onRegenerate}
           doneMetrics={doneMetrics}
         />

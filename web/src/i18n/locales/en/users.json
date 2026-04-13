@@ -21,6 +21,10 @@
   "usernamePlaceholder": "Username",
   "passwordPlaceholder": "Password",
   "selectRole": "Select a role",
+  "manager": "Direct Manager",
+  "selectManager": "Select direct manager",
+  "noManager": "None",
+  "clearManager": "Clear manager",
   "validation": {
     "usernameRequired": "Username is required",
     "passwordRequired": "Password is required",

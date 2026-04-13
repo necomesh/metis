@@ -2,7 +2,7 @@ import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { Plus, Search, Shield, Pencil, Trash2, ShieldCheck } from "lucide-react"
+import { Plus, Search, Shield, Pencil, Trash2, ShieldCheck, Database } from "lucide-react"
 import { api } from "@/lib/api"
 import { usePermission } from "@/hooks/use-permission"
 import { useListPage } from "@/hooks/use-list-page"
@@ -43,6 +43,14 @@ import { formatDateTime } from "@/lib/utils"
 import { RoleSheet } from "./role-sheet"
 import { PermissionDialog } from "./permission-dialog"
 import type { Role } from "./types"
+
+const dataScopeBadgeVariant: Record<string, "default" | "secondary" | "outline"> = {
+  all: "secondary",
+  dept_and_sub: "outline",
+  dept: "outline",
+  self: "outline",
+  custom: "default",
+}
 
 export function Component() {
   const { t } = useTranslation(["roles", "common"])
@@ -114,16 +122,17 @@ export function Component() {
               <TableHead className="w-[180px]">{t("roles:roleCode")}</TableHead>
               <TableHead className="min-w-[220px]">{t("common:description")}</TableHead>
               <TableHead className="w-[100px]">{t("common:type")}</TableHead>
+              <TableHead className="w-[140px]">{t("roles:dataScope.label")}</TableHead>
               <TableHead className="w-[150px]">{t("common:createdAt")}</TableHead>
               <DataTableActionsHead className="min-w-[220px]">{t("common:actions")}</DataTableActionsHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <DataTableLoadingRow colSpan={7} />
+              <DataTableLoadingRow colSpan={8} />
             ) : roles.length === 0 ? (
               <DataTableEmptyRow
-                colSpan={7}
+                colSpan={8}
                 icon={ShieldCheck}
                 title={t("roles:emptyTitle")}
                 description={t("roles:emptyDescription")}
@@ -144,6 +153,12 @@ export function Component() {
                       {role.isSystem ? t("roles:builtIn") : t("roles:custom")}
                     </Badge>
                   </TableCell>
+                  <TableCell>
+                    <Badge variant={dataScopeBadgeVariant[role.dataScope] ?? "secondary"} className="gap-1 text-xs">
+                      <Database className="h-3 w-3" />
+                      {t(`roles:dataScope.${role.dataScope === "dept_and_sub" ? "deptAndSub" : role.dataScope}`)}
+                    </Badge>
+                  </TableCell>
                   <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                     {formatDateTime(role.createdAt)}
                   </TableCell>
@@ -154,8 +169,7 @@ export function Component() {
                           <Shield className="mr-1 h-3.5 w-3.5" />
                           {t("roles:permissions")}
                         </Button>
-                      )}
-                      {canUpdate && (
+                      )}                      {canUpdate && (
                         <Button variant="ghost" size="sm" className="px-2.5" onClick={() => handleEdit(role)}>
                           <Pencil className="mr-1 h-3.5 w-3.5" />
                           {t("common:edit")}

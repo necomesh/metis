@@ -103,7 +103,7 @@ func (h *UserHandler) Get(c *gin.Context) {
 		return
 	}
 
-	user, err := h.userSvc.GetByID(id)
+	user, err := h.userSvc.GetByIDWithManager(id)
 	if err != nil {
 		if errors.Is(err, service.ErrUserNotFound) {
 			Fail(c, http.StatusNotFound, "user not found")
@@ -117,13 +117,16 @@ func (h *UserHandler) Get(c *gin.Context) {
 }
 
 type updateUserReq struct {
-	Email    *string `json:"email"`
-	Phone    *string `json:"phone"`
-	Avatar   *string `json:"avatar"`
-	Locale   *string `json:"locale"`
-	Timezone *string `json:"timezone"`
-	RoleID   *uint   `json:"roleId"`
-	IsActive *bool   `json:"isActive"`
+	Email     *string `json:"email"`
+	Phone     *string `json:"phone"`
+	Avatar    *string `json:"avatar"`
+	Locale    *string `json:"locale"`
+	Timezone  *string `json:"timezone"`
+	RoleID    *uint   `json:"roleId"`
+	IsActive  *bool   `json:"isActive"`
+	ManagerID *uint   `json:"managerId"`
+	// ClearManager: when true and ManagerID is absent, sets managerID to null
+	ClearManager *bool `json:"clearManager"`
 }
 
 func (h *UserHandler) Update(c *gin.Context) {
@@ -139,14 +142,35 @@ func (h *UserHandler) Update(c *gin.Context) {
 	}
 
 	currentUserID := c.GetUint("userId")
+
+	if req.ClearManager != nil && *req.ClearManager {
+		user, err := h.userSvc.ClearManager(id)
+		if err != nil {
+			switch {
+			case errors.Is(err, service.ErrUserNotFound):
+				Fail(c, http.StatusNotFound, err.Error())
+			default:
+				Fail(c, http.StatusInternalServerError, err.Error())
+			}
+			return
+		}
+		c.Set("audit_action", "user.update")
+		c.Set("audit_resource", "user")
+		c.Set("audit_resource_id", strconv.FormatUint(uint64(id), 10))
+		c.Set("audit_summary", "更新用户")
+		OK(c, user.ToResponse())
+		return
+	}
+
 	user, err := h.userSvc.Update(id, currentUserID, service.UpdateUserParams{
-		Email:    req.Email,
-		Phone:    req.Phone,
-		Avatar:   req.Avatar,
-		Locale:   req.Locale,
-		Timezone: req.Timezone,
-		RoleID:   req.RoleID,
-		IsActive: req.IsActive,
+		Email:     req.Email,
+		Phone:     req.Phone,
+		Avatar:    req.Avatar,
+		Locale:    req.Locale,
+		Timezone:  req.Timezone,
+		RoleID:    req.RoleID,
+		IsActive:  req.IsActive,
+		ManagerID: req.ManagerID,
 	})
 	if err != nil {
 		switch {
@@ -305,4 +329,28 @@ func parseIDParam(c *gin.Context) (uint, error) {
 		return 0, err
 	}
 	return uint(id), nil
+}
+
+// GetManagerChain returns the ordered manager chain from direct manager up to root.
+func (h *UserHandler) GetManagerChain(c *gin.Context) {
+	id, err := parseIDParam(c)
+	if err != nil {
+		return
+	}
+
+	chain, err := h.userSvc.GetManagerChain(id)
+	if err != nil {
+		if errors.Is(err, service.ErrUserNotFound) {
+			Fail(c, http.StatusNotFound, "user not found")
+			return
+		}
+		Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	items := make([]model.UserResponse, len(chain))
+	for i, u := range chain {
+		items[i] = u.ToResponse()
+	}
+	OK(c, items)
 }

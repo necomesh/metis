@@ -8,17 +8,23 @@ import (
 )
 
 var (
-	ErrAssignmentNotFound    = errors.New("assignment not found")
-	ErrAlreadyAssigned       = errors.New("user already assigned to this department")
+	ErrAssignmentNotFound = errors.New("assignment not found")
+	ErrAlreadyAssigned    = errors.New("user already assigned to this department")
+	ErrDepartmentInactive = errors.New("department is inactive")
+	ErrPositionInactive   = errors.New("position is inactive")
 )
 
 type AssignmentService struct {
-	repo *AssignmentRepo
+	repo     *AssignmentRepo
+	deptRepo *DepartmentRepo
+	posRepo  *PositionRepo
 }
 
 func NewAssignmentService(i do.Injector) (*AssignmentService, error) {
 	repo := do.MustInvoke[*AssignmentRepo](i)
-	return &AssignmentService{repo: repo}, nil
+	deptRepo := do.MustInvoke[*DepartmentRepo](i)
+	posRepo := do.MustInvoke[*PositionRepo](i)
+	return &AssignmentService{repo: repo, deptRepo: deptRepo, posRepo: posRepo}, nil
 }
 
 func (s *AssignmentService) GetUserPositions(userID uint) ([]UserPositionResponse, error) {
@@ -50,6 +56,30 @@ func (s *AssignmentService) GetUserPositions(userID uint) ([]UserPositionRespons
 }
 
 func (s *AssignmentService) AddUserPosition(userID, deptID, posID uint, isPrimary bool) (*UserPosition, error) {
+	// Validate department exists and is active
+	dept, err := s.deptRepo.FindByID(deptID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrDepartmentNotFound
+		}
+		return nil, err
+	}
+	if !dept.IsActive {
+		return nil, ErrDepartmentInactive
+	}
+
+	// Validate position exists and is active
+	pos, err := s.posRepo.FindByID(posID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrPositionNotFound
+		}
+		return nil, err
+	}
+	if !pos.IsActive {
+		return nil, ErrPositionInactive
+	}
+
 	exists, err := s.repo.ExistsByUserAndDept(userID, deptID)
 	if err != nil {
 		return nil, err
@@ -58,34 +88,23 @@ func (s *AssignmentService) AddUserPosition(userID, deptID, posID uint, isPrimar
 		return nil, ErrAlreadyAssigned
 	}
 
-	// If setting as primary, demote existing primary
-	if isPrimary {
-		_ = s.demoteCurrentPrimary(userID)
-	} else {
-		// Auto-set primary if this is the first assignment
-		existing, err := s.repo.FindByUserID(userID)
-		if err != nil {
-			return nil, err
-		}
-		if len(existing) == 0 {
-			isPrimary = true
-		}
-	}
-
 	up := &UserPosition{
 		UserID:       userID,
 		DepartmentID: deptID,
 		PositionID:   posID,
-		IsPrimary:    isPrimary,
 	}
-	if err := s.repo.AddPosition(up); err != nil {
+	if err := s.repo.AddPositionWithPrimary(up, isPrimary, !isPrimary); err != nil {
 		return nil, err
 	}
 	return s.repo.FindByID(up.ID)
 }
 
 func (s *AssignmentService) RemoveUserPosition(userID, assignmentID uint) error {
-	return s.repo.RemovePosition(assignmentID, userID)
+	err := s.repo.RemovePosition(assignmentID, userID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return ErrAssignmentNotFound
+	}
+	return err
 }
 
 func (s *AssignmentService) UpdateUserPosition(userID, assignmentID uint, positionID *uint, isPrimary *bool) error {
@@ -93,35 +112,27 @@ func (s *AssignmentService) UpdateUserPosition(userID, assignmentID uint, positi
 	if positionID != nil {
 		fields["position_id"] = *positionID
 	}
-	if isPrimary != nil && *isPrimary {
-		// Demote current primary first, then set this one
-		_ = s.demoteCurrentPrimary(userID)
-		fields["is_primary"] = true
-	}
-	if len(fields) == 0 {
+	setPrimary := isPrimary != nil && *isPrimary
+	if len(fields) == 0 && !setPrimary {
 		return nil
 	}
-	err := s.repo.UpdatePosition(assignmentID, userID, fields)
+	err := s.repo.UpdatePositionWithPrimary(assignmentID, userID, fields, setPrimary)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return ErrAssignmentNotFound
 	}
 	return err
 }
 
-func (s *AssignmentService) demoteCurrentPrimary(userID uint) error {
-	primary, err := s.repo.GetUserPrimaryPosition(userID)
-	if err != nil {
-		return err // no primary exists, that's fine
+func (s *AssignmentService) SetPrimary(userID uint, assignmentID uint) error {
+	err := s.repo.SetPrimary(userID, assignmentID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return ErrAssignmentNotFound
 	}
-	return s.repo.UpdatePosition(primary.ID, userID, map[string]any{"is_primary": false})
+	return err
 }
 
 func (s *AssignmentService) ListDepartmentMembers(deptID uint, keyword string, page, pageSize int) ([]AssignmentItem, int64, error) {
 	return s.repo.ListUsersByDepartment(deptID, keyword, page, pageSize)
-}
-
-func (s *AssignmentService) SetPrimary(userID uint, assignmentID uint) error {
-	return s.repo.SetPrimary(userID, assignmentID)
 }
 
 // Scope helpers for future data permission isolation
@@ -139,24 +150,36 @@ func (s *AssignmentService) GetUserDepartmentScope(userID uint) ([]uint, error) 
 		return nil, nil
 	}
 
+	// Single query: load all active departments' (id, parent_id)
+	allDepts, err := s.deptRepo.ListAllIDsWithParent(true)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build parent → children map in memory
+	children := make(map[uint][]uint)
+	for _, d := range allDepts {
+		pid := uint(0)
+		if d.ParentID != nil {
+			pid = *d.ParentID
+		}
+		children[pid] = append(children[pid], d.ID)
+	}
+
+	// BFS in memory
 	scope := make(map[uint]struct{})
+	queue := make([]uint, len(deptIDs))
+	copy(queue, deptIDs)
 	for _, id := range deptIDs {
 		scope[id] = struct{}{}
 	}
-
-	// BFS to collect all active sub-departments
-	queue := make([]uint, len(deptIDs))
-	copy(queue, deptIDs)
 	for len(queue) > 0 {
-		subIDs, err := s.repo.GetSubDepartmentIDs(queue, true)
-		if err != nil {
-			return nil, err
-		}
-		queue = queue[:0]
-		for _, sid := range subIDs {
-			if _, ok := scope[sid]; !ok {
-				scope[sid] = struct{}{}
-				queue = append(queue, sid)
+		current := queue[0]
+		queue = queue[1:]
+		for _, childID := range children[current] {
+			if _, ok := scope[childID]; !ok {
+				scope[childID] = struct{}{}
+				queue = append(queue, childID)
 			}
 		}
 	}

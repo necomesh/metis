@@ -245,8 +245,8 @@ func (h *InstallHandler) Execute(c *gin.Context) {
 	// 8. Register IOC providers (needed for UserService and hot switch)
 	do.OverrideValue(h.injector, cfg)
 	do.OverrideValue(h.injector, db)
-	do.Provide(h.injector, repository.NewSysConfig)
-	do.Provide(h.injector, service.NewSysConfig)
+	do.Override(h.injector, repository.NewSysConfig)
+	do.Override(h.injector, service.NewSysConfig)
 	h.overrideProviders(h.injector)
 
 	// 9. Create admin user via UserService

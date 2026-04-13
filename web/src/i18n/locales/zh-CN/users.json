@@ -21,6 +21,10 @@
   "usernamePlaceholder": "用户名",
   "passwordPlaceholder": "密码",
   "selectRole": "请选择角色",
+  "manager": "直属上级",
+  "selectManager": "请选择直属上级",
+  "noManager": "无",
+  "clearManager": "清除上级",
   "validation": {
     "usernameRequired": "用户名不能为空",
     "passwordRequired": "密码不能为空",
