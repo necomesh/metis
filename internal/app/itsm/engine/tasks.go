@@ -102,3 +102,39 @@ func HandleWaitTimer(db *gorm.DB, classicEngine *ClassicEngine) func(ctx context
 		})
 	}
 }
+
+// SmartProgressPayload is the async task payload for itsm-smart-progress.
+type SmartProgressPayload struct {
+	TicketID            uint  `json:"ticket_id"`
+	CompletedActivityID *uint `json:"completed_activity_id"`
+}
+
+// HandleSmartProgress is the scheduler task handler for itsm-smart-progress.
+// It runs the AI decision cycle for smart engine tickets.
+func HandleSmartProgress(db *gorm.DB, smartEngine *SmartEngine) func(ctx context.Context, payload json.RawMessage) error {
+	return func(ctx context.Context, payload json.RawMessage) error {
+		var p SmartProgressPayload
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return fmt.Errorf("invalid payload: %w", err)
+		}
+
+		slog.Info("smart-progress: running decision cycle", "ticketID", p.TicketID, "completedActivityID", p.CompletedActivityID)
+
+		err := db.Transaction(func(tx *gorm.DB) error {
+			return smartEngine.RunDecisionCycleForTicket(ctx, tx, p.TicketID, p.CompletedActivityID)
+		})
+
+		if err != nil {
+			// Decision failures are handled internally (failure count incremented),
+			// so we log but don't propagate to avoid retries of already-handled failures.
+			if err == ErrAIDecisionFailed || err == ErrAIDisabled {
+				slog.Warn("smart-progress: decision cycle ended with handled error", "error", err, "ticketID", p.TicketID)
+				return nil
+			}
+			slog.Error("smart-progress: decision cycle failed", "error", err, "ticketID", p.TicketID)
+			return err
+		}
+
+		return nil
+	}
+}

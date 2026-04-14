@@ -55,10 +55,21 @@ export interface ServiceDefItem {
   engineType: string
   slaId: number | null
   formSchema: unknown
+  workflowJson: unknown
+  collaborationSpec: string
+  agentId: number | null
+  knowledgeBaseIds: number[] | null
+  agentConfig: SmartAgentConfig | null
   isActive: boolean
   sortOrder: number
   createdAt: string
   updatedAt: string
+}
+
+export interface SmartAgentConfig {
+  confidence_threshold: number
+  decision_timeout_seconds: number
+  fallback_strategy: string
 }
 
 export interface ServiceDefListParams {
@@ -296,8 +307,10 @@ export interface TicketItem {
   requesterName: string
   assigneeId: number | null
   assigneeName: string
+  currentActivityId: number | null
   source: string
   formData: unknown
+  workflowJson: unknown
   slaStatus: string
   slaResponseDeadline: string | null
   slaResolutionDeadline: string | null
@@ -421,6 +434,41 @@ export function fetchTicketTimeline(ticketId: number) {
   return api.get<TimelineItem[]>(`/api/v1/itsm/tickets/${ticketId}/timeline`).then((r) => r ?? [])
 }
 
+// ─── Ticket Activities (Classic Engine) ─────────────────
+
+export interface ActivityItem {
+  id: number
+  ticketId: number
+  name: string
+  activityType: string
+  status: string
+  nodeId: string
+  executionMode: string
+  sequenceOrder: number
+  formSchema: unknown
+  formData: unknown
+  transitionOutcome: string
+  aiDecision: string | null
+  aiReasoning: string | null
+  confidence: number | null
+  overriddenBy: number | null
+  startedAt: string | null
+  finishedAt: string | null
+  createdAt: string
+}
+
+export function fetchTicketActivities(ticketId: number) {
+  return api.get<ActivityItem[]>(`/api/v1/itsm/tickets/${ticketId}/activities`).then((r) => r ?? [])
+}
+
+export function progressTicket(ticketId: number, data: { activityId: number; outcome: string; result?: unknown }) {
+  return api.post<TicketItem>(`/api/v1/itsm/tickets/${ticketId}/progress`, data)
+}
+
+export function signalTicket(ticketId: number, data: { activityId: number; outcome: string; data?: unknown }) {
+  return api.post<TicketItem>(`/api/v1/itsm/tickets/${ticketId}/signal`, data)
+}
+
 // ─── Users (kernel API) ────────────────────────────────
 
 export interface SimpleUser {
@@ -434,4 +482,51 @@ export function fetchUsers(keyword?: string) {
   const p = new URLSearchParams({ page: "1", pageSize: "50" })
   if (keyword) p.set("keyword", keyword)
   return api.get<{ items: SimpleUser[] }>(`/api/v1/users?${p}`).then((r) => r.items)
+}
+
+// ─── Smart Engine Override APIs ────────────────────────
+
+export function confirmActivity(ticketId: number, activityId: number) {
+  return api.post(`/api/v1/itsm/tickets/${ticketId}/activities/${activityId}/confirm`, {})
+}
+
+export function rejectActivity(ticketId: number, activityId: number, reason: string) {
+  return api.post(`/api/v1/itsm/tickets/${ticketId}/activities/${activityId}/reject`, { reason })
+}
+
+export function overrideJump(ticketId: number, data: { activityType: string; assigneeId?: number; reason: string }) {
+  return api.post(`/api/v1/itsm/tickets/${ticketId}/override/jump`, data)
+}
+
+export function overrideReassign(ticketId: number, data: { activityId: number; newAssigneeId: number; reason: string }) {
+  return api.post(`/api/v1/itsm/tickets/${ticketId}/override/reassign`, data)
+}
+
+export function retryAI(ticketId: number) {
+  return api.post(`/api/v1/itsm/tickets/${ticketId}/override/retry-ai`, {})
+}
+
+// ─── AI App APIs (for smart engine config) ─────────────
+
+export interface AgentItem {
+  id: number
+  name: string
+  description: string
+  type: string
+  visibility: string
+  isActive: boolean
+}
+
+export function fetchAgents() {
+  return api.get<{ items: AgentItem[] }>("/api/v1/ai/agents?page=1&pageSize=100").then((r) => r?.items ?? [])
+}
+
+export interface KnowledgeBaseItem {
+  id: number
+  name: string
+  description: string
+}
+
+export function fetchKnowledgeBases() {
+  return api.get<{ items: KnowledgeBaseItem[] }>("/api/v1/ai/knowledge-bases?page=1&pageSize=100").then((r) => r?.items ?? [])
 }

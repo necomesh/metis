@@ -6,6 +6,7 @@ import (
 	"github.com/casbin/casbin/v2"
 	"gorm.io/gorm"
 
+	"metis/internal/app/itsm/tools"
 	"metis/internal/model"
 )
 
@@ -19,7 +20,13 @@ func seedITSM(db *gorm.DB, enforcer *casbin.Enforcer) error {
 	if err := seedPriorities(db); err != nil {
 		return err
 	}
-	return seedSLATemplates(db)
+	if err := seedSLATemplates(db); err != nil {
+		return err
+	}
+	if err := tools.SeedTools(db); err != nil {
+		return err
+	}
+	return tools.SeedAgents(db)
 }
 
 func seedMenus(db *gorm.DB) error {
@@ -193,6 +200,12 @@ func seedPolicies(enforcer *casbin.Enforcer) error {
 		{"admin", "/api/v1/itsm/tickets/:id/progress", "POST"},
 		{"admin", "/api/v1/itsm/tickets/:id/signal", "POST"},
 		{"admin", "/api/v1/itsm/tickets/:id/activities", "GET"},
+		// Smart engine override routes
+		{"admin", "/api/v1/itsm/tickets/:id/activities/:aid/confirm", "POST"},
+		{"admin", "/api/v1/itsm/tickets/:id/activities/:aid/reject", "POST"},
+		{"admin", "/api/v1/itsm/tickets/:id/override/jump", "POST"},
+		{"admin", "/api/v1/itsm/tickets/:id/override/reassign", "POST"},
+		{"admin", "/api/v1/itsm/tickets/:id/override/retry-ai", "POST"},
 	}
 
 	menuPerms := [][]string{

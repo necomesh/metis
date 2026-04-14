@@ -91,8 +91,26 @@ const MaxAutoDepth = 50
 
 // Activity status constants
 const (
-	ActivityPending    = "pending"
-	ActivityInProgress = "in_progress"
-	ActivityCompleted  = "completed"
-	ActivityCancelled  = "cancelled"
+	ActivityPending         = "pending"
+	ActivityPendingApproval = "pending_approval" // smart engine: low-confidence AI decision awaiting human confirmation
+	ActivityInProgress      = "in_progress"
+	ActivityCompleted       = "completed"
+	ActivityCancelled       = "cancelled"
+	ActivityRejected        = "rejected" // smart engine: AI decision rejected by human
+)
+
+// Smart engine errors
+var (
+	ErrSmartEngineUnavailable = errors.New("智能引擎不可用：AI 模块未安装")
+	ErrAIDecisionFailed       = errors.New("AI 决策失败")
+	ErrAIDecisionTimeout      = errors.New("AI 决策超时")
+	ErrAIDisabled             = errors.New("AI 决策已停用（连续失败次数过多）")
+	ErrInvalidDecisionPlan    = errors.New("AI 决策计划校验不通过")
+)
+
+// Smart engine defaults
+const (
+	DefaultConfidenceThreshold    = 0.8
+	DefaultDecisionTimeoutSeconds = 30
+	MaxAIFailureCount             = 3
 )

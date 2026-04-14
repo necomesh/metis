@@ -7,7 +7,7 @@ import { z } from "zod"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router"
-import { Plus, Search, Pencil, Trash2, Cog, Zap } from "lucide-react"
+import { Plus, Search, Pencil, Trash2, Cog, Zap, GitBranch } from "lucide-react"
 import { usePermission } from "@/hooks/use-permission"
 import { useListPage } from "@/hooks/use-list-page"
 import { toast } from "sonner"
@@ -38,10 +38,11 @@ import {
   Form, FormControl, FormField, FormItem, FormLabel, FormMessage,
 } from "@/components/ui/form"
 import {
-  type ServiceDefItem, type CatalogItem,
+  type ServiceDefItem, type CatalogItem, type SmartAgentConfig,
   fetchCatalogTree, fetchSLATemplates,
   createServiceDef, updateServiceDef, deleteServiceDef,
 } from "../../api"
+import { SmartServiceConfig } from "../../components/smart-service-config"
 
 function useServiceSchema() {
   const { t } = useTranslation("itsm")
@@ -53,6 +54,11 @@ function useServiceSchema() {
     slaId: z.number().nullable(),
     description: z.string().optional(),
     sortOrder: z.number().default(0),
+    collaborationSpec: z.string().default(""),
+    agentId: z.number().nullable().default(null),
+    knowledgeBaseIds: z.array(z.number()).default([]),
+    confidenceThreshold: z.number().default(0.8),
+    decisionTimeout: z.number().default(30),
   })
 }
 
@@ -110,27 +116,62 @@ export function Component() {
   const form = useForm<FormValues>({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     resolver: zodResolver(schema as any),
-    defaultValues: { name: "", code: "", catalogId: 0, engineType: "classic", slaId: null, description: "", sortOrder: 0 },
+    defaultValues: { name: "", code: "", catalogId: 0, engineType: "classic", slaId: null, description: "", sortOrder: 0, collaborationSpec: "", agentId: null, knowledgeBaseIds: [], confidenceThreshold: 0.8, decisionTimeout: 30 },
   })
 
   useEffect(() => {
     if (formOpen) {
       if (editing) {
-        form.reset({ name: editing.name, code: editing.code, catalogId: editing.catalogId, engineType: editing.engineType, slaId: editing.slaId, description: editing.description, sortOrder: editing.sortOrder })
+        const agentCfg = editing.agentConfig as SmartAgentConfig | null
+        form.reset({
+          name: editing.name, code: editing.code, catalogId: editing.catalogId,
+          engineType: editing.engineType, slaId: editing.slaId, description: editing.description,
+          sortOrder: editing.sortOrder,
+          collaborationSpec: editing.collaborationSpec ?? "",
+          agentId: editing.agentId ?? null,
+          knowledgeBaseIds: editing.knowledgeBaseIds ?? [],
+          confidenceThreshold: agentCfg?.confidence_threshold ?? 0.8,
+          decisionTimeout: agentCfg?.decision_timeout_seconds ?? 30,
+        })
       } else {
-        form.reset({ name: "", code: "", catalogId: flatCatalogs[0]?.id ?? 0, engineType: "classic", slaId: null, description: "", sortOrder: 0 })
+        form.reset({
+          name: "", code: "", catalogId: flatCatalogs[0]?.id ?? 0, engineType: "classic",
+          slaId: null, description: "", sortOrder: 0,
+          collaborationSpec: "", agentId: null, knowledgeBaseIds: [],
+          confidenceThreshold: 0.8, decisionTimeout: 30,
+        })
       }
     }
   }, [formOpen, editing, form, flatCatalogs])
 
   const createMut = useMutation({
-    mutationFn: (v: FormValues) => createServiceDef({ ...v, description: v.description ?? "" }),
+    mutationFn: (v: FormValues) => createServiceDef({
+      ...v,
+      description: v.description ?? "",
+      collaborationSpec: v.engineType === "smart" ? v.collaborationSpec : undefined,
+      agentId: v.engineType === "smart" ? v.agentId : undefined,
+      knowledgeBaseIds: v.engineType === "smart" ? v.knowledgeBaseIds : undefined,
+      agentConfig: v.engineType === "smart" ? JSON.stringify({
+        confidence_threshold: v.confidenceThreshold,
+        decision_timeout_seconds: v.decisionTimeout,
+      }) : undefined,
+    } as Parameters<typeof createServiceDef>[0]),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["itsm-services"] }); setFormOpen(false); toast.success(t("itsm:services.createSuccess")) },
     onError: (err) => toast.error(err.message),
   })
 
   const updateMut = useMutation({
-    mutationFn: (v: FormValues) => updateServiceDef(editing!.id, { ...v, description: v.description ?? "" }),
+    mutationFn: (v: FormValues) => updateServiceDef(editing!.id, {
+      ...v,
+      description: v.description ?? "",
+      collaborationSpec: v.engineType === "smart" ? v.collaborationSpec : undefined,
+      agentId: v.engineType === "smart" ? v.agentId : undefined,
+      knowledgeBaseIds: v.engineType === "smart" ? v.knowledgeBaseIds : undefined,
+      agentConfig: v.engineType === "smart" ? JSON.stringify({
+        confidence_threshold: v.confidenceThreshold,
+        decision_timeout_seconds: v.decisionTimeout,
+      }) : undefined,
+    } as Partial<ServiceDefItem>),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["itsm-services"] }); setFormOpen(false); toast.success(t("itsm:services.updateSuccess")) },
     onError: (err) => toast.error(err.message),
   })
@@ -209,6 +250,11 @@ export function Component() {
                   </TableCell>
                   <DataTableActionsCell>
                     <DataTableActions>
+                      {canUpdate && item.engineType === "classic" && (
+                        <Button variant="ghost" size="sm" className="px-2.5" onClick={() => navigate(`/itsm/services/${item.id}/workflow`)}>
+                          <GitBranch className="mr-1 h-3.5 w-3.5" />{t("itsm:services.workflow")}
+                        </Button>
+                      )}
                       {canUpdate && (
                         <Button variant="ghost" size="sm" className="px-2.5" onClick={() => navigate(`/itsm/services/${item.id}/actions`)}>
                           <Zap className="mr-1 h-3.5 w-3.5" />{t("itsm:services.actions")}
@@ -320,6 +366,20 @@ export function Component() {
                   <FormMessage />
                 </FormItem>
               )} />
+              {form.watch("engineType") === "smart" && (
+                <SmartServiceConfig
+                  collaborationSpec={form.watch("collaborationSpec")}
+                  onCollaborationSpecChange={(v) => form.setValue("collaborationSpec", v)}
+                  agentId={form.watch("agentId")}
+                  onAgentIdChange={(v) => form.setValue("agentId", v)}
+                  knowledgeBaseIds={form.watch("knowledgeBaseIds")}
+                  onKnowledgeBaseIdsChange={(v) => form.setValue("knowledgeBaseIds", v)}
+                  confidenceThreshold={form.watch("confidenceThreshold")}
+                  onConfidenceThresholdChange={(v) => form.setValue("confidenceThreshold", v)}
+                  decisionTimeout={form.watch("decisionTimeout")}
+                  onDecisionTimeoutChange={(v) => form.setValue("decisionTimeout", v)}
+                />
+              )}
               <SheetFooter>
                 <Button type="submit" size="sm" disabled={isPending}>
                   {isPending ? t("common:saving") : editing ? t("common:save") : t("common:create")}

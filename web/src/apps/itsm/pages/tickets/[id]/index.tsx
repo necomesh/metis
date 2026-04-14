@@ -31,8 +31,13 @@ import {
 } from "@/components/ui/form"
 import { usePermission } from "@/hooks/use-permission"
 import {
-  fetchTicket, fetchTicketTimeline, assignTicket, completeTicket, cancelTicket, fetchUsers,
+  fetchTicket, fetchTicketTimeline, fetchTicketActivities,
+  assignTicket, completeTicket, cancelTicket, progressTicket, fetchUsers,
 } from "../../../api"
+import { WorkflowViewer } from "../../../components/workflow"
+import { AIDecisionPanel } from "../../../components/ai-decision-panel"
+import { OverrideActions } from "../../../components/override-actions"
+import { SmartFlowVisualization } from "../../../components/smart-flow-visualization"
 
 const STATUS_MAP: Record<string, { variant: "default" | "secondary" | "destructive" | "outline"; key: string }> = {
   pending: { variant: "secondary", key: "statusPending" },
@@ -66,6 +71,15 @@ function useCancelSchema() {
 
 const ACTIVE_STATUSES = new Set(["pending", "in_progress", "waiting_approval", "waiting_action"])
 
+function getNodeOutcomes(activityType: string): string[] {
+  switch (activityType) {
+    case "form": return ["submitted"]
+    case "approve": return ["approved", "rejected"]
+    case "process": return ["completed"]
+    default: return ["completed"]
+  }
+}
+
 export function Component() {
   const { t } = useTranslation(["itsm", "common"])
   const { id } = useParams<{ id: string }>()
@@ -91,6 +105,12 @@ export function Component() {
   const { data: timeline = [] } = useQuery({
     queryKey: ["itsm-ticket-timeline", ticketId],
     queryFn: () => fetchTicketTimeline(ticketId),
+    enabled: ticketId > 0,
+  })
+
+  const { data: activities = [] } = useQuery({
+    queryKey: ["itsm-ticket-activities", ticketId],
+    queryFn: () => fetchTicketActivities(ticketId),
     enabled: ticketId > 0,
   })
 
@@ -138,8 +158,20 @@ export function Component() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["itsm-ticket", ticketId] })
       queryClient.invalidateQueries({ queryKey: ["itsm-ticket-timeline", ticketId] })
+      queryClient.invalidateQueries({ queryKey: ["itsm-ticket-activities", ticketId] })
       setCancelOpen(false)
       toast.success(t("itsm:tickets.cancelSuccess"))
+    },
+    onError: (err) => toast.error(err.message),
+  })
+
+  const progressMut = useMutation({
+    mutationFn: (data: { activityId: number; outcome: string }) => progressTicket(ticketId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["itsm-ticket", ticketId] })
+      queryClient.invalidateQueries({ queryKey: ["itsm-ticket-timeline", ticketId] })
+      queryClient.invalidateQueries({ queryKey: ["itsm-ticket-activities", ticketId] })
+      toast.success(t("itsm:tickets.progressSuccess"))
     },
     onError: (err) => toast.error(err.message),
   })
@@ -182,6 +214,9 @@ export function Component() {
               <Button variant="outline" size="sm" onClick={() => { assignForm.reset({ assigneeId: ticket.assigneeId ?? 0 }); setAssignOpen(true) }}>
                 <UserPlus className="mr-1 h-3.5 w-3.5" />{t("itsm:tickets.assign")}
               </Button>
+            )}
+            {ticket.engineType === "smart" && (
+              <OverrideActions ticketId={ticketId} currentActivityId={ticket.currentActivityId} />
             )}
             {canComplete && (
               <AlertDialog>
@@ -287,6 +322,53 @@ export function Component() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Smart Engine: Flow Visualization */}
+      {ticket.engineType === "smart" && activities.length > 0 && (
+        <SmartFlowVisualization activities={activities} currentActivityId={ticket.currentActivityId} />
+      )}
+
+      {/* Smart Engine: AI Decision Panel */}
+      {ticket.engineType === "smart" && activities.filter((a) => a.status === "pending_approval" || (a.aiDecision && a.status === "in_progress")).map((a) => (
+        <AIDecisionPanel key={a.id} ticketId={ticketId} activity={a} />
+      ))}
+
+      {/* Workflow Viewer (classic engine only) */}
+      {ticket.engineType === "classic" && ticket.workflowJson && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">{t("itsm:workflow.viewer.workflowGraph")}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <WorkflowViewer
+              workflowJson={ticket.workflowJson}
+              activities={activities}
+              currentActivityId={ticket.currentActivityId}
+            />
+            {/* Activity action buttons */}
+            {isActive && activities.filter((a) => a.status === "pending" || a.status === "in_progress").length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2 border-t pt-3">
+                {activities
+                  .filter((a) => a.status === "pending" || a.status === "in_progress")
+                  .map((a) => {
+                    const outcomes = getNodeOutcomes(a.activityType)
+                    return outcomes.map((outcome) => (
+                      <Button
+                        key={`${a.id}-${outcome}`}
+                        size="sm"
+                        variant={outcome === "rejected" || outcome === "failed" ? "destructive" : "default"}
+                        disabled={progressMut.isPending}
+                        onClick={() => progressMut.mutate({ activityId: a.id, outcome })}
+                      >
+                        {a.name}: {outcome}
+                      </Button>
+                    ))
+                  })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

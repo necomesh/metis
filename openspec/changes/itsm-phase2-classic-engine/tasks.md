@@ -47,21 +47,21 @@
 
 ## 7. 前端：ReactFlow 编辑器
 
-- [ ] 7.1 安装 @xyflow/react 依赖 — `bun add @xyflow/react`
-- [ ] 7.2 编辑器画布组件 — ReactFlow 实例 + 缩放/平移/拖拽 + minimap + 左侧节点面板（9 种节点可拖拽）
-- [ ] 7.3 自定义节点组件 — 为每种节点类型创建 React 组件（不同颜色/图标/形状），显示名称和简要配置
-- [ ] 7.4 节点属性面板 — 右侧面板按节点类型显示配置项（form: Schema+参与人 / approve: 模式+参与人 / action: ServiceAction 选择 / gateway: 条件列表 / notify: 渠道+模板 / wait: 模式+时长）
-- [ ] 7.5 边属性配置 — 点击边显示：outcome 输入、默认边开关、网关条件配置（source 为 gateway 时）
-- [ ] 7.6 保存/加载 + 校验提示 — 序列化 JSON 调用后端 API 保存，校验失败时显示错误并高亮有问题的节点/边；打开时从 workflow_json 恢复画布
-- [ ] 7.7 集成到服务定义编辑 — engine_type="classic" 时在服务定义编辑 Sheet 中嵌入编辑器（全屏或大面板模式）
-- [ ] 7.8 i18n — 编辑器所有文本（节点类型名、属性标签、按钮文案）加入 itsm 的 zh-CN.json 和 en.json
+- [x] 7.1 安装 @xyflow/react 依赖 — `bun add @xyflow/react`
+- [x] 7.2 编辑器画布组件 — ReactFlow 实例 + 缩放/平移/拖拽 + minimap + 左侧节点面板（9 种节点可拖拽）
+- [x] 7.3 自定义节点组件 — 为每种节点类型创建 React 组件（不同颜色/图标/形状），显示名称和简要配置
+- [x] 7.4 节点属性面板 — 右侧面板按节点类型显示配置项（form: Schema+参与人 / approve: 模式+参与人 / action: ServiceAction 选择 / gateway: 条件列表 / notify: 渠道+模板 / wait: 模式+时长）
+- [x] 7.5 边属性配置 — 点击边显示：outcome 输入、默认边开关、网关条件配置（source 为 gateway 时）
+- [x] 7.6 保存/加载 + 校验提示 — 序列化 JSON 调用后端 API 保存，校验失败时显示错误并高亮有问题的节点/边；打开时从 workflow_json 恢复画布
+- [x] 7.7 集成到服务定义编辑 — engine_type="classic" 时在服务定义编辑 Sheet 中嵌入编辑器（全屏或大面板模式）
+- [x] 7.8 i18n — 编辑器所有文本（节点类型名、属性标签、按钮文案）加入 itsm 的 zh-CN.json 和 en.json
 
 ## 8. 前端：流程可视化
 
-- [ ] 8.1 只读流程图组件 — ReactFlow 只读模式，从工单快照 workflow_json 渲染
-- [ ] 8.2 状态高亮渲染 — 当前活跃节点高亮、已完成节点绿色、已走过的边加粗、未到达灰色
-- [ ] 8.3 节点点击查看 Activity 详情 — 点击已完成节点弹出 Popover 显示处理人、时间、结果
-- [ ] 8.4 集成到工单详情页 + 流转操作面板 — 嵌入只读流程图（仅 engine_type="classic"），当前处理人显示操作按钮（审批通过/驳回、表单提交、处理完成）
+- [x] 8.1 只读流程图组件 — ReactFlow 只读模式，从工单快照 workflow_json 渲染
+- [x] 8.2 状态高亮渲染 — 当前活跃节点高亮、已完成节点绿色、已走过的边加粗、未到达灰色
+- [x] 8.3 节点点击查看 Activity 详情 — 点击已完成节点弹出 Popover 显示处理人、时间、结果
+- [x] 8.4 集成到工单详情页 + 流转操作面板 — 嵌入只读流程图（仅 engine_type="classic"），当前处理人显示操作按钮（审批通过/驳回、表单提交、处理完成）
 
 ## 9. 集成验证
 

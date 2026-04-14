@@ -582,12 +582,18 @@ func parseDuration(s string) time.Duration {
 type ticketModel struct {
 	ID                    uint       `gorm:"primaryKey"`
 	Status                string     `gorm:"column:status"`
+	EngineType            string     `gorm:"column:engine_type"`
 	WorkflowJSON          string     `gorm:"column:workflow_json;type:text"`
 	CurrentActivityID     *uint      `gorm:"column:current_activity_id"`
 	FinishedAt            *time.Time `gorm:"column:finished_at"`
 	RequesterID           uint       `gorm:"column:requester_id"`
 	PriorityID            uint       `gorm:"column:priority_id"`
 	FormData              string     `gorm:"column:form_data;type:text"`
+	AIFailureCount        int        `gorm:"column:ai_failure_count;default:0"`
+	CollaborationSpec     string     `gorm:"column:collaboration_spec;type:text"`  // via service join
+	AgentID               *uint      `gorm:"column:agent_id"`                      // via service join
+	KnowledgeBaseIDs      string     `gorm:"column:knowledge_base_ids;type:text"`  // via service join
+	AgentConfig           string     `gorm:"column:agent_config;type:text"`        // via service join
 }
 
 func (ticketModel) TableName() string { return "itsm_tickets" }
@@ -603,6 +609,11 @@ type activityModel struct {
 	FormSchema        string     `gorm:"column:form_schema;type:text"`
 	FormData          string     `gorm:"column:form_data;type:text"`
 	TransitionOutcome string     `gorm:"column:transition_outcome;size:16"`
+	AIDecision        string     `gorm:"column:ai_decision;type:text"`
+	AIReasoning       string     `gorm:"column:ai_reasoning;type:text"`
+	AIConfidence      float64    `gorm:"column:ai_confidence;default:0"`
+	OverriddenBy      *uint      `gorm:"column:overridden_by"`
+	DecisionReasoning string     `gorm:"column:decision_reasoning;type:text"`
 	StartedAt         *time.Time `gorm:"column:started_at"`
 	FinishedAt        *time.Time `gorm:"column:finished_at"`
 	CreatedAt         time.Time  `gorm:"column:created_at;autoCreateTime"`
@@ -634,6 +645,7 @@ type timelineModel struct {
 	OperatorID uint   `gorm:"column:operator_id;not null"`
 	EventType  string `gorm:"column:event_type;size:32;not null"`
 	Message    string `gorm:"column:message;size:512"`
+	Reasoning  string `gorm:"column:reasoning;type:text"`
 	CreatedAt  time.Time `gorm:"column:created_at;autoCreateTime"`
 }
 

@@ -45,6 +45,7 @@ type Ticket struct {
 	CurrentActivityID     *uint      `json:"currentActivityId" gorm:"index"`
 	Source                string     `json:"source" gorm:"size:16;not null;default:catalog"` // catalog | agent
 	AgentSessionID        *uint      `json:"agentSessionId" gorm:"index"`
+	AIFailureCount        int        `json:"aiFailureCount" gorm:"default:0"` // smart engine: consecutive AI decision failure count
 	FormData              JSONField  `json:"formData" gorm:"type:text"`
 	WorkflowJSON          JSONField  `json:"workflowJson" gorm:"type:text"` // snapshot of workflow at creation
 	SLAResponseDeadline   *time.Time `json:"slaResponseDeadline"`
@@ -69,6 +70,7 @@ type TicketResponse struct {
 	CurrentActivityID     *uint      `json:"currentActivityId"`
 	Source                string     `json:"source"`
 	AgentSessionID        *uint      `json:"agentSessionId"`
+	AIFailureCount        int        `json:"aiFailureCount"`
 	FormData              JSONField  `json:"formData"`
 	WorkflowJSON          JSONField  `json:"workflowJson"`
 	SLAResponseDeadline   *time.Time `json:"slaResponseDeadline"`
@@ -94,6 +96,7 @@ func (t *Ticket) ToResponse() TicketResponse {
 		CurrentActivityID:     t.CurrentActivityID,
 		Source:                t.Source,
 		AgentSessionID:        t.AgentSessionID,
+		AIFailureCount:        t.AIFailureCount,
 		FormData:              t.FormData,
 		WorkflowJSON:          t.WorkflowJSON,
 		SLAResponseDeadline:   t.SLAResponseDeadline,

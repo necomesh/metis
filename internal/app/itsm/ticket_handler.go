@@ -460,3 +460,208 @@ func (h *TicketHandler) Activities(c *gin.Context) {
 
 	handler.OK(c, activities)
 }
+
+// --- Smart engine override handlers ---
+
+func (h *TicketHandler) ConfirmActivity(c *gin.Context) {
+	id, err := parseID(c)
+	if err != nil {
+		handler.Fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	activityID, err := strconv.ParseUint(c.Param("aid"), 10, 64)
+	if err != nil {
+		handler.Fail(c, http.StatusBadRequest, "invalid activity id")
+		return
+	}
+
+	userID, _ := c.Get("userId")
+	operatorID := userID.(uint)
+
+	c.Set("audit_action", "itsm.ticket.confirm_activity")
+	c.Set("audit_resource", "ticket")
+	c.Set("audit_resource_id", c.Param("id"))
+
+	ticket, err := h.svc.ConfirmActivity(id, uint(activityID), operatorID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrTicketNotFound):
+			handler.Fail(c, http.StatusNotFound, err.Error())
+		case errors.Is(err, ErrTicketTerminal):
+			handler.Fail(c, http.StatusBadRequest, err.Error())
+		case errors.Is(err, engine.ErrActivityNotFound):
+			handler.Fail(c, http.StatusNotFound, err.Error())
+		default:
+			handler.Fail(c, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+
+	c.Set("audit_summary", "confirmed AI decision for ticket: "+ticket.Code)
+	handler.OK(c, ticket.ToResponse())
+}
+
+type RejectActivityRequest struct {
+	Reason string `json:"reason"`
+}
+
+func (h *TicketHandler) RejectActivity(c *gin.Context) {
+	id, err := parseID(c)
+	if err != nil {
+		handler.Fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	activityID, err := strconv.ParseUint(c.Param("aid"), 10, 64)
+	if err != nil {
+		handler.Fail(c, http.StatusBadRequest, "invalid activity id")
+		return
+	}
+
+	var req RejectActivityRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		handler.Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	userID, _ := c.Get("userId")
+	operatorID := userID.(uint)
+
+	c.Set("audit_action", "itsm.ticket.reject_activity")
+	c.Set("audit_resource", "ticket")
+	c.Set("audit_resource_id", c.Param("id"))
+
+	ticket, err := h.svc.RejectActivity(id, uint(activityID), req.Reason, operatorID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrTicketNotFound):
+			handler.Fail(c, http.StatusNotFound, err.Error())
+		case errors.Is(err, ErrTicketTerminal):
+			handler.Fail(c, http.StatusBadRequest, err.Error())
+		case errors.Is(err, engine.ErrActivityNotFound):
+			handler.Fail(c, http.StatusNotFound, err.Error())
+		default:
+			handler.Fail(c, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+
+	c.Set("audit_summary", "rejected AI decision for ticket: "+ticket.Code)
+	handler.OK(c, ticket.ToResponse())
+}
+
+type OverrideJumpRequest struct {
+	ActivityType string `json:"activityType" binding:"required"`
+	AssigneeID   *uint  `json:"assigneeId"`
+	Reason       string `json:"reason" binding:"required"`
+}
+
+func (h *TicketHandler) OverrideJump(c *gin.Context) {
+	id, err := parseID(c)
+	if err != nil {
+		handler.Fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	var req OverrideJumpRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		handler.Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	userID, _ := c.Get("userId")
+	operatorID := userID.(uint)
+
+	c.Set("audit_action", "itsm.ticket.override_jump")
+	c.Set("audit_resource", "ticket")
+	c.Set("audit_resource_id", c.Param("id"))
+
+	ticket, err := h.svc.OverrideJump(id, req.ActivityType, req.AssigneeID, req.Reason, operatorID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrTicketNotFound):
+			handler.Fail(c, http.StatusNotFound, err.Error())
+		case errors.Is(err, ErrTicketTerminal):
+			handler.Fail(c, http.StatusBadRequest, err.Error())
+		default:
+			handler.Fail(c, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+
+	c.Set("audit_summary", "override jump for ticket: "+ticket.Code)
+	handler.OK(c, ticket.ToResponse())
+}
+
+type OverrideReassignRequest struct {
+	ActivityID    uint   `json:"activityId" binding:"required"`
+	NewAssigneeID uint   `json:"newAssigneeId" binding:"required"`
+	Reason        string `json:"reason" binding:"required"`
+}
+
+func (h *TicketHandler) OverrideReassign(c *gin.Context) {
+	id, err := parseID(c)
+	if err != nil {
+		handler.Fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	var req OverrideReassignRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		handler.Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	userID, _ := c.Get("userId")
+	operatorID := userID.(uint)
+
+	c.Set("audit_action", "itsm.ticket.override_reassign")
+	c.Set("audit_resource", "ticket")
+	c.Set("audit_resource_id", c.Param("id"))
+
+	ticket, err := h.svc.OverrideReassign(id, req.ActivityID, req.NewAssigneeID, req.Reason, operatorID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrTicketNotFound):
+			handler.Fail(c, http.StatusNotFound, err.Error())
+		case errors.Is(err, ErrTicketTerminal):
+			handler.Fail(c, http.StatusBadRequest, err.Error())
+		default:
+			handler.Fail(c, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+
+	c.Set("audit_summary", "override reassign for ticket: "+ticket.Code)
+	handler.OK(c, ticket.ToResponse())
+}
+
+func (h *TicketHandler) RetryAI(c *gin.Context) {
+	id, err := parseID(c)
+	if err != nil {
+		handler.Fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	userID, _ := c.Get("userId")
+	operatorID := userID.(uint)
+
+	c.Set("audit_action", "itsm.ticket.retry_ai")
+	c.Set("audit_resource", "ticket")
+	c.Set("audit_resource_id", c.Param("id"))
+
+	ticket, err := h.svc.RetryAI(id, operatorID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrTicketNotFound):
+			handler.Fail(c, http.StatusNotFound, err.Error())
+		case errors.Is(err, ErrTicketTerminal):
+			handler.Fail(c, http.StatusBadRequest, err.Error())
+		default:
+			handler.Fail(c, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+
+	c.Set("audit_summary", "retry AI for ticket: "+ticket.Code)
+	handler.OK(c, ticket.ToResponse())
+}

@@ -21,22 +21,24 @@ var (
 )
 
 type TicketService struct {
-	ticketRepo   *TicketRepo
-	timelineRepo *TimelineRepo
-	serviceRepo  *ServiceDefRepo
-	slaRepo      *SLATemplateRepo
-	priorityRepo *PriorityRepo
-	engine       *engine.ClassicEngine
+	ticketRepo    *TicketRepo
+	timelineRepo  *TimelineRepo
+	serviceRepo   *ServiceDefRepo
+	slaRepo       *SLATemplateRepo
+	priorityRepo  *PriorityRepo
+	classicEngine *engine.ClassicEngine
+	smartEngine   *engine.SmartEngine
 }
 
 func NewTicketService(i do.Injector) (*TicketService, error) {
 	return &TicketService{
-		ticketRepo:   do.MustInvoke[*TicketRepo](i),
-		timelineRepo: do.MustInvoke[*TimelineRepo](i),
-		serviceRepo:  do.MustInvoke[*ServiceDefRepo](i),
-		slaRepo:      do.MustInvoke[*SLATemplateRepo](i),
-		priorityRepo: do.MustInvoke[*PriorityRepo](i),
-		engine:       do.MustInvoke[*engine.ClassicEngine](i),
+		ticketRepo:    do.MustInvoke[*TicketRepo](i),
+		timelineRepo:  do.MustInvoke[*TimelineRepo](i),
+		serviceRepo:   do.MustInvoke[*ServiceDefRepo](i),
+		slaRepo:       do.MustInvoke[*SLATemplateRepo](i),
+		priorityRepo:  do.MustInvoke[*PriorityRepo](i),
+		classicEngine: do.MustInvoke[*engine.ClassicEngine](i),
+		smartEngine:   do.MustInvoke[*engine.SmartEngine](i),
 	}, nil
 }
 
@@ -132,12 +134,18 @@ func (s *TicketService) Create(input CreateTicketInput, requesterID uint) (*Tick
 			return err
 		}
 
-		// For classic engine, start the workflow
-		if svc.EngineType == "classic" {
-			return s.engine.Start(context.Background(), tx, engine.StartParams{
+		// Start engine workflow
+		switch svc.EngineType {
+		case "classic":
+			return s.classicEngine.Start(context.Background(), tx, engine.StartParams{
 				TicketID:     ticket.ID,
 				WorkflowJSON: json.RawMessage(ticket.WorkflowJSON),
 				RequesterID:  requesterID,
+			})
+		case "smart":
+			return s.smartEngine.Start(context.Background(), tx, engine.StartParams{
+				TicketID:    ticket.ID,
+				RequesterID: requesterID,
 			})
 		}
 		return nil
@@ -148,7 +156,7 @@ func (s *TicketService) Create(input CreateTicketInput, requesterID uint) (*Tick
 	return s.ticketRepo.FindByID(ticket.ID)
 }
 
-// Progress advances a classic workflow ticket. The operator must be the assignee or have admin privileges.
+// Progress advances a workflow ticket. The operator must be the assignee or have admin privileges.
 func (s *TicketService) Progress(ticketID uint, activityID uint, outcome string, result json.RawMessage, operatorID uint) (*Ticket, error) {
 	t, err := s.ticketRepo.FindByID(ticketID)
 	if err != nil {
@@ -161,8 +169,9 @@ func (s *TicketService) Progress(ticketID uint, activityID uint, outcome string,
 		return nil, ErrTicketTerminal
 	}
 
+	eng := s.engineFor(t.EngineType)
 	if err := s.ticketRepo.DB().Transaction(func(tx *gorm.DB) error {
-		return s.engine.Progress(context.Background(), tx, engine.ProgressParams{
+		return eng.Progress(context.Background(), tx, engine.ProgressParams{
 			TicketID:   ticketID,
 			ActivityID: activityID,
 			Outcome:    outcome,
@@ -202,7 +211,7 @@ func (s *TicketService) Signal(ticketID uint, activityID uint, outcome string, d
 	}
 
 	if err := s.ticketRepo.DB().Transaction(func(tx *gorm.DB) error {
-		return s.engine.Progress(context.Background(), tx, engine.ProgressParams{
+		return s.classicEngine.Progress(context.Background(), tx, engine.ProgressParams{
 			TicketID:   ticketID,
 			ActivityID: activityID,
 			Outcome:    outcome,
@@ -343,10 +352,11 @@ func (s *TicketService) Cancel(id uint, reason string, operatorID uint) (*Ticket
 		return nil, ErrTicketTerminal
 	}
 
-	// For classic engine, use engine's Cancel to properly clean up activities
-	if t.EngineType == "classic" {
+	// For engine-managed tickets, use engine's Cancel to properly clean up activities
+	if t.EngineType == "classic" || t.EngineType == "smart" {
+		eng := s.engineFor(t.EngineType)
 		if err := s.ticketRepo.DB().Transaction(func(tx *gorm.DB) error {
-			return s.engine.Cancel(context.Background(), tx, engine.CancelParams{
+			return eng.Cancel(context.Background(), tx, engine.CancelParams{
 				TicketID:   id,
 				Reason:     reason,
 				OperatorID: operatorID,
@@ -379,4 +389,284 @@ func (s *TicketService) Cancel(id uint, reason string, operatorID uint) (*Ticket
 	}
 
 	return s.ticketRepo.FindByID(id)
+}
+
+// engineFor returns the WorkflowEngine for the given engine type.
+func (s *TicketService) engineFor(engineType string) engine.WorkflowEngine {
+	if engineType == "smart" {
+		return s.smartEngine
+	}
+	return s.classicEngine
+}
+
+// --- Smart engine override operations ---
+
+// ConfirmActivity confirms a pending_approval activity and executes the AI decision plan.
+func (s *TicketService) ConfirmActivity(ticketID uint, activityID uint, operatorID uint) (*Ticket, error) {
+	t, err := s.ticketRepo.FindByID(ticketID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrTicketNotFound
+		}
+		return nil, err
+	}
+	if t.IsTerminal() {
+		return nil, ErrTicketTerminal
+	}
+
+	if err := s.ticketRepo.DB().Transaction(func(tx *gorm.DB) error {
+		var activity TicketActivity
+		if err := tx.First(&activity, activityID).Error; err != nil {
+			return engine.ErrActivityNotFound
+		}
+		if activity.Status != engine.ActivityPendingApproval {
+			return errors.New("activity is not pending approval")
+		}
+
+		// Parse the stored decision plan
+		var plan engine.DecisionPlan
+		if err := json.Unmarshal([]byte(activity.AIDecision), &plan); err != nil {
+			return errors.New("stored decision plan is invalid")
+		}
+
+		// Mark activity as confirmed and completed
+		now := time.Now()
+		if err := tx.Model(&TicketActivity{}).Where("id = ?", activityID).Updates(map[string]any{
+			"status":      engine.ActivityCompleted,
+			"finished_at": now,
+		}).Error; err != nil {
+			return err
+		}
+
+		// Record timeline
+		tl := &TicketTimeline{
+			TicketID:   ticketID,
+			ActivityID: &activityID,
+			OperatorID: operatorID,
+			EventType:  "ai_decision_confirmed",
+			Message:    "人工确认 AI 决策",
+		}
+		if err := tx.Create(tl).Error; err != nil {
+			return err
+		}
+
+		// Execute the decision plan
+		return s.smartEngine.ExecuteConfirmedPlan(tx, ticketID, &plan)
+	}); err != nil {
+		return nil, err
+	}
+
+	return s.ticketRepo.FindByID(ticketID)
+}
+
+// RejectActivity rejects a pending_approval activity and discards the AI decision plan.
+func (s *TicketService) RejectActivity(ticketID uint, activityID uint, reason string, operatorID uint) (*Ticket, error) {
+	t, err := s.ticketRepo.FindByID(ticketID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrTicketNotFound
+		}
+		return nil, err
+	}
+	if t.IsTerminal() {
+		return nil, ErrTicketTerminal
+	}
+
+	if err := s.ticketRepo.DB().Transaction(func(tx *gorm.DB) error {
+		var activity TicketActivity
+		if err := tx.First(&activity, activityID).Error; err != nil {
+			return engine.ErrActivityNotFound
+		}
+		if activity.Status != engine.ActivityPendingApproval {
+			return errors.New("activity is not pending approval")
+		}
+
+		now := time.Now()
+		if err := tx.Model(&TicketActivity{}).Where("id = ?", activityID).Updates(map[string]any{
+			"status":        engine.ActivityRejected,
+			"finished_at":   now,
+			"overridden_by": operatorID,
+		}).Error; err != nil {
+			return err
+		}
+
+		msg := "人工拒绝 AI 决策"
+		if reason != "" {
+			msg += ": " + reason
+		}
+		tl := &TicketTimeline{
+			TicketID:   ticketID,
+			ActivityID: &activityID,
+			OperatorID: operatorID,
+			EventType:  "ai_decision_rejected",
+			Message:    msg,
+		}
+		return tx.Create(tl).Error
+	}); err != nil {
+		return nil, err
+	}
+
+	return s.ticketRepo.FindByID(ticketID)
+}
+
+// OverrideJump cancels the current activity and creates a new one of the specified type.
+func (s *TicketService) OverrideJump(ticketID uint, activityType string, assigneeID *uint, reason string, operatorID uint) (*Ticket, error) {
+	t, err := s.ticketRepo.FindByID(ticketID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrTicketNotFound
+		}
+		return nil, err
+	}
+	if t.IsTerminal() {
+		return nil, ErrTicketTerminal
+	}
+
+	if err := s.ticketRepo.DB().Transaction(func(tx *gorm.DB) error {
+		// Cancel current active activities
+		now := time.Now()
+		tx.Model(&TicketActivity{}).
+			Where("ticket_id = ? AND status IN ?", ticketID,
+				[]string{engine.ActivityPending, engine.ActivityPendingApproval, engine.ActivityInProgress}).
+			Updates(map[string]any{
+				"status":        engine.ActivityCancelled,
+				"finished_at":   now,
+				"overridden_by": operatorID,
+			})
+
+		// Create new activity
+		act := &TicketActivity{
+			TicketID:     ticketID,
+			Name:         "人工跳转: " + activityType,
+			ActivityType: activityType,
+			Status:       engine.ActivityPending,
+			OverriddenBy: &operatorID,
+		}
+		act.StartedAt = &now
+		if err := tx.Create(act).Error; err != nil {
+			return err
+		}
+
+		updates := map[string]any{"current_activity_id": act.ID}
+		if assigneeID != nil && *assigneeID > 0 {
+			updates["assignee_id"] = *assigneeID
+			// Create assignment
+			assignment := &TicketAssignment{
+				TicketID:        ticketID,
+				ActivityID:      act.ID,
+				ParticipantType: "user",
+				UserID:          assigneeID,
+				AssigneeID:      assigneeID,
+				Status:          "pending",
+				IsCurrent:       true,
+			}
+			if err := tx.Create(assignment).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Model(&Ticket{}).Where("id = ?", ticketID).Updates(updates).Error; err != nil {
+			return err
+		}
+
+		tl := &TicketTimeline{
+			TicketID:   ticketID,
+			ActivityID: &act.ID,
+			OperatorID: operatorID,
+			EventType:  "override_jump",
+			Message:    "人工强制跳转至 " + activityType + ": " + reason,
+		}
+		return tx.Create(tl).Error
+	}); err != nil {
+		return nil, err
+	}
+
+	return s.ticketRepo.FindByID(ticketID)
+}
+
+// OverrideReassign changes the assignee of the current activity.
+func (s *TicketService) OverrideReassign(ticketID uint, activityID uint, newAssigneeID uint, reason string, operatorID uint) (*Ticket, error) {
+	t, err := s.ticketRepo.FindByID(ticketID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrTicketNotFound
+		}
+		return nil, err
+	}
+	if t.IsTerminal() {
+		return nil, ErrTicketTerminal
+	}
+
+	if err := s.ticketRepo.DB().Transaction(func(tx *gorm.DB) error {
+		// Update assignment
+		tx.Model(&TicketAssignment{}).
+			Where("ticket_id = ? AND activity_id = ? AND is_current = ?", ticketID, activityID, true).
+			Updates(map[string]any{
+				"assignee_id": newAssigneeID,
+			})
+
+		// Update ticket assignee
+		if err := tx.Model(&Ticket{}).Where("id = ?", ticketID).
+			Update("assignee_id", newAssigneeID).Error; err != nil {
+			return err
+		}
+
+		tl := &TicketTimeline{
+			TicketID:   ticketID,
+			ActivityID: &activityID,
+			OperatorID: operatorID,
+			EventType:  "override_reassign",
+			Message:    "改派处理人: " + reason,
+		}
+		return tx.Create(tl).Error
+	}); err != nil {
+		return nil, err
+	}
+
+	return s.ticketRepo.FindByID(ticketID)
+}
+
+// RetryAI resets ai_failure_count and triggers a new decision cycle.
+func (s *TicketService) RetryAI(ticketID uint, operatorID uint) (*Ticket, error) {
+	t, err := s.ticketRepo.FindByID(ticketID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrTicketNotFound
+		}
+		return nil, err
+	}
+	if t.IsTerminal() {
+		return nil, ErrTicketTerminal
+	}
+	if t.EngineType != "smart" {
+		return nil, errors.New("retry-ai is only available for smart engine tickets")
+	}
+
+	if err := s.ticketRepo.DB().Transaction(func(tx *gorm.DB) error {
+		// Reset failure count
+		if err := tx.Model(&Ticket{}).Where("id = ?", ticketID).
+			Update("ai_failure_count", 0).Error; err != nil {
+			return err
+		}
+
+		tl := &TicketTimeline{
+			TicketID:   ticketID,
+			OperatorID: operatorID,
+			EventType:  "ai_retry",
+			Message:    "重新启用 AI 决策",
+		}
+		if err := tx.Create(tl).Error; err != nil {
+			return err
+		}
+
+		// Trigger new decision cycle via async task
+		payload, _ := json.Marshal(map[string]any{
+			"ticket_id":             ticketID,
+			"completed_activity_id": nil,
+		})
+		return s.smartEngine.SubmitProgressTask(payload)
+	}); err != nil {
+		return nil, err
+	}
+
+	return s.ticketRepo.FindByID(ticketID)
 }

@@ -3,6 +3,7 @@ package itsm
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 
 	"github.com/casbin/casbin/v2"
 	"github.com/gin-gonic/gin"
@@ -13,7 +14,9 @@ import (
 	"metis/internal/app/itsm/engine"
 	"metis/internal/database"
 	"metis/internal/model"
+	"metis/internal/repository"
 	"metis/internal/scheduler"
+	"metis/internal/service"
 )
 
 func init() {
@@ -78,6 +81,35 @@ func (a *ITSMApp) Providers(i do.Injector) {
 		// Create a TaskSubmitter that uses the scheduler engine
 		submitter := &schedulerSubmitter{db: db.DB}
 		return engine.NewClassicEngine(resolver, submitter), nil
+	})
+
+	// SmartEngine — optional AI App dependencies
+	do.Provide(i, func(i do.Injector) (*engine.SmartEngine, error) {
+		db := do.MustInvoke[*database.DB](i)
+		submitter := &schedulerSubmitter{db: db.DB}
+
+		// Try to resolve AI App services (optional)
+		var agentProvider engine.AgentProvider
+		var knowledgeSearcher engine.KnowledgeSearcher
+
+		aiAgent, err := do.InvokeAs[app.AIAgentProvider](i)
+		if err == nil && aiAgent != nil {
+			agentProvider = &aiAgentAdapter{provider: aiAgent}
+			slog.Info("ITSM SmartEngine: AI Agent provider available")
+		} else {
+			slog.Info("ITSM SmartEngine: AI Agent provider not available, smart engine disabled")
+		}
+
+		aiKnowledge, err := do.InvokeAs[app.AIKnowledgeSearcher](i)
+		if err == nil && aiKnowledge != nil {
+			knowledgeSearcher = &aiKnowledgeAdapter{searcher: aiKnowledge}
+		}
+
+		// User provider for participant candidates
+		userSvc := do.MustInvoke[*service.UserService](i)
+		userProvider := &userProviderAdapter{userSvc: userSvc}
+
+		return engine.NewSmartEngine(agentProvider, knowledgeSearcher, userProvider, submitter), nil
 	})
 
 	// Services
@@ -162,12 +194,19 @@ func (a *ITSMApp) Routes(api *gin.RouterGroup) {
 		g.POST("/tickets/:id/progress", ticketH.Progress)
 		g.POST("/tickets/:id/signal", ticketH.Signal)
 		g.GET("/tickets/:id/activities", ticketH.Activities)
+		// Phase 3: Smart engine override routes
+		g.POST("/tickets/:id/activities/:aid/confirm", ticketH.ConfirmActivity)
+		g.POST("/tickets/:id/activities/:aid/reject", ticketH.RejectActivity)
+		g.POST("/tickets/:id/override/jump", ticketH.OverrideJump)
+		g.POST("/tickets/:id/override/reassign", ticketH.OverrideReassign)
+		g.POST("/tickets/:id/override/retry-ai", ticketH.RetryAI)
 	}
 }
 
 func (a *ITSMApp) Tasks() []scheduler.TaskDef {
 	db := do.MustInvoke[*database.DB](a.injector)
 	classicEngine := do.MustInvoke[*engine.ClassicEngine](a.injector)
+	smartEngine := do.MustInvoke[*engine.SmartEngine](a.injector)
 
 	return []scheduler.TaskDef{
 		{
@@ -181,6 +220,12 @@ func (a *ITSMApp) Tasks() []scheduler.TaskDef {
 			Type:        scheduler.TypeAsync,
 			Description: "Check and trigger ITSM wait timer nodes",
 			Handler:     engine.HandleWaitTimer(db.DB, classicEngine),
+		},
+		{
+			Name:        "itsm-smart-progress",
+			Type:        scheduler.TypeAsync,
+			Description: "Execute AI decision cycle for smart engine tickets",
+			Handler:     engine.HandleSmartProgress(db.DB, smartEngine),
 		},
 	}
 }
@@ -206,5 +251,79 @@ var _ engine.TaskSubmitter = (*schedulerSubmitter)(nil)
 // Ensure ClassicEngine implements engine.WorkflowEngine at compile time
 var _ engine.WorkflowEngine = (*engine.ClassicEngine)(nil)
 
+// Ensure SmartEngine implements engine.WorkflowEngine at compile time
+var _ engine.WorkflowEngine = (*engine.SmartEngine)(nil)
+
 // Placeholder for background context usage
 var _ = context.Background
+
+// --- AI App adapters (bridge app.AI* interfaces to engine.* interfaces) ---
+
+// aiAgentAdapter adapts app.AIAgentProvider to engine.AgentProvider.
+type aiAgentAdapter struct {
+	provider app.AIAgentProvider
+}
+
+func (a *aiAgentAdapter) GetAgentConfig(agentID uint) (*engine.SmartAgentConfig, error) {
+	cfg, err := a.provider.GetAgentConfig(agentID)
+	if err != nil {
+		return nil, err
+	}
+	return &engine.SmartAgentConfig{
+		Name:         cfg.Name,
+		SystemPrompt: cfg.SystemPrompt,
+		Temperature:  cfg.Temperature,
+		MaxTokens:    cfg.MaxTokens,
+		Model:        cfg.Model,
+		Protocol:     cfg.Protocol,
+		BaseURL:      cfg.BaseURL,
+		APIKey:       cfg.APIKey,
+	}, nil
+}
+
+// aiKnowledgeAdapter adapts app.AIKnowledgeSearcher to engine.KnowledgeSearcher.
+type aiKnowledgeAdapter struct {
+	searcher app.AIKnowledgeSearcher
+}
+
+func (a *aiKnowledgeAdapter) Search(kbIDs []uint, query string, limit int) ([]engine.KnowledgeResult, error) {
+	results, err := a.searcher.SearchKnowledge(kbIDs, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	var out []engine.KnowledgeResult
+	for _, r := range results {
+		out = append(out, engine.KnowledgeResult{
+			Title:   r.Title,
+			Content: r.Content,
+			Score:   r.Score,
+		})
+	}
+	return out, nil
+}
+
+// userProviderAdapter adapts service.UserService to engine.UserProvider.
+type userProviderAdapter struct {
+	userSvc *service.UserService
+}
+
+func (a *userProviderAdapter) ListActiveUsers() ([]engine.ParticipantCandidate, error) {
+	active := true
+	result, err := a.userSvc.List(repository.ListParams{
+		IsActive: &active,
+		Page:     1,
+		PageSize: 500,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var candidates []engine.ParticipantCandidate
+	for _, u := range result.Items {
+		candidates = append(candidates, engine.ParticipantCandidate{
+			UserID: u.ID,
+			Name:   u.Username,
+		})
+	}
+	return candidates, nil
+}
+

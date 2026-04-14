@@ -43,3 +43,42 @@ var apps []App
 
 func Register(a App) { apps = append(apps, a) }
 func All() []App     { return apps }
+
+// AIAgentProvider is an optional interface implemented by the AI App.
+// It provides agent configuration and LLM client creation for smart engines.
+type AIAgentProvider interface {
+	// GetAgentConfig returns agent configuration by ID (system prompt, model info, etc).
+	GetAgentConfig(agentID uint) (*AIAgentConfig, error)
+}
+
+// AIAgentConfig holds agent configuration needed for LLM calls.
+type AIAgentConfig struct {
+	Name         string
+	SystemPrompt string
+	Temperature  float64
+	MaxTokens    int
+	Model        string // model identifier
+	Protocol     string // "openai" or "anthropic"
+	BaseURL      string
+	APIKey       string
+}
+
+// AIKnowledgeSearcher is an optional interface implemented by the AI App.
+// It searches knowledge bases for relevant context.
+type AIKnowledgeSearcher interface {
+	// SearchKnowledge searches the given knowledge bases for relevant content.
+	SearchKnowledge(kbIDs []uint, query string, limit int) ([]AIKnowledgeResult, error)
+}
+
+// AIKnowledgeResult is a single result from knowledge search.
+type AIKnowledgeResult struct {
+	Title   string
+	Content string
+	Score   float64
+}
+
+// AIToolRegistry is an optional interface implemented by the AI App.
+// It allows other apps to register tools for AI agents.
+type AIToolRegistry interface {
+	RegisterTool(toolkit, name, displayName, description string, parametersSchema string) (uint, error)
+}
