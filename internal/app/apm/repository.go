@@ -988,3 +988,66 @@ func (r *Repository) GetLatencyDistribution(ctx context.Context, p LatencyDistPa
 
 	return buckets, nil
 }
+
+// ErrorGroup is one aggregated error group.
+type ErrorGroup struct {
+	ErrorType string    `json:"errorType"`
+	Message   string    `json:"message"`
+	Count     uint64    `json:"count"`
+	LastSeen  time.Time `json:"lastSeen"`
+	Services  []string  `json:"services"`
+}
+
+// GetErrors returns error groups aggregated by error type and message.
+func (r *Repository) GetErrors(ctx context.Context, start, end time.Time, service string) ([]ErrorGroup, error) {
+	if r.ch == nil {
+		return nil, nil
+	}
+
+	var conditions []string
+	var args []any
+	conditions = append(conditions, "Timestamp >= ?", "Timestamp <= ?")
+	args = append(args, start, end)
+	conditions = append(conditions, "StatusCode = 'STATUS_CODE_ERROR'")
+
+	if service != "" {
+		conditions = append(conditions, "ServiceName = ?")
+		args = append(args, service)
+	}
+
+	where := strings.Join(conditions, " AND ")
+
+	query := fmt.Sprintf(`
+		SELECT
+			SpanAttributes['exception.type'] AS ErrorType,
+			StatusMessage AS Message,
+			count() AS Count,
+			max(Timestamp) AS LastSeen,
+			groupUniqArray(ServiceName) AS Services
+		FROM otel_traces
+		WHERE %s
+		GROUP BY ErrorType, Message
+		ORDER BY Count DESC
+		LIMIT 100
+	`, where)
+
+	rows, err := r.ch.DB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("get errors: %w", err)
+	}
+	defer rows.Close()
+
+	var groups []ErrorGroup
+	for rows.Next() {
+		var g ErrorGroup
+		if err := rows.Scan(&g.ErrorType, &g.Message, &g.Count, &g.LastSeen, &g.Services); err != nil {
+			return nil, fmt.Errorf("scan error group: %w", err)
+		}
+		groups = append(groups, g)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate errors: %w", err)
+	}
+
+	return groups, nil
+}

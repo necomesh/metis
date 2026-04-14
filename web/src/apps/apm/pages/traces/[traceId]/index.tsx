@@ -11,8 +11,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 import { fetchTrace, fetchTraceLogs } from "../../../api"
-import type { TraceLog } from "../../../api"
+import type { Span, TraceLog } from "../../../api"
 import { WaterfallChart } from "../../../components/waterfall-chart"
+import { FlameChart } from "../../../components/flame-chart"
+import { SpanDetailPanel } from "../../../components/span-detail-panel"
 
 function TraceDetailPage() {
   const { t } = useTranslation("apm")
@@ -20,6 +22,8 @@ function TraceDetailPage() {
   const navigate = useNavigate()
   const [copied, setCopied] = useState(false)
   const [severityFilter, setSeverityFilter] = useState<string>("all")
+  const [selectedSpan, setSelectedSpan] = useState<Span | null>(null)
+  const [viewTab, setViewTab] = useState<string>("waterfall")
 
   const { data, isLoading } = useQuery({
     queryKey: ["apm-trace", traceId],
@@ -97,96 +101,116 @@ function TraceDetailPage() {
       ) : spans.length === 0 ? (
         <div className="py-12 text-center text-muted-foreground">{t("detail.noSpans")}</div>
       ) : (
-        <Tabs defaultValue="spans">
-          <TabsList>
-            <TabsTrigger value="spans">{t("logs.spansTab")}</TabsTrigger>
-            <TabsTrigger value="logs">
-              {t("logs.tab")}
-              {logs.length > 0 && (
-                <Badge variant="secondary" className="ml-1.5 text-[10px] px-1.5 py-0">
-                  {logs.length}
-                </Badge>
-              )}
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="spans" className="mt-4">
-            <div className="rounded-lg border p-4">
-              <WaterfallChart spans={spans} />
-            </div>
-          </TabsContent>
-
-          <TabsContent value="logs" className="mt-4">
-            {logsLoading ? (
-              <div className="py-12 text-center text-muted-foreground">{t("loading")}</div>
-            ) : !logsAvailable ? (
-              <div className="rounded-lg border border-dashed p-8 text-center">
-                <Info className="mx-auto mb-3 h-8 w-8 text-muted-foreground/50" />
-                <p className="text-sm text-muted-foreground">{t("logs.notAvailable")}</p>
+        <div className="flex gap-4" style={{ height: "calc(100vh - 200px)" }}>
+          {/* Left panel: view tabs */}
+          <div className="flex-1 min-w-0 overflow-hidden rounded-lg border">
+            <Tabs value={viewTab} onValueChange={setViewTab}>
+              <div className="border-b px-4 pt-2">
+                <TabsList>
+                  <TabsTrigger value="waterfall">{t("detail.waterfall")}</TabsTrigger>
+                  <TabsTrigger value="flamegraph">{t("detail.flameGraph", "Flame Graph")}</TabsTrigger>
+                  <TabsTrigger value="logs">
+                    {t("logs.tab")}
+                    {logs.length > 0 && (
+                      <Badge variant="secondary" className="ml-1.5 text-[10px] px-1.5 py-0">
+                        {logs.length}
+                      </Badge>
+                    )}
+                  </TabsTrigger>
+                </TabsList>
               </div>
-            ) : logs.length === 0 ? (
-              <div className="py-12 text-center text-muted-foreground">{t("logs.noLogs")}</div>
-            ) : (
-              <div className="space-y-3">
-                {/* Severity filter */}
-                <div className="flex items-center gap-2">
-                  <Select value={severityFilter} onValueChange={setSeverityFilter}>
-                    <SelectTrigger className="w-[160px] h-8 text-xs">
-                      <SelectValue placeholder={t("logs.allSeverities")} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">{t("logs.allSeverities")}</SelectItem>
-                      {severities.map((s) => (
-                        <SelectItem key={s} value={s}>{s}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <span className="text-xs text-muted-foreground">
-                    {filteredLogs.length} / {logs.length}
-                  </span>
-                </div>
 
-                {/* Logs table */}
-                <div className="rounded-lg border">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="w-[180px]">{t("logs.timestamp")}</TableHead>
-                        <TableHead className="w-[80px]">{t("logs.severity")}</TableHead>
-                        <TableHead className="w-[120px]">{t("logs.service")}</TableHead>
-                        <TableHead>{t("logs.body")}</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredLogs.map((log: TraceLog, i: number) => (
-                        <TableRow key={`${log.spanId}-${i}`}>
-                          <TableCell className="font-mono text-xs whitespace-nowrap">
-                            {new Date(log.timestamp).toLocaleTimeString(undefined, {
-                              hour12: false,
-                              hour: "2-digit",
-                              minute: "2-digit",
-                              second: "2-digit",
-                              fractionalSecondDigits: 3,
-                            })}
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={severityColor(log.severityText)} className="text-[10px] px-1.5">
-                              {log.severityText || "UNSET"}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-xs">{log.serviceName}</TableCell>
-                          <TableCell className="font-mono text-xs max-w-md truncate" title={log.body}>
-                            {log.body}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              </div>
-            )}
-          </TabsContent>
-        </Tabs>
+              <TabsContent value="waterfall" className="mt-0 p-4 overflow-auto" style={{ height: "calc(100% - 48px)" }}>
+                <WaterfallChart
+                  spans={spans}
+                  selectedSpanId={selectedSpan?.spanId}
+                  onSelectSpan={setSelectedSpan}
+                />
+              </TabsContent>
+
+              <TabsContent value="flamegraph" className="mt-0 p-4 overflow-auto" style={{ height: "calc(100% - 48px)" }}>
+                <FlameChart
+                  spans={spans}
+                  selectedSpanId={selectedSpan?.spanId}
+                  onSelectSpan={setSelectedSpan}
+                />
+              </TabsContent>
+
+              <TabsContent value="logs" className="mt-0 p-4 overflow-auto" style={{ height: "calc(100% - 48px)" }}>
+                {logsLoading ? (
+                  <div className="py-12 text-center text-muted-foreground">{t("loading")}</div>
+                ) : !logsAvailable ? (
+                  <div className="rounded-lg border border-dashed p-8 text-center">
+                    <Info className="mx-auto mb-3 h-8 w-8 text-muted-foreground/50" />
+                    <p className="text-sm text-muted-foreground">{t("logs.notAvailable")}</p>
+                  </div>
+                ) : logs.length === 0 ? (
+                  <div className="py-12 text-center text-muted-foreground">{t("logs.noLogs")}</div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Select value={severityFilter} onValueChange={setSeverityFilter}>
+                        <SelectTrigger className="w-[160px] h-8 text-xs">
+                          <SelectValue placeholder={t("logs.allSeverities")} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">{t("logs.allSeverities")}</SelectItem>
+                          {severities.map((s) => (
+                            <SelectItem key={s} value={s}>{s}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <span className="text-xs text-muted-foreground">
+                        {filteredLogs.length} / {logs.length}
+                      </span>
+                    </div>
+                    <div className="rounded-lg border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="w-[180px]">{t("logs.timestamp")}</TableHead>
+                            <TableHead className="w-[80px]">{t("logs.severity")}</TableHead>
+                            <TableHead className="w-[120px]">{t("logs.service")}</TableHead>
+                            <TableHead>{t("logs.body")}</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {filteredLogs.map((log: TraceLog, i: number) => (
+                            <TableRow key={`${log.spanId}-${i}`}>
+                              <TableCell className="font-mono text-xs whitespace-nowrap">
+                                {new Date(log.timestamp).toLocaleTimeString(undefined, {
+                                  hour12: false,
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                  second: "2-digit",
+                                  fractionalSecondDigits: 3,
+                                })}
+                              </TableCell>
+                              <TableCell>
+                                <Badge variant={severityColor(log.severityText)} className="text-[10px] px-1.5">
+                                  {log.severityText || "UNSET"}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-xs">{log.serviceName}</TableCell>
+                              <TableCell className="font-mono text-xs max-w-md truncate" title={log.body}>
+                                {log.body}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                )}
+              </TabsContent>
+            </Tabs>
+          </div>
+
+          {/* Right panel: span detail */}
+          <div className="w-[380px] shrink-0 rounded-lg border overflow-hidden">
+            <SpanDetailPanel span={selectedSpan} />
+          </div>
+        </div>
       )}
     </div>
   )

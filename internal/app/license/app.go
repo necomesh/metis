@@ -1,6 +1,9 @@
 package license
 
 import (
+	"context"
+	"encoding/json"
+
 	"github.com/casbin/casbin/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/samber/do/v2"
@@ -21,7 +24,7 @@ type LicenseApp struct {
 func (a *LicenseApp) Name() string { return "license" }
 
 func (a *LicenseApp) Models() []any {
-	return []any{&Product{}, &Plan{}, &ProductKey{}, &Licensee{}, &License{}}
+	return []any{&Product{}, &Plan{}, &ProductKey{}, &Licensee{}, &License{}, &LicenseRegistration{}}
 }
 
 func (a *LicenseApp) Seed(db *gorm.DB, enforcer *casbin.Enforcer) error {
@@ -35,6 +38,7 @@ func (a *LicenseApp) Providers(i do.Injector) {
 	do.Provide(i, NewProductKeyRepo)
 	do.Provide(i, NewLicenseeRepo)
 	do.Provide(i, NewLicenseRepo)
+	do.Provide(i, NewLicenseRegistrationRepo)
 	do.Provide(i, NewProductService)
 	do.Provide(i, NewPlanService)
 	do.Provide(i, NewLicenseeService)
@@ -60,6 +64,8 @@ func (a *LicenseApp) Routes(api *gin.RouterGroup) {
 		products.PUT("/:id/schema", productH.UpdateSchema)
 		products.PATCH("/:id/status", productH.UpdateStatus)
 		products.POST("/:id/rotate-key", productH.RotateKey)
+		products.GET("/:id/rotate-key-impact", productH.RotateKeyImpact)
+		products.POST("/:id/bulk-reissue", productH.BulkReissue)
 		products.GET("/:id/public-key", productH.GetPublicKey)
 		products.POST("/:id/plans", planH.Create)
 	}
@@ -85,11 +91,42 @@ func (a *LicenseApp) Routes(api *gin.RouterGroup) {
 		licenses.POST("", licenseH.Issue)
 		licenses.GET("", licenseH.List)
 		licenses.GET("/:id", licenseH.Get)
+		licenses.POST("/:id/renew", licenseH.Renew)
+		licenses.POST("/:id/upgrade", licenseH.Upgrade)
+		licenses.POST("/:id/suspend", licenseH.Suspend)
+		licenses.POST("/:id/reactivate", licenseH.Reactivate)
 		licenses.PATCH("/:id/revoke", licenseH.Revoke)
 		licenses.GET("/:id/export", licenseH.Export)
+	}
+
+	registrations := api.Group("/license/registrations")
+	{
+		registrations.POST("", licenseH.CreateRegistration)
+		registrations.GET("", licenseH.ListRegistrations)
+		registrations.POST("/generate", licenseH.GenerateRegistration)
 	}
 }
 
 func (a *LicenseApp) Tasks() []scheduler.TaskDef {
-	return nil
+	licenseSvc := do.MustInvoke[*LicenseService](a.injector)
+	return []scheduler.TaskDef{
+		{
+			Name:        "license-expired-check",
+			Type:        scheduler.TypeScheduled,
+			Description: "Check and mark expired licenses daily",
+			CronExpr:    "0 2 * * *",
+			Handler: func(ctx context.Context, payload json.RawMessage) error {
+				return licenseSvc.CheckExpiredLicenses()
+			},
+		},
+		{
+			Name:        "license-registration-cleanup",
+			Type:        scheduler.TypeScheduled,
+			Description: "Cleanup expired and unbound license registrations daily",
+			CronExpr:    "0 3 * * *",
+			Handler: func(ctx context.Context, payload json.RawMessage) error {
+				return licenseSvc.CleanupExpiredRegistrations()
+			},
+		},
+	}
 }

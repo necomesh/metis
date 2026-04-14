@@ -28,7 +28,9 @@
   },
   "detail": {
     "waterfall": "Waterfall",
+    "flameGraph": "Flame Graph",
     "spanDetail": "Span Detail",
+    "selectSpan": "Select a span to view details",
     "attributes": "Attributes",
     "events": "Events",
     "resource": "Resource",
@@ -50,9 +52,19 @@
     "trend": "Trend",
     "noData": "No services found",
     "throughput": "Throughput",
+    "requestRate": "Request Rate",
     "latencyTrend": "Latency Trend",
+    "latencyDist": "Latency Distribution",
     "operations": "Operations",
-    "operationName": "Operation"
+    "operationName": "Operation",
+    "overview": "Overview",
+    "errors": "Errors",
+    "errorType": "Error Type",
+    "errorMessage": "Message",
+    "errorCount": "Count",
+    "errorLastSeen": "Last Seen",
+    "errorServices": "Services",
+    "noErrors": "No errors found"
   },
   "timeRange": {
     "last15m": "Last 15 minutes",
@@ -60,7 +72,17 @@
     "last6h": "Last 6 hours",
     "last24h": "Last 24 hours",
     "last7d": "Last 7 days",
-    "custom": "Custom"
+    "custom": "Custom",
+    "startTime": "Start Time",
+    "endTime": "End Time",
+    "apply": "Apply",
+    "refresh": {
+      "off": "Off",
+      "10s": "Every 10s",
+      "30s": "Every 30s",
+      "1m": "Every 1m",
+      "5m": "Every 5m"
+    }
   },
   "topology": {
     "title": "Service Topology",

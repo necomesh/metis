@@ -26,12 +26,8 @@ func NewLicenseeService(i do.Injector) (*LicenseeService, error) {
 }
 
 type CreateLicenseeParams struct {
-	Name         string
-	ContactName  string
-	ContactPhone string
-	ContactEmail string
-	BusinessInfo []byte
-	Notes        string
+	Name string
+	Notes string
 }
 
 func (s *LicenseeService) CreateLicensee(params CreateLicenseeParams) (*Licensee, error) {
@@ -64,14 +60,10 @@ func (s *LicenseeService) CreateLicensee(params CreateLicenseeParams) (*Licensee
 	}
 
 	licensee := &Licensee{
-		Name:         params.Name,
-		Code:         code,
-		ContactName:  params.ContactName,
-		ContactPhone: params.ContactPhone,
-		ContactEmail: params.ContactEmail,
-		BusinessInfo: JSONText(params.BusinessInfo),
-		Notes:        params.Notes,
-		Status:       LicenseeStatusActive,
+		Name:   params.Name,
+		Code:   code,
+		Notes:  params.Notes,
+		Status: LicenseeStatusActive,
 	}
 	if err := s.repo.Create(licensee); err != nil {
 		return nil, err
@@ -95,12 +87,8 @@ func (s *LicenseeService) ListLicensees(params LicenseeListParams) ([]Licensee, 
 }
 
 type UpdateLicenseeParams struct {
-	Name         *string
-	ContactName  *string
-	ContactPhone *string
-	ContactEmail *string
-	BusinessInfo []byte
-	Notes        *string
+	Name  *string
+	Notes *string
 }
 
 func (s *LicenseeService) UpdateLicensee(id uint, params UpdateLicenseeParams) (*Licensee, error) {
@@ -121,18 +109,6 @@ func (s *LicenseeService) UpdateLicensee(id uint, params UpdateLicenseeParams) (
 			return nil, ErrLicenseeNameExists
 		}
 		l.Name = *params.Name
-	}
-	if params.ContactName != nil {
-		l.ContactName = *params.ContactName
-	}
-	if params.ContactPhone != nil {
-		l.ContactPhone = *params.ContactPhone
-	}
-	if params.ContactEmail != nil {
-		l.ContactEmail = *params.ContactEmail
-	}
-	if params.BusinessInfo != nil {
-		l.BusinessInfo = JSONText(params.BusinessInfo)
 	}
 	if params.Notes != nil {
 		l.Notes = *params.Notes

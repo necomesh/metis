@@ -4,7 +4,6 @@ import {
   Plus,
   Trash2,
   Save,
-  GripVertical,
   ChevronDown,
   ChevronRight,
   Hash,
@@ -202,7 +201,6 @@ function ModuleCard({
         >
           {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </button>
-        <GripVertical className="h-3.5 w-3.5 text-muted-foreground/40" />
         <Input
           value={mod.label}
           onChange={(e) => onUpdate({ ...mod, label: e.target.value })}
@@ -369,7 +367,7 @@ function FeatureRow({
       </div>
 
       {showAdvanced && !disabled && (
-        <div className="mt-3 rounded-md bg-muted/30 px-3 py-2">
+        <div className="mt-3 space-y-3 rounded-md bg-muted/30 px-3 py-3">
           <div className="flex items-center gap-2">
             <Label className="text-xs text-muted-foreground shrink-0 w-16">标识 key</Label>
             <Input
@@ -378,17 +376,14 @@ function FeatureRow({
               className="h-8 max-w-[220px] font-mono text-xs"
             />
           </div>
+          {feature.type === "number" && (
+            <NumberFeatureEditor feature={feature} onChange={onUpdate} disabled={disabled} />
+          )}
+          {(feature.type === "enum" || feature.type === "multiSelect") && (
+            <OptionsFeatureEditor feature={feature} onChange={onUpdate} disabled={disabled} />
+          )}
         </div>
       )}
-
-      <div className="mt-3 rounded-md bg-muted/20 px-3 py-3">
-        {feature.type === "number" && (
-          <NumberFeatureEditor feature={feature} onChange={onUpdate} disabled={disabled} />
-        )}
-        {(feature.type === "enum" || feature.type === "multiSelect") && (
-          <OptionsFeatureEditor feature={feature} onChange={onUpdate} disabled={disabled} />
-        )}
-      </div>
     </div>
   )
 }

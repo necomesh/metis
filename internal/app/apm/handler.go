@@ -322,3 +322,169 @@ func (h *Handler) GetTraceLogs(c *gin.Context) {
 		"logsAvailable": available,
 	})
 }
+
+// SearchSpans handles GET /api/v1/apm/spans/search
+func (h *Handler) SearchSpans(c *gin.Context) {
+	startStr := c.Query("start")
+	endStr := c.Query("end")
+	if startStr == "" || endStr == "" {
+		handler.Fail(c, http.StatusBadRequest, "start and end are required")
+		return
+	}
+	start, err := time.Parse(time.RFC3339, startStr)
+	if err != nil {
+		handler.Fail(c, http.StatusBadRequest, "invalid start time format")
+		return
+	}
+	end, err := time.Parse(time.RFC3339, endStr)
+	if err != nil {
+		handler.Fail(c, http.StatusBadRequest, "invalid end time format")
+		return
+	}
+
+	key := c.Query("key")
+	if key == "" {
+		handler.Fail(c, http.StatusBadRequest, "key is required")
+		return
+	}
+
+	op := c.DefaultQuery("op", "eq")
+	if op != "eq" && op != "contains" && op != "exists" {
+		handler.Fail(c, http.StatusBadRequest, "op must be eq, contains, or exists")
+		return
+	}
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+
+	spans, total, err := h.svc.SearchSpans(c.Request.Context(), SpanSearchParams{
+		Start: start, End: end, Key: key, Value: c.Query("value"), Op: op,
+		Page: page, Size: pageSize,
+	})
+	if err != nil {
+		if errors.Is(err, ErrClickHouseNotConfigured) {
+			handler.Fail(c, http.StatusServiceUnavailable, "ClickHouse not configured")
+			return
+		}
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	handler.OK(c, gin.H{"items": spans, "total": total, "page": page})
+}
+
+// GetAnalytics handles GET /api/v1/apm/analytics
+func (h *Handler) GetAnalytics(c *gin.Context) {
+	startStr := c.Query("start")
+	endStr := c.Query("end")
+	if startStr == "" || endStr == "" {
+		handler.Fail(c, http.StatusBadRequest, "start and end are required")
+		return
+	}
+	start, err := time.Parse(time.RFC3339, startStr)
+	if err != nil {
+		handler.Fail(c, http.StatusBadRequest, "invalid start time format")
+		return
+	}
+	end, err := time.Parse(time.RFC3339, endStr)
+	if err != nil {
+		handler.Fail(c, http.StatusBadRequest, "invalid end time format")
+		return
+	}
+
+	groupBy := c.DefaultQuery("groupBy", "service")
+
+	groups, err := h.svc.GetAnalytics(c.Request.Context(), AnalyticsParams{
+		Start: start, End: end, GroupBy: groupBy,
+		Service: c.Query("service"), Operation: c.Query("operation"),
+	})
+	if err != nil {
+		if errors.Is(err, ErrClickHouseNotConfigured) {
+			handler.Fail(c, http.StatusServiceUnavailable, "ClickHouse not configured")
+			return
+		}
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	handler.OK(c, gin.H{"groups": groups})
+}
+
+// GetLatencyDistribution handles GET /api/v1/apm/latency-distribution
+func (h *Handler) GetLatencyDistribution(c *gin.Context) {
+	startStr := c.Query("start")
+	endStr := c.Query("end")
+	if startStr == "" || endStr == "" {
+		handler.Fail(c, http.StatusBadRequest, "start and end are required")
+		return
+	}
+	start, err := time.Parse(time.RFC3339, startStr)
+	if err != nil {
+		handler.Fail(c, http.StatusBadRequest, "invalid start time format")
+		return
+	}
+	end, err := time.Parse(time.RFC3339, endStr)
+	if err != nil {
+		handler.Fail(c, http.StatusBadRequest, "invalid end time format")
+		return
+	}
+
+	buckets, _ := strconv.Atoi(c.DefaultQuery("buckets", "20"))
+	if buckets < 1 || buckets > 100 {
+		buckets = 20
+	}
+
+	data, err := h.svc.GetLatencyDistribution(c.Request.Context(), LatencyDistParams{
+		Start: start, End: end,
+		Service: c.Query("service"), Operation: c.Query("operation"),
+		Buckets: buckets,
+	})
+	if err != nil {
+		if errors.Is(err, ErrClickHouseNotConfigured) {
+			handler.Fail(c, http.StatusServiceUnavailable, "ClickHouse not configured")
+			return
+		}
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	handler.OK(c, gin.H{"buckets": data})
+}
+
+// GetErrors handles GET /api/v1/apm/errors
+func (h *Handler) GetErrors(c *gin.Context) {
+	startStr := c.Query("start")
+	endStr := c.Query("end")
+	if startStr == "" || endStr == "" {
+		handler.Fail(c, http.StatusBadRequest, "start and end are required")
+		return
+	}
+	start, err := time.Parse(time.RFC3339, startStr)
+	if err != nil {
+		handler.Fail(c, http.StatusBadRequest, "invalid start time format")
+		return
+	}
+	end, err := time.Parse(time.RFC3339, endStr)
+	if err != nil {
+		handler.Fail(c, http.StatusBadRequest, "invalid end time format")
+		return
+	}
+
+	groups, err := h.svc.GetErrors(c.Request.Context(), start, end, c.Query("service"))
+	if err != nil {
+		if errors.Is(err, ErrClickHouseNotConfigured) {
+			handler.Fail(c, http.StatusServiceUnavailable, "ClickHouse not configured")
+			return
+		}
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	handler.OK(c, gin.H{"errors": groups})
+}

@@ -1,7 +1,6 @@
 package license
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -15,21 +14,13 @@ import (
 // --- Licensee request types ---
 
 type CreateLicenseeRequest struct {
-	Name         string          `json:"name" binding:"required,max=128"`
-	ContactName  string          `json:"contactName" binding:"max=64"`
-	ContactPhone string          `json:"contactPhone" binding:"max=32"`
-	ContactEmail string          `json:"contactEmail" binding:"max=128"`
-	BusinessInfo json.RawMessage `json:"businessInfo"`
-	Notes        string          `json:"notes"`
+	Name  string `json:"name" binding:"required,max=128"`
+	Notes string `json:"notes"`
 }
 
 type UpdateLicenseeRequest struct {
-	Name         *string         `json:"name" binding:"omitempty,max=128"`
-	ContactName  *string         `json:"contactName" binding:"omitempty,max=64"`
-	ContactPhone *string         `json:"contactPhone" binding:"omitempty,max=32"`
-	ContactEmail *string         `json:"contactEmail" binding:"omitempty,max=128"`
-	BusinessInfo json.RawMessage `json:"businessInfo"`
-	Notes        *string         `json:"notes"`
+	Name  *string `json:"name" binding:"omitempty,max=128"`
+	Notes *string `json:"notes"`
 }
 
 type UpdateLicenseeStatusRequest struct {
@@ -58,18 +49,9 @@ func (h *LicenseeHandler) Create(c *gin.Context) {
 	c.Set("audit_action", "licensee.create")
 	c.Set("audit_resource", "licensee")
 
-	bi := req.BusinessInfo
-	if len(bi) == 0 {
-		bi = json.RawMessage("{}")
-	}
-
 	licensee, err := h.svc.CreateLicensee(CreateLicenseeParams{
-		Name:         req.Name,
-		ContactName:  req.ContactName,
-		ContactPhone: req.ContactPhone,
-		ContactEmail: req.ContactEmail,
-		BusinessInfo: bi,
-		Notes:        req.Notes,
+		Name:  req.Name,
+		Notes: req.Notes,
 	})
 	if err != nil {
 		if errors.Is(err, ErrLicenseeNameExists) {
@@ -153,12 +135,8 @@ func (h *LicenseeHandler) Update(c *gin.Context) {
 	c.Set("audit_resource_id", c.Param("id"))
 
 	licensee, err := h.svc.UpdateLicensee(id, UpdateLicenseeParams{
-		Name:         req.Name,
-		ContactName:  req.ContactName,
-		ContactPhone: req.ContactPhone,
-		ContactEmail: req.ContactEmail,
-		BusinessInfo: req.BusinessInfo,
-		Notes:        req.Notes,
+		Name:  req.Name,
+		Notes: req.Notes,
 	})
 	if err != nil {
 		if errors.Is(err, ErrLicenseeNotFound) {

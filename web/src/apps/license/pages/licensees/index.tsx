@@ -46,7 +46,17 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { formatDateTime } from "@/lib/utils"
-import { LicenseeSheet, type LicenseeItem } from "../../components/licensee-sheet"
+import { LicenseeSheet } from "../../components/licensee-sheet"
+
+interface LicenseeItem {
+  id: number
+  name: string
+  code: string
+  notes: string
+  status: string
+  createdAt: string
+  updatedAt: string
+}
 
 const STATUS_VARIANTS: Record<string, "default" | "secondary" | "outline"> = {
   active: "default",
@@ -156,7 +166,6 @@ export function Component() {
           <TableHeader>
             <TableRow>
               <TableHead className="min-w-[180px]">{t("common:name")}</TableHead>
-              <TableHead className="w-[120px]">{t("license:licensees.contactName")}</TableHead>
               <TableHead className="w-[80px]">{t("common:status")}</TableHead>
               <TableHead className="w-[150px]">{t("common:createdAt")}</TableHead>
               <DataTableActionsHead className="min-w-[140px]">{t("common:actions")}</DataTableActionsHead>
@@ -164,10 +173,10 @@ export function Component() {
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <DataTableLoadingRow colSpan={5} />
+              <DataTableLoadingRow colSpan={4} />
             ) : licensees.length === 0 ? (
               <DataTableEmptyRow
-                colSpan={5}
+                colSpan={4}
                 icon={Building2}
                 title={t("license:licensees.empty")}
                 description={canCreate ? t("license:licensees.emptyHint") : undefined}
@@ -179,7 +188,6 @@ export function Component() {
                 return (
                   <TableRow key={item.id}>
                     <TableCell className="font-medium">{item.name}</TableCell>
-                    <TableCell className="text-sm">{item.contactName || "-"}</TableCell>
                     <TableCell>
                       <Badge variant={variant}>{t(`license:status.${statusKey}`, item.status)}</Badge>
                     </TableCell>

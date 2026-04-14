@@ -89,6 +89,10 @@ func seedAPM(db *gorm.DB, enforcer *casbin.Enforcer) error {
 		{"admin", "/api/v1/apm/services/:name", "GET"},
 		{"admin", "/api/v1/apm/timeseries", "GET"},
 		{"admin", "/api/v1/apm/topology", "GET"},
+		{"admin", "/api/v1/apm/spans/search", "GET"},
+		{"admin", "/api/v1/apm/analytics", "GET"},
+		{"admin", "/api/v1/apm/latency-distribution", "GET"},
+		{"admin", "/api/v1/apm/errors", "GET"},
 	}
 	menuPerms := [][]string{
 		{"admin", "apm", "read"},

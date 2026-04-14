@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useNavigate } from "react-router"
 import { useTranslation } from "react-i18next"
-import { Plus, Search, FileBadge, Ban, Download, Eye } from "lucide-react"
+import { Plus, Search, FileBadge, Ban, Download, Eye, Clock, ArrowUpCircle, Pause, Play } from "lucide-react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { usePermission } from "@/hooks/use-permission"
 import { useListPage } from "@/hooks/use-list-page"
@@ -56,6 +56,7 @@ export interface LicenseItem {
   planName: string
   registrationCode: string
   status: string
+  lifecycleStatus: string
   validFrom: string
   validUntil: string | null
   productName: string
@@ -63,8 +64,11 @@ export interface LicenseItem {
   createdAt: string
 }
 
-const STATUS_VARIANTS: Record<string, "default" | "destructive" | "outline"> = {
-  issued: "default",
+const LIFECYCLE_VARIANTS: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
+  pending: "secondary",
+  active: "default",
+  expired: "outline",
+  suspended: "secondary",
   revoked: "destructive",
 }
 
@@ -74,10 +78,15 @@ export function Component() {
   const queryClient = useQueryClient()
   const [formOpen, setFormOpen] = useState(false)
   const [statusFilter, setStatusFilter] = useState("")
-  const [revokeTarget, setRevokeTarget] = useState<LicenseItem | null>(null)
+  const [actionTarget, setActionTarget] = useState<LicenseItem | null>(null)
+  const [actionType, setActionType] = useState<"revoke" | "suspend" | "reactivate" | null>(null)
 
   const canIssue = usePermission("license:license:issue")
   const canRevoke = usePermission("license:license:revoke")
+  const canRenew = usePermission("license:license:renew")
+  const canUpgrade = usePermission("license:license:upgrade")
+  const canSuspend = usePermission("license:license:suspend")
+  const canReactivate = usePermission("license:license:reactivate")
 
   const {
     keyword, setKeyword, page, setPage,
@@ -85,15 +94,23 @@ export function Component() {
   } = useListPage<LicenseItem>({
     queryKey: "license-licenses",
     endpoint: "/api/v1/license/licenses",
-    extraParams: statusFilter ? { status: statusFilter } : undefined,
+    extraParams: statusFilter ? { lifecycleStatus: statusFilter } : undefined,
   })
 
-  const revokeMutation = useMutation({
-    mutationFn: (id: number) => api.patch(`/api/v1/license/licenses/${id}/revoke`),
+  const actionMutation = useMutation({
+    mutationFn: ({ id, action }: { id: number; action: string }) => {
+      return api.post(`/api/v1/license/licenses/${id}/${action}`)
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["license-licenses"] })
-      setRevokeTarget(null)
-      toast.success(t("license:licenses.revokeSuccess"))
+      setActionTarget(null)
+      setActionType(null)
+      const keyMap: Record<string, string> = {
+        revoke: "revokeSuccess",
+        suspend: "suspendSuccess",
+        reactivate: "reactivateSuccess",
+      }
+      toast.success(t(`license:licenses.${keyMap[actionType!]}`))
     },
     onError: (err) => toast.error(err.message),
   })
@@ -117,6 +134,127 @@ export function Component() {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t("license:licenses.exportFailed"))
     }
+  }
+
+  function openAction(item: LicenseItem, type: "revoke" | "suspend" | "reactivate") {
+    setActionTarget(item)
+    setActionType(type)
+  }
+
+  function confirmAction() {
+    if (!actionTarget || !actionType) return
+    actionMutation.mutate({ id: actionTarget.id, action: actionType })
+  }
+
+  const actionTitle = actionType ? t(`license:licenses.${actionType}Title`) : ""
+  const actionDesc = actionType ? t(`license:licenses.${actionType}Desc`) : ""
+
+  function renderRowActions(item: LicenseItem) {
+    const actions: JSX.Element[] = []
+
+    actions.push(
+      <Button
+        key="detail"
+        variant="ghost"
+        size="sm"
+        className="px-2.5"
+        onClick={() => navigate(`/license/licenses/${item.id}`)}
+      >
+        <Eye className="mr-1 h-3.5 w-3.5" />
+        {t("license:licenses.detail")}
+      </Button>
+    )
+
+    if (item.lifecycleStatus === "active" || item.lifecycleStatus === "pending" || item.lifecycleStatus === "expired") {
+      actions.push(
+        <Button
+          key="export"
+          variant="ghost"
+          size="sm"
+          className="px-2.5"
+          onClick={() => handleExport(item)}
+        >
+          <Download className="mr-1 h-3.5 w-3.5" />
+          {t("common:export")}
+        </Button>
+      )
+    }
+
+    if (item.lifecycleStatus === "active" || item.lifecycleStatus === "pending" || item.lifecycleStatus === "expired") {
+      if (canRenew) {
+        actions.push(
+          <Button
+            key="renew"
+            variant="ghost"
+            size="sm"
+            className="px-2.5"
+            onClick={() => navigate(`/license/licenses/${item.id}`, { state: { openRenew: true } })}
+          >
+            <Clock className="mr-1 h-3.5 w-3.5" />
+            {t("license:licenses.renew")}
+          </Button>
+        )
+      }
+      if (canUpgrade) {
+        actions.push(
+          <Button
+            key="upgrade"
+            variant="ghost"
+            size="sm"
+            className="px-2.5"
+            onClick={() => navigate(`/license/licenses/${item.id}`, { state: { openUpgrade: true } })}
+          >
+            <ArrowUpCircle className="mr-1 h-3.5 w-3.5" />
+            {t("license:licenses.upgrade")}
+          </Button>
+        )
+      }
+      if (canSuspend) {
+        actions.push(
+          <Button
+            key="suspend"
+            variant="ghost"
+            size="sm"
+            className="px-2.5 text-amber-600 hover:text-amber-600"
+            onClick={() => openAction(item, "suspend")}
+          >
+            <Pause className="mr-1 h-3.5 w-3.5" />
+            {t("license:licenses.suspend")}
+          </Button>
+        )
+      }
+      if (canRevoke) {
+        actions.push(
+          <Button
+            key="revoke"
+            variant="ghost"
+            size="sm"
+            className="px-2.5 text-destructive hover:text-destructive"
+            onClick={() => openAction(item, "revoke")}
+          >
+            <Ban className="mr-1 h-3.5 w-3.5" />
+            {t("license:licenses.revoke")}
+          </Button>
+        )
+      }
+    }
+
+    if (item.lifecycleStatus === "suspended" && canReactivate) {
+      actions.push(
+        <Button
+          key="reactivate"
+          variant="ghost"
+          size="sm"
+          className="px-2.5 text-green-600 hover:text-green-600"
+          onClick={() => openAction(item, "reactivate")}
+        >
+          <Play className="mr-1 h-3.5 w-3.5" />
+          {t("license:licenses.reactivate")}
+        </Button>
+      )
+    }
+
+    return actions
   }
 
   return (
@@ -149,8 +287,11 @@ export function Component() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">{t("license:licenses.allStatus")}</SelectItem>
-                <SelectItem value="issued">{t("license:status.issued")}</SelectItem>
-                <SelectItem value="revoked">{t("license:status.revoked")}</SelectItem>
+                <SelectItem value="pending">{t("license:lifecycleStatus.pending")}</SelectItem>
+                <SelectItem value="active">{t("license:lifecycleStatus.active")}</SelectItem>
+                <SelectItem value="expired">{t("license:lifecycleStatus.expired")}</SelectItem>
+                <SelectItem value="suspended">{t("license:lifecycleStatus.suspended")}</SelectItem>
+                <SelectItem value="revoked">{t("license:lifecycleStatus.revoked")}</SelectItem>
               </SelectContent>
             </Select>
             <Button type="submit" variant="outline">
@@ -167,7 +308,8 @@ export function Component() {
               <TableHead className="min-w-[120px]">{t("license:licenses.plan")}</TableHead>
               <TableHead className="min-w-[100px]">{t("license:licenses.product")}</TableHead>
               <TableHead className="min-w-[100px]">{t("license:licenses.licensee")}</TableHead>
-              <TableHead className="w-[80px]">{t("common:status")}</TableHead>
+              <TableHead className="min-w-[120px]">{t("license:licenses.registrationCode")}</TableHead>
+              <TableHead className="w-[80px]">{t("license:lifecycleStatus.title")}</TableHead>
               <TableHead className="w-[100px]">{t("license:licenses.validFrom")}</TableHead>
               <TableHead className="w-[100px]">{t("license:licenses.validUntil")}</TableHead>
               <TableHead className="w-[150px]">{t("license:licenses.issuedAt")}</TableHead>
@@ -176,25 +318,26 @@ export function Component() {
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <DataTableLoadingRow colSpan={8} />
+              <DataTableLoadingRow colSpan={9} />
             ) : licenses.length === 0 ? (
               <DataTableEmptyRow
-                colSpan={8}
+                colSpan={9}
                 icon={FileBadge}
                 title={t("license:licenses.empty")}
                 description={canIssue ? t("license:licenses.emptyHint") : undefined}
               />
             ) : (
               licenses.map((item) => {
-                const variant = STATUS_VARIANTS[item.status] ?? ("outline" as const)
-                const statusKey = item.status as string
+                const variant = LIFECYCLE_VARIANTS[item.lifecycleStatus] ?? ("outline" as const)
+                const statusKey = item.lifecycleStatus as string
                 return (
                   <TableRow key={item.id}>
                     <TableCell className="font-medium">{item.planName}</TableCell>
                     <TableCell className="text-sm">{item.productName || "-"}</TableCell>
                     <TableCell className="text-sm">{item.licenseeName || "-"}</TableCell>
+                    <TableCell className="text-sm font-mono text-xs">{item.registrationCode}</TableCell>
                     <TableCell>
-                      <Badge variant={variant}>{t(`license:status.${statusKey}`, item.status)}</Badge>
+                      <Badge variant={variant}>{t(`license:lifecycleStatus.${statusKey}`, statusKey)}</Badge>
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                       {item.validFrom ? formatDateTime(item.validFrom, { dateOnly: true }) : "-"}
@@ -207,39 +350,7 @@ export function Component() {
                     </TableCell>
                     <DataTableActionsCell>
                       <DataTableActions>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="px-2.5"
-                          onClick={() => navigate(`/license/licenses/${item.id}`)}
-                        >
-                          <Eye className="mr-1 h-3.5 w-3.5" />
-                          {t("license:licenses.detail")}
-                        </Button>
-                        {item.status === "issued" && (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="px-2.5"
-                              onClick={() => handleExport(item)}
-                            >
-                              <Download className="mr-1 h-3.5 w-3.5" />
-                              {t("common:export")}
-                            </Button>
-                            {canRevoke && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="px-2.5 text-destructive hover:text-destructive"
-                                onClick={() => setRevokeTarget(item)}
-                              >
-                                <Ban className="mr-1 h-3.5 w-3.5" />
-                                {t("license:licenses.revoke")}
-                              </Button>
-                            )}
-                          </>
-                        )}
+                        {renderRowActions(item)}
                       </DataTableActions>
                     </DataTableActionsCell>
                   </TableRow>
@@ -259,21 +370,19 @@ export function Component() {
 
       <IssueLicenseSheet open={formOpen} onOpenChange={setFormOpen} />
 
-      <AlertDialog open={revokeTarget !== null} onOpenChange={(open) => { if (!open) setRevokeTarget(null) }}>
+      <AlertDialog open={actionTarget !== null} onOpenChange={(open) => { if (!open) { setActionTarget(null); setActionType(null) } }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t("license:licenses.revokeTitle")}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("license:licenses.revokeDesc")}
-            </AlertDialogDescription>
+            <AlertDialogTitle>{actionTitle}</AlertDialogTitle>
+            <AlertDialogDescription>{actionDesc}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t("common:cancel")}</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => revokeTarget && revokeMutation.mutate(revokeTarget.id)}
-              disabled={revokeMutation.isPending}
+              onClick={confirmAction}
+              disabled={actionMutation.isPending}
             >
-              {revokeMutation.isPending ? t("common:processing") : t("license:licenses.confirmRevoke")}
+              {actionMutation.isPending ? t("common:processing") : t("common:confirm")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -1,6 +1,8 @@
 package license
 
 import (
+	"time"
+
 	"github.com/samber/do/v2"
 	"gorm.io/gorm"
 
@@ -47,12 +49,13 @@ func (r *LicenseRepo) FindByID(id uint) (*LicenseDetail, error) {
 }
 
 type LicenseListParams struct {
-	ProductID  uint
-	LicenseeID uint
-	Status     string
-	Keyword    string
-	Page       int
-	PageSize   int
+	ProductID       uint
+	LicenseeID      uint
+	Status          string
+	LifecycleStatus string
+	Keyword         string
+	Page            int
+	PageSize        int
 }
 
 type LicenseListItem struct {
@@ -82,6 +85,9 @@ func (r *LicenseRepo) List(params LicenseListParams) ([]LicenseListItem, int64, 
 	if params.Status != "" {
 		base = base.Where("license_licenses.status = ?", params.Status)
 	}
+	if params.LifecycleStatus != "" {
+		base = base.Where("license_licenses.lifecycle_status = ?", params.LifecycleStatus)
+	}
 	if params.Keyword != "" {
 		like := "%" + params.Keyword + "%"
 		base = base.Where("(license_licenses.plan_name LIKE ? OR license_licenses.registration_code LIKE ?)", like, like)
@@ -108,4 +114,34 @@ func (r *LicenseRepo) List(params LicenseListParams) ([]LicenseListItem, int64, 
 
 func (r *LicenseRepo) UpdateStatus(id uint, updates map[string]any) error {
 	return r.db.Model(&License{}).Where("id = ?", id).Updates(updates).Error
+}
+
+func (r *LicenseRepo) FindExpired(now time.Time) ([]License, error) {
+	var items []License
+	err := r.db.Where("lifecycle_status IN ? AND valid_until IS NOT NULL AND valid_until <= ?", []string{LicenseLifecyclePending, LicenseLifecycleActive}, now).Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (r *LicenseRepo) CountByProductAndKeyVersionLessThan(productID uint, version int) (int64, error) {
+	var count int64
+	err := r.db.Model(&License{}).
+		Where("product_id = ? AND status != ? AND key_version < ?", productID, LicenseStatusRevoked, version).
+		Count(&count).Error
+	return count, err
+}
+
+func (r *LicenseRepo) FindByProductID(productID uint) ([]License, error) {
+	var items []License
+	err := r.db.Where("product_id = ?", productID).Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (r *LicenseRepo) UpdateInTx(tx *gorm.DB, l *License) error {
+	return tx.Save(l).Error
 }

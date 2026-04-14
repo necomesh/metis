@@ -1,13 +1,15 @@
-import { useMemo, useState } from "react"
-import { useParams, useNavigate } from "react-router"
+import { useMemo, useState, useEffect } from "react"
+import { useParams, useNavigate, useLocation } from "react-router"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useTranslation } from "react-i18next"
-import { ArrowLeft, Ban, Check, Copy, Download, Loader2 } from "lucide-react"
+import { ArrowLeft, Ban, Check, Copy, Download, Loader2, Clock, ArrowUpCircle, Pause, Play } from "lucide-react"
 import { api } from "@/lib/api"
 import { usePermission } from "@/hooks/use-permission"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,6 +21,14 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { formatDateTime } from "@/lib/utils"
 
 interface LicenseDetail {
@@ -35,6 +45,10 @@ interface LicenseDetail {
   keyVersion: number
   signature: string
   status: string
+  lifecycleStatus: string
+  originalLicenseId: number | null
+  suspendedAt: string | null
+  suspendedBy: number | null
   issuedBy: number
   revokedAt: string | null
   revokedBy: number | null
@@ -72,8 +86,11 @@ interface SignedActivationClaims {
   exp?: number | null
 }
 
-const STATUS_VARIANTS: Record<string, "default" | "destructive"> = {
-  issued: "default",
+const LIFECYCLE_VARIANTS: Record<string, "default" | "destructive" | "outline" | "secondary"> = {
+  pending: "secondary",
+  active: "default",
+  expired: "outline",
+  suspended: "secondary",
   revoked: "destructive",
 }
 
@@ -81,9 +98,28 @@ export function Component() {
   const { t } = useTranslation(["license", "common"])
   const { id } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
   const queryClient = useQueryClient()
   const canRevoke = usePermission("license:license:revoke")
+  const canRenew = usePermission("license:license:renew")
+  const canUpgrade = usePermission("license:license:upgrade")
+  const canSuspend = usePermission("license:license:suspend")
+  const canReactivate = usePermission("license:license:reactivate")
   const [copied, setCopied] = useState(false)
+  const [renewOpen, setRenewOpen] = useState(false)
+  const [upgradeOpen, setUpgradeOpen] = useState(false)
+  const [newValidUntil, setNewValidUntil] = useState("")
+
+  useEffect(() => {
+    const state = location.state as { openRenew?: boolean; openUpgrade?: boolean } | null
+    if (state?.openRenew || state?.openUpgrade) {
+      queueMicrotask(() => {
+        if (state?.openRenew) setRenewOpen(true)
+        if (state?.openUpgrade) setUpgradeOpen(true)
+        navigate(location.pathname, { replace: true, state: {} })
+      })
+    }
+  }, [location, navigate])
 
   const { data: license, isLoading } = useQuery({
     queryKey: ["license-license", id],
@@ -103,6 +139,62 @@ export function Component() {
       queryClient.invalidateQueries({ queryKey: ["license-license", id] })
       queryClient.invalidateQueries({ queryKey: ["license-licenses"] })
       toast.success(t("license:licenses.revokeSuccess"))
+    },
+    onError: (err) => toast.error(err.message),
+  })
+
+  const renewMutation = useMutation({
+    mutationFn: () => api.post(`/api/v1/license/licenses/${id}/renew`, { validUntil: newValidUntil || null }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["license-license", id] })
+      queryClient.invalidateQueries({ queryKey: ["license-licenses"] })
+      setRenewOpen(false)
+      toast.success(t("license:licenses.renewSuccess"))
+    },
+    onError: (err) => toast.error(err.message),
+  })
+
+  const upgradeMutation = useMutation({
+    mutationFn: () =>
+      api.post<LicenseDetail>(`/api/v1/license/licenses/${id}/upgrade`, {
+        productId: license?.productId ?? undefined,
+        licenseeId: license?.licenseeId ?? undefined,
+        planId: license?.planId ?? undefined,
+        planName: license?.planName ?? "",
+        registrationCode: license?.registrationCode ?? "",
+        validFrom: license?.validFrom ?? "",
+        validUntil: license?.validUntil ?? undefined,
+        constraintValues: license?.constraintValues ?? {},
+        notes: "",
+      }),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["license-license", id] })
+      queryClient.invalidateQueries({ queryKey: ["license-licenses"] })
+      setUpgradeOpen(false)
+      toast.success(t("license:licenses.upgradeSuccess"))
+      if (data?.id) {
+        navigate(`/license/licenses/${data.id}`)
+      }
+    },
+    onError: (err) => toast.error(err.message),
+  })
+
+  const suspendMutation = useMutation({
+    mutationFn: () => api.post(`/api/v1/license/licenses/${id}/suspend`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["license-license", id] })
+      queryClient.invalidateQueries({ queryKey: ["license-licenses"] })
+      toast.success(t("license:licenses.suspendSuccess"))
+    },
+    onError: (err) => toast.error(err.message),
+  })
+
+  const reactivateMutation = useMutation({
+    mutationFn: () => api.post(`/api/v1/license/licenses/${id}/reactivate`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["license-license", id] })
+      queryClient.invalidateQueries({ queryKey: ["license-licenses"] })
+      toast.success(t("license:licenses.reactivateSuccess"))
     },
     onError: (err) => toast.error(err.message),
   })
@@ -196,8 +288,10 @@ export function Component() {
     )
   }
 
-  const variant = STATUS_VARIANTS[license.status] ?? ("default" as const)
-  const statusKey = license.status as string
+  const variant = LIFECYCLE_VARIANTS[license.lifecycleStatus] ?? ("default" as const)
+  const statusKey = license.lifecycleStatus as string
+  const canExport = license.lifecycleStatus === "active" || license.lifecycleStatus === "pending" || license.lifecycleStatus === "expired"
+  const canLifecycleAction = license.lifecycleStatus === "active" || license.lifecycleStatus === "pending" || license.lifecycleStatus === "expired"
 
   return (
     <div className="space-y-6">
@@ -207,43 +301,67 @@ export function Component() {
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <h2 className="text-lg font-semibold">{t("license:licenses.licenseDetail")}</h2>
-          <Badge variant={variant}>{t(`license:status.${statusKey}`, license.status)}</Badge>
+          <Badge variant={variant}>{t(`license:lifecycleStatus.${statusKey}`, license.lifecycleStatus)}</Badge>
         </div>
-        {license.status === "issued" && (
-          <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2">
+          {canExport && (
             <Button variant="outline" size="sm" onClick={handleExport}>
               <Download className="mr-1.5 h-4 w-4" />
               {t("license:licenses.exportLic")}
             </Button>
-            {canRevoke && (
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button variant="destructive" size="sm">
-                    <Ban className="mr-1.5 h-4 w-4" />
-                    {t("license:licenses.revoke")}
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>{t("license:licenses.revokeTitle")}</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      {t("license:licenses.revokeDesc")}
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>{t("common:cancel")}</AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={() => revokeMutation.mutate()}
-                      disabled={revokeMutation.isPending}
-                    >
-                      {revokeMutation.isPending ? t("common:processing") : t("license:licenses.confirmRevoke")}
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            )}
-          </div>
-        )}
+          )}
+          {canLifecycleAction && canRenew && (
+            <Button variant="outline" size="sm" onClick={() => setRenewOpen(true)}>
+              <Clock className="mr-1.5 h-4 w-4" />
+              {t("license:licenses.renew")}
+            </Button>
+          )}
+          {canLifecycleAction && canUpgrade && (
+            <Button variant="outline" size="sm" onClick={() => setUpgradeOpen(true)}>
+              <ArrowUpCircle className="mr-1.5 h-4 w-4" />
+              {t("license:licenses.upgrade")}
+            </Button>
+          )}
+          {canLifecycleAction && canSuspend && (
+            <Button variant="outline" size="sm" onClick={() => suspendMutation.mutate()} disabled={suspendMutation.isPending}>
+              <Pause className="mr-1.5 h-4 w-4" />
+              {t("license:licenses.suspend")}
+            </Button>
+          )}
+          {license.lifecycleStatus === "suspended" && canReactivate && (
+            <Button variant="outline" size="sm" onClick={() => reactivateMutation.mutate()} disabled={reactivateMutation.isPending}>
+              <Play className="mr-1.5 h-4 w-4" />
+              {t("license:licenses.reactivate")}
+            </Button>
+          )}
+          {canLifecycleAction && canRevoke && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="destructive" size="sm">
+                  <Ban className="mr-1.5 h-4 w-4" />
+                  {t("license:licenses.revoke")}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>{t("license:licenses.revokeTitle")}</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {t("license:licenses.revokeDesc")}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>{t("common:cancel")}</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() => revokeMutation.mutate()}
+                    disabled={revokeMutation.isPending}
+                  >
+                    {revokeMutation.isPending ? t("common:processing") : t("license:licenses.confirmRevoke")}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -270,6 +388,16 @@ export function Component() {
                 </Button>
               </dd>
             </div>
+            {license.originalLicenseId && (
+              <div className="flex items-start justify-between gap-4">
+                <dt className="text-muted-foreground shrink-0">{t("license:licenses.originalLicense")}</dt>
+                <dd>
+                  <Button variant="link" size="sm" className="h-auto p-0" onClick={() => navigate(`/license/licenses/${license.originalLicenseId}`)}>
+                    #{license.originalLicenseId}
+                  </Button>
+                </dd>
+              </div>
+            )}
           </dl>
         </div>
 
@@ -306,8 +434,18 @@ export function Component() {
           </div>
         )}
 
+        {/* Suspension Info */}
+        {license.lifecycleStatus === "suspended" && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-4 space-y-3 dark:border-amber-900/50 dark:bg-amber-900/10">
+            <h3 className="text-sm font-medium text-amber-700 dark:text-amber-400">{t("license:licenses.suspendTitle")}</h3>
+            <dl className="space-y-2 text-sm">
+              <InfoRow label={t("license:licenses.suspendedAt")} value={license.suspendedAt ? formatDateTime(license.suspendedAt) : "-"} />
+            </dl>
+          </div>
+        )}
+
         {/* Revocation Info */}
-        {license.status === "revoked" && (
+        {license.lifecycleStatus === "revoked" && (
           <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-4 space-y-3">
             <h3 className="text-sm font-medium text-destructive">{t("license:licenses.revocationInfo")}</h3>
             <dl className="space-y-2 text-sm">
@@ -352,6 +490,46 @@ export function Component() {
           </div>
         </div>
       )}
+
+      {/* Renew Dialog */}
+      <Dialog open={renewOpen} onOpenChange={setRenewOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("license:licenses.renewTitle")}</DialogTitle>
+            <DialogDescription>{t("license:licenses.renewDesc")}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <Label>{t("license:licenses.validUntilDate")}</Label>
+            <Input
+              type="date"
+              value={newValidUntil}
+              onChange={(e) => setNewValidUntil(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenewOpen(false)}>{t("common:cancel")}</Button>
+            <Button onClick={() => renewMutation.mutate()} disabled={renewMutation.isPending}>
+              {renewMutation.isPending ? t("common:processing") : t("common:confirm")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Upgrade Dialog */}
+      <Dialog open={upgradeOpen} onOpenChange={setUpgradeOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("license:licenses.upgradeTitle")}</DialogTitle>
+            <DialogDescription>{t("license:licenses.upgradeDesc")}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUpgradeOpen(false)}>{t("common:cancel")}</Button>
+            <Button onClick={() => upgradeMutation.mutate()} disabled={upgradeMutation.isPending}>
+              {upgradeMutation.isPending ? t("common:processing") : t("common:confirm")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

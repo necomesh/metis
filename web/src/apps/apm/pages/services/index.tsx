@@ -1,4 +1,3 @@
-import { useState } from "react"
 import { useNavigate } from "react-router"
 import { useTranslation } from "react-i18next"
 import { useQuery } from "@tanstack/react-query"
@@ -15,9 +14,7 @@ import { Sparkline } from "../../components/sparkline"
 function ServiceCatalogPage() {
   const { t } = useTranslation("apm")
   const navigate = useNavigate()
-  const { range, selectPreset, refresh, presets } = useTimeRange("last1h")
-
-  const [, setTick] = useState(0)
+  const { range, selectPreset, setCustomRange, refresh, presets, refreshInterval, setRefreshInterval } = useTimeRange("last1h")
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["apm-services", range.start, range.end],
@@ -45,8 +42,11 @@ function ServiceCatalogPage() {
           <TimeRangePicker
             value={range.label}
             presets={presets}
-            onSelect={(label) => { selectPreset(label); setTick((t) => t + 1) }}
-            onRefresh={() => { refresh(); setTick((t) => t + 1) }}
+            onSelect={selectPreset}
+            onRefresh={refresh}
+            onCustomRange={setCustomRange}
+            refreshInterval={refreshInterval}
+            onRefreshIntervalChange={setRefreshInterval}
           />
           <Button variant="outline" size="sm" className="h-7" onClick={() => { refresh(); refetch() }}>
             <RefreshCw className="h-3.5 w-3.5" />

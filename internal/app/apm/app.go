@@ -52,6 +52,10 @@ func (a *APMApp) Routes(api *gin.RouterGroup) {
 
 	api.GET("/apm/timeseries", h.GetTimeseries)
 	api.GET("/apm/topology", h.GetTopology)
+	api.GET("/apm/spans/search", h.SearchSpans)
+	api.GET("/apm/analytics", h.GetAnalytics)
+	api.GET("/apm/latency-distribution", h.GetLatencyDistribution)
+	api.GET("/apm/errors", h.GetErrors)
 }
 
 func (a *APMApp) Tasks() []scheduler.TaskDef {

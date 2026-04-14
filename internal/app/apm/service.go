@@ -95,3 +95,35 @@ func (s *Service) GetLogsByTraceId(ctx context.Context, traceId string) ([]Trace
 	}
 	return s.repo.GetLogsByTraceId(ctx, traceId)
 }
+
+// SearchSpans searches spans by attribute key/value.
+func (s *Service) SearchSpans(ctx context.Context, p SpanSearchParams) ([]Span, int64, error) {
+	if s.ch == nil {
+		return nil, 0, ErrClickHouseNotConfigured
+	}
+	return s.repo.SearchSpans(ctx, p)
+}
+
+// GetAnalytics returns aggregated metrics grouped by the specified dimension.
+func (s *Service) GetAnalytics(ctx context.Context, p AnalyticsParams) ([]AnalyticsGroup, error) {
+	if s.ch == nil {
+		return nil, ErrClickHouseNotConfigured
+	}
+	return s.repo.GetAnalytics(ctx, p)
+}
+
+// GetLatencyDistribution returns a histogram of latency distribution.
+func (s *Service) GetLatencyDistribution(ctx context.Context, p LatencyDistParams) ([]LatencyBucket, error) {
+	if s.ch == nil {
+		return nil, ErrClickHouseNotConfigured
+	}
+	return s.repo.GetLatencyDistribution(ctx, p)
+}
+
+// GetErrors returns error groups aggregated by error type and message.
+func (s *Service) GetErrors(ctx context.Context, start, end time.Time, service string) ([]ErrorGroup, error) {
+	if s.ch == nil {
+		return nil, ErrClickHouseNotConfigured
+	}
+	return s.repo.GetErrors(ctx, start, end, service)
+}

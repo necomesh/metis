@@ -26,6 +26,14 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { formatDateTime } from "@/lib/utils"
 import { ProductSheet, type ProductItem } from "../../components/product-sheet"
 import { ConstraintEditor } from "../../components/constraint-editor"
@@ -94,6 +102,11 @@ interface PublicKeyInfo {
   createdAt: string
 }
 
+interface RotateKeyImpact {
+  affectedCount: number
+  currentVersion: number
+}
+
 export function Component() {
   const { t } = useTranslation(["license", "common"])
   const { id } = useParams()
@@ -101,6 +114,8 @@ export function Component() {
   const [searchParams, setSearchParams] = useSearchParams()
   const queryClient = useQueryClient()
   const [editOpen, setEditOpen] = useState(false)
+  const [impactOpen, setImpactOpen] = useState(false)
+  const [bulkReissueOpen, setBulkReissueOpen] = useState(false)
 
   const canUpdate = usePermission("license:product:update")
   const canManagePlan = usePermission("license:plan:manage")
@@ -130,11 +145,30 @@ export function Component() {
     enabled: !!id,
   })
 
+  const { data: impact } = useQuery({
+    queryKey: ["license-product-key-impact", id],
+    queryFn: () => api.get<RotateKeyImpact>(`/api/v1/license/products/${id}/rotate-key-impact`),
+    enabled: !!id && impactOpen,
+  })
+
   const rotateKeyMutation = useMutation({
     mutationFn: () => api.post(`/api/v1/license/products/${id}/rotate-key`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["license-product-key", id] })
+      queryClient.invalidateQueries({ queryKey: ["license-product-key-impact", id] })
       toast.success(t("license:products.rotateKeySuccess"))
+      setImpactOpen(false)
+    },
+    onError: (err) => toast.error(err.message),
+  })
+
+  const bulkReissueMutation = useMutation({
+    mutationFn: () => api.post(`/api/v1/license/products/${id}/bulk-reissue`, { licenseIds: [] }),
+    onSuccess: (data: { reissued: number }) => {
+      queryClient.invalidateQueries({ queryKey: ["license-licenses"] })
+      queryClient.invalidateQueries({ queryKey: ["license-product-key-impact", id] })
+      toast.success(t("license:products.bulkReissueSuccess", { count: data.reissued }))
+      setBulkReissueOpen(false)
     },
     onError: (err) => toast.error(err.message),
   })
@@ -162,6 +196,10 @@ export function Component() {
     const nextParams = new URLSearchParams(searchParams)
     nextParams.set("tab", value)
     setSearchParams(nextParams, { replace: true })
+  }
+
+  function handleRotateKeyClick() {
+    setImpactOpen(true)
   }
 
   const editableProduct: ProductItem = {
@@ -331,41 +369,85 @@ export function Component() {
           </div>
 
           {canManageKey && (
-            <div className="flex justify-end">
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button variant="outline" size="sm">
-                    <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-                    {t("license:products.rotateKey")}
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>{t("license:products.confirmRotateKey")}</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      {t("license:products.rotateKeyDesc")}
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>{t("common:cancel")}</AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={() => rotateKeyMutation.mutate()}
-                      disabled={rotateKeyMutation.isPending}
-                    >
-                      {rotateKeyMutation.isPending ? (
-                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                      ) : null}
-                      {t("license:products.confirmRotate")}
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
+            <div className="flex flex-wrap justify-end gap-2">
+              {impact && impact.affectedCount > 0 && (
+                <Button variant="outline" size="sm" onClick={() => setBulkReissueOpen(true)}>
+                  {t("license:products.bulkReissue")}
+                </Button>
+              )}
+              <Button variant="outline" size="sm" onClick={handleRotateKeyClick}>
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                {t("license:products.rotateKey")}
+              </Button>
             </div>
           )}
         </TabsContent>
       </Tabs>
 
       <ProductSheet open={editOpen} onOpenChange={setEditOpen} product={editableProduct} />
+
+      {/* Rotate Key Impact Dialog */}
+      <Dialog open={impactOpen} onOpenChange={setImpactOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("license:products.rotateKeyImpactTitle")}</DialogTitle>
+            <DialogDescription>
+              {!impact ? (
+                <span className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  {t("common:loading")}
+                </span>
+              ) : impact.affectedCount > 0 ? (
+                t("license:products.rotateKeyImpactDesc", {
+                  version: impact.currentVersion,
+                  count: impact.affectedCount,
+                })
+              ) : (
+                t("license:products.rotateKeyNoImpact")
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setImpactOpen(false)}>
+              {t("common:cancel")}
+            </Button>
+            {impact && impact.affectedCount > 0 && (
+              <Button variant="outline" onClick={() => setBulkReissueOpen(true)}>
+                {t("license:products.bulkReissue")}
+              </Button>
+            )}
+            <Button
+              onClick={() => rotateKeyMutation.mutate()}
+              disabled={rotateKeyMutation.isPending}
+            >
+              {rotateKeyMutation.isPending && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+              {t("license:products.confirmRotate")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Reissue Dialog */}
+      <Dialog open={bulkReissueOpen} onOpenChange={setBulkReissueOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("license:products.bulkReissueTitle")}</DialogTitle>
+            <DialogDescription>{t("license:products.bulkReissueDesc")}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setBulkReissueOpen(false)}>
+              {t("common:cancel")}
+            </Button>
+            <Button
+              onClick={() => bulkReissueMutation.mutate()}
+              disabled={bulkReissueMutation.isPending}
+            >
+              {bulkReissueMutation.isPending && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+              {t("common:confirm")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

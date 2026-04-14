@@ -3,6 +3,7 @@ package license
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -53,11 +54,13 @@ type SetDefaultRequest struct {
 
 type ProductHandler struct {
 	productSvc *ProductService
+	licenseSvc *LicenseService
 }
 
 func NewProductHandler(i do.Injector) (*ProductHandler, error) {
 	return &ProductHandler{
 		productSvc: do.MustInvoke[*ProductService](i),
+		licenseSvc: do.MustInvoke[*LicenseService](i),
 	}, nil
 }
 
@@ -291,6 +294,67 @@ func (h *ProductHandler) GetPublicKey(c *gin.Context) {
 	}
 
 	handler.OK(c, key.ToResponse())
+}
+
+func (h *ProductHandler) RotateKeyImpact(c *gin.Context) {
+	id, err := parseID(c)
+	if err != nil {
+		handler.Fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	impact, err := h.licenseSvc.AssessKeyRotationImpact(id)
+	if err != nil {
+		if errors.Is(err, ErrProductNotFound) || errors.Is(err, ErrProductKeyNotFound) {
+			handler.Fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	handler.OK(c, impact)
+}
+
+type BulkReissueRequest struct {
+	LicenseIDs []uint `json:"licenseIds" binding:"required"`
+}
+
+func (h *ProductHandler) BulkReissue(c *gin.Context) {
+	id, err := parseID(c)
+	if err != nil {
+		handler.Fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	var req BulkReissueRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		handler.Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	userID, _ := c.Get("userId")
+
+	c.Set("audit_action", "product.bulkReissue")
+	c.Set("audit_resource", "license_product_key")
+	c.Set("audit_resource_id", c.Param("id"))
+
+	reissued, err := h.licenseSvc.BulkReissueLicenses(id, req.LicenseIDs, userID.(uint))
+	if err != nil {
+		if errors.Is(err, ErrBulkReissueTooMany) {
+			handler.Fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		if errors.Is(err, ErrProductKeyNotFound) {
+			handler.Fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	c.Set("audit_summary", fmt.Sprintf("bulk reissued %d licenses", reissued))
+	handler.OK(c, gin.H{"reissued": reissued})
 }
 
 // --- PlanHandler ---

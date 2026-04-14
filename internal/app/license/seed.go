@@ -120,11 +120,49 @@ func seedLicense(db *gorm.DB, enforcer *casbin.Enforcer) error {
 	licenseButtons := []model.Menu{
 		{Name: "签发许可", Type: model.MenuTypeButton, Permission: "license:license:issue", Sort: 0},
 		{Name: "吊销许可", Type: model.MenuTypeButton, Permission: "license:license:revoke", Sort: 1},
+		{Name: "续期许可", Type: model.MenuTypeButton, Permission: "license:license:renew", Sort: 2},
+		{Name: "升级许可", Type: model.MenuTypeButton, Permission: "license:license:upgrade", Sort: 3},
+		{Name: "暂停许可", Type: model.MenuTypeButton, Permission: "license:license:suspend", Sort: 4},
+		{Name: "恢复许可", Type: model.MenuTypeButton, Permission: "license:license:reactivate", Sort: 5},
 	}
 	for _, btn := range licenseButtons {
 		var existing model.Menu
 		if err := db.Where("permission = ?", btn.Permission).First(&existing).Error; err != nil {
 			btn.ParentID = &licenseMenu.ID
+			if err := db.Create(&btn).Error; err != nil {
+				slog.Error("seed: failed to create button menu", "permission", btn.Permission, "error", err)
+				continue
+			}
+			slog.Info("seed: created menu", "name", btn.Name, "permission", btn.Permission)
+		}
+	}
+
+	// 4. Seed 「注册码管理」menu under 「许可管理」
+	var regMenu model.Menu
+	if err := db.Where("permission = ?", "license:registration:list").First(&regMenu).Error; err != nil {
+		regMenu = model.Menu{
+			ParentID:   &licenseDir.ID,
+			Name:       "注册码管理",
+			Type:       model.MenuTypeMenu,
+			Path:       "/license/registrations",
+			Icon:       "Ticket",
+			Permission: "license:registration:list",
+			Sort:       3,
+		}
+		if err := db.Create(&regMenu).Error; err != nil {
+			return err
+		}
+		slog.Info("seed: created menu", "name", regMenu.Name, "permission", regMenu.Permission)
+	}
+
+	regButtons := []model.Menu{
+		{Name: "新增注册码", Type: model.MenuTypeButton, Permission: "license:registration:create", Sort: 0},
+		{Name: "自动生成注册码", Type: model.MenuTypeButton, Permission: "license:registration:generate", Sort: 1},
+	}
+	for _, btn := range regButtons {
+		var existing model.Menu
+		if err := db.Where("permission = ?", btn.Permission).First(&existing).Error; err != nil {
+			btn.ParentID = &regMenu.ID
 			if err := db.Create(&btn).Error; err != nil {
 				slog.Error("seed: failed to create button menu", "permission", btn.Permission, "error", err)
 				continue
@@ -143,6 +181,8 @@ func seedLicense(db *gorm.DB, enforcer *casbin.Enforcer) error {
 		{"admin", "/api/v1/license/products/:id/schema", "PUT"},
 		{"admin", "/api/v1/license/products/:id/status", "PATCH"},
 		{"admin", "/api/v1/license/products/:id/rotate-key", "POST"},
+		{"admin", "/api/v1/license/products/:id/rotate-key-impact", "GET"},
+		{"admin", "/api/v1/license/products/:id/bulk-reissue", "POST"},
 		{"admin", "/api/v1/license/products/:id/public-key", "GET"},
 		// Plans
 		{"admin", "/api/v1/license/products/:id/plans", "POST"},
@@ -159,8 +199,16 @@ func seedLicense(db *gorm.DB, enforcer *casbin.Enforcer) error {
 		{"admin", "/api/v1/license/licenses", "GET"},
 		{"admin", "/api/v1/license/licenses", "POST"},
 		{"admin", "/api/v1/license/licenses/:id", "GET"},
+		{"admin", "/api/v1/license/licenses/:id/renew", "POST"},
+		{"admin", "/api/v1/license/licenses/:id/upgrade", "POST"},
+		{"admin", "/api/v1/license/licenses/:id/suspend", "POST"},
+		{"admin", "/api/v1/license/licenses/:id/reactivate", "POST"},
 		{"admin", "/api/v1/license/licenses/:id/revoke", "PATCH"},
 		{"admin", "/api/v1/license/licenses/:id/export", "GET"},
+		// Registrations
+		{"admin", "/api/v1/license/registrations", "GET"},
+		{"admin", "/api/v1/license/registrations", "POST"},
+		{"admin", "/api/v1/license/registrations/generate", "POST"},
 	}
 
 	// Also add menu permissions
@@ -178,6 +226,13 @@ func seedLicense(db *gorm.DB, enforcer *casbin.Enforcer) error {
 		{"admin", "license:license:list", "read"},
 		{"admin", "license:license:issue", "read"},
 		{"admin", "license:license:revoke", "read"},
+		{"admin", "license:license:renew", "read"},
+		{"admin", "license:license:upgrade", "read"},
+		{"admin", "license:license:suspend", "read"},
+		{"admin", "license:license:reactivate", "read"},
+		{"admin", "license:registration:list", "read"},
+		{"admin", "license:registration:create", "read"},
+		{"admin", "license:registration:generate", "read"},
 	}
 
 	allPolicies := append(policies, menuPerms...)

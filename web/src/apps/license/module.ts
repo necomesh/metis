@@ -31,6 +31,15 @@ registerApp({
       ],
     },
     {
+      path: "license/registrations",
+      children: [
+        {
+          index: true,
+          lazy: () => import("./pages/registrations/index"),
+        },
+      ],
+    },
+    {
       path: "license/licenses",
       children: [
         {

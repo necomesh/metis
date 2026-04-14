@@ -210,58 +210,90 @@ func (k *ProductKey) ToResponse() ProductKeyResponse {
 	}
 }
 
-// License statuses
+// License statuses (legacy compatibility)
 const (
 	LicenseStatusIssued  = "issued"
 	LicenseStatusRevoked = "revoked"
 )
 
+// License lifecycle statuses
+const (
+	LicenseLifecyclePending    = "pending"
+	LicenseLifecycleActive     = "active"
+	LicenseLifecycleExpired    = "expired"
+	LicenseLifecycleSuspended  = "suspended"
+	LicenseLifecycleRevoked    = "revoked"
+)
+
 type License struct {
 	model.BaseModel
-	ProductID        *uint      `json:"productId" gorm:"index"`
-	LicenseeID       *uint      `json:"licenseeId" gorm:"index"`
-	PlanID           *uint      `json:"planId"`
-	PlanName         string     `json:"planName" gorm:"size:128;not null"`
-	RegistrationCode string     `json:"registrationCode" gorm:"size:512;not null"`
-	ConstraintValues JSONText   `json:"constraintValues" gorm:"type:text"`
-	ValidFrom        time.Time  `json:"validFrom" gorm:"not null"`
-	ValidUntil       *time.Time `json:"validUntil"`
-	ActivationCode   string     `json:"activationCode" gorm:"type:text;not null;uniqueIndex"`
-	KeyVersion       int        `json:"keyVersion" gorm:"not null"`
-	Signature        string     `json:"signature" gorm:"type:text;not null"`
-	Status           string     `json:"status" gorm:"size:16;not null;default:issued"`
-	IssuedBy         uint       `json:"issuedBy" gorm:"not null"`
-	RevokedAt        *time.Time `json:"revokedAt"`
-	RevokedBy        *uint      `json:"revokedBy"`
-	Notes            string     `json:"notes" gorm:"type:text"`
+	ProductID         *uint      `json:"productId" gorm:"index"`
+	LicenseeID        *uint      `json:"licenseeId" gorm:"index"`
+	PlanID            *uint      `json:"planId"`
+	PlanName          string     `json:"planName" gorm:"size:128;not null"`
+	RegistrationCode  string     `json:"registrationCode" gorm:"size:512;not null"`
+	ConstraintValues  JSONText   `json:"constraintValues" gorm:"type:text"`
+	ValidFrom         time.Time  `json:"validFrom" gorm:"not null"`
+	ValidUntil        *time.Time `json:"validUntil"`
+	ActivationCode    string     `json:"activationCode" gorm:"type:text;not null;uniqueIndex"`
+	KeyVersion        int        `json:"keyVersion" gorm:"not null"`
+	Signature         string     `json:"signature" gorm:"type:text;not null"`
+	Status            string     `json:"status" gorm:"size:16;not null;default:issued"`
+	LifecycleStatus   string     `json:"lifecycleStatus" gorm:"size:16;not null;default:active"`
+	OriginalLicenseID *uint      `json:"originalLicenseId" gorm:"index"`
+	SuspendedAt       *time.Time `json:"suspendedAt"`
+	SuspendedBy       *uint      `json:"suspendedBy"`
+	IssuedBy          uint       `json:"issuedBy" gorm:"not null"`
+	RevokedAt         *time.Time `json:"revokedAt"`
+	RevokedBy         *uint      `json:"revokedBy"`
+	Notes             string     `json:"notes" gorm:"type:text"`
 }
 
 func (License) TableName() string { return "license_licenses" }
 
+// --- LicenseRegistration ---
+
+type LicenseRegistration struct {
+	model.BaseModel
+	ProductID      *uint      `json:"productId" gorm:"index"`
+	LicenseeID     *uint      `json:"licenseeId" gorm:"index"`
+	Code           string     `json:"code" gorm:"size:128;not null;uniqueIndex"`
+	Source         string     `json:"source" gorm:"size:32;not null"` // pre_registered, auto_generated
+	Fingerprint    string     `json:"fingerprint" gorm:"type:text"`
+	ExpiresAt      *time.Time `json:"expiresAt"`
+	BoundLicenseID *uint      `json:"boundLicenseId" gorm:"index"`
+}
+
+func (LicenseRegistration) TableName() string { return "license_registrations" }
+
 type LicenseResponse struct {
-	ID               uint            `json:"id"`
-	ProductID        *uint           `json:"productId"`
-	LicenseeID       *uint           `json:"licenseeId"`
-	PlanID           *uint           `json:"planId"`
-	PlanName         string          `json:"planName"`
-	RegistrationCode string          `json:"registrationCode"`
-	ConstraintValues json.RawMessage `json:"constraintValues"`
-	ValidFrom        time.Time       `json:"validFrom"`
-	ValidUntil       *time.Time      `json:"validUntil"`
-	ActivationCode   string          `json:"activationCode"`
-	KeyVersion       int             `json:"keyVersion"`
-	Signature        string          `json:"signature"`
-	Status           string          `json:"status"`
-	IssuedBy         uint            `json:"issuedBy"`
-	RevokedAt        *time.Time      `json:"revokedAt,omitempty"`
-	RevokedBy        *uint           `json:"revokedBy,omitempty"`
-	Notes            string          `json:"notes"`
-	ProductName      string          `json:"productName,omitempty"`
-	ProductCode      string          `json:"productCode,omitempty"`
-	LicenseeName     string          `json:"licenseeName,omitempty"`
-	LicenseeCode     string          `json:"licenseeCode,omitempty"`
-	CreatedAt        time.Time       `json:"createdAt"`
-	UpdatedAt        time.Time       `json:"updatedAt"`
+	ID                uint            `json:"id"`
+	ProductID         *uint           `json:"productId"`
+	LicenseeID        *uint           `json:"licenseeId"`
+	PlanID            *uint           `json:"planId"`
+	PlanName          string          `json:"planName"`
+	RegistrationCode  string          `json:"registrationCode"`
+	ConstraintValues  json.RawMessage `json:"constraintValues"`
+	ValidFrom         time.Time       `json:"validFrom"`
+	ValidUntil        *time.Time      `json:"validUntil"`
+	ActivationCode    string          `json:"activationCode"`
+	KeyVersion        int             `json:"keyVersion"`
+	Signature         string          `json:"signature"`
+	Status            string          `json:"status"`
+	LifecycleStatus   string          `json:"lifecycleStatus"`
+	OriginalLicenseID *uint           `json:"originalLicenseId,omitempty"`
+	SuspendedAt       *time.Time      `json:"suspendedAt,omitempty"`
+	SuspendedBy       *uint           `json:"suspendedBy,omitempty"`
+	IssuedBy          uint            `json:"issuedBy"`
+	RevokedAt         *time.Time      `json:"revokedAt,omitempty"`
+	RevokedBy         *uint           `json:"revokedBy,omitempty"`
+	Notes             string          `json:"notes"`
+	ProductName       string          `json:"productName,omitempty"`
+	ProductCode       string          `json:"productCode,omitempty"`
+	LicenseeName      string          `json:"licenseeName,omitempty"`
+	LicenseeCode      string          `json:"licenseeCode,omitempty"`
+	CreatedAt         time.Time       `json:"createdAt"`
+	UpdatedAt         time.Time       `json:"updatedAt"`
 }
 
 func (l *License) ToResponse() LicenseResponse {
@@ -270,25 +302,29 @@ func (l *License) ToResponse() LicenseResponse {
 		cv = json.RawMessage("{}")
 	}
 	return LicenseResponse{
-		ID:               l.ID,
-		ProductID:        l.ProductID,
-		LicenseeID:       l.LicenseeID,
-		PlanID:           l.PlanID,
-		PlanName:         l.PlanName,
-		RegistrationCode: l.RegistrationCode,
-		ConstraintValues: cv,
-		ValidFrom:        l.ValidFrom,
-		ValidUntil:       l.ValidUntil,
-		ActivationCode:   l.ActivationCode,
-		KeyVersion:       l.KeyVersion,
-		Signature:        l.Signature,
-		Status:           l.Status,
-		IssuedBy:         l.IssuedBy,
-		RevokedAt:        l.RevokedAt,
-		RevokedBy:        l.RevokedBy,
-		Notes:            l.Notes,
-		CreatedAt:        l.CreatedAt,
-		UpdatedAt:        l.UpdatedAt,
+		ID:                l.ID,
+		ProductID:         l.ProductID,
+		LicenseeID:        l.LicenseeID,
+		PlanID:            l.PlanID,
+		PlanName:          l.PlanName,
+		RegistrationCode:  l.RegistrationCode,
+		ConstraintValues:  cv,
+		ValidFrom:         l.ValidFrom,
+		ValidUntil:        l.ValidUntil,
+		ActivationCode:    l.ActivationCode,
+		KeyVersion:        l.KeyVersion,
+		Signature:         l.Signature,
+		Status:            l.Status,
+		LifecycleStatus:   l.LifecycleStatus,
+		OriginalLicenseID: l.OriginalLicenseID,
+		SuspendedAt:       l.SuspendedAt,
+		SuspendedBy:       l.SuspendedBy,
+		IssuedBy:          l.IssuedBy,
+		RevokedAt:         l.RevokedAt,
+		RevokedBy:         l.RevokedBy,
+		Notes:             l.Notes,
+		CreatedAt:         l.CreatedAt,
+		UpdatedAt:         l.UpdatedAt,
 	}
 }
 
@@ -305,14 +341,10 @@ type BusinessInfo struct {
 
 type Licensee struct {
 	model.BaseModel
-	Name         string   `json:"name" gorm:"size:128;not null;uniqueIndex"`
-	Code         string   `json:"code" gorm:"size:64;not null;uniqueIndex"`
-	ContactName  string   `json:"contactName" gorm:"size:64"`
-	ContactPhone string   `json:"contactPhone" gorm:"size:32"`
-	ContactEmail string   `json:"contactEmail" gorm:"size:128"`
-	BusinessInfo JSONText `json:"businessInfo" gorm:"type:text"`
-	Notes        string   `json:"notes" gorm:"type:text"`
-	Status       string   `json:"status" gorm:"size:16;not null;default:active"`
+	Name   string `json:"name" gorm:"size:128;not null;uniqueIndex"`
+	Code   string `json:"code" gorm:"size:64;not null;uniqueIndex"`
+	Notes  string `json:"notes" gorm:"type:text"`
+	Status string `json:"status" gorm:"size:16;not null;default:active"`
 }
 
 func (Licensee) TableName() string { return "license_licensees" }
@@ -332,35 +364,23 @@ func generateLicenseeCode() (string, error) {
 }
 
 type LicenseeResponse struct {
-	ID           uint            `json:"id"`
-	Name         string          `json:"name"`
-	Code         string          `json:"code"`
-	ContactName  string          `json:"contactName"`
-	ContactPhone string          `json:"contactPhone"`
-	ContactEmail string          `json:"contactEmail"`
-	BusinessInfo json.RawMessage `json:"businessInfo"`
-	Notes        string          `json:"notes"`
-	Status       string          `json:"status"`
-	CreatedAt    time.Time       `json:"createdAt"`
-	UpdatedAt    time.Time       `json:"updatedAt"`
+	ID        uint      `json:"id"`
+	Name      string    `json:"name"`
+	Code      string    `json:"code"`
+	Notes     string    `json:"notes"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 func (l *Licensee) ToResponse() LicenseeResponse {
-	bi := json.RawMessage(l.BusinessInfo)
-	if len(bi) == 0 {
-		bi = json.RawMessage("{}")
-	}
 	return LicenseeResponse{
-		ID:           l.ID,
-		Name:         l.Name,
-		Code:         l.Code,
-		ContactName:  l.ContactName,
-		ContactPhone: l.ContactPhone,
-		ContactEmail: l.ContactEmail,
-		BusinessInfo: bi,
-		Notes:        l.Notes,
-		Status:       l.Status,
-		CreatedAt:    l.CreatedAt,
-		UpdatedAt:    l.UpdatedAt,
+		ID:        l.ID,
+		Name:      l.Name,
+		Code:      l.Code,
+		Notes:     l.Notes,
+		Status:    l.Status,
+		CreatedAt: l.CreatedAt,
+		UpdatedAt: l.UpdatedAt,
 	}
 }

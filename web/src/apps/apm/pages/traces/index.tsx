@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react"
-import { useNavigate, useSearchParams } from "react-router"
+import { useNavigate } from "react-router"
 import { useTranslation } from "react-i18next"
 import { useQuery } from "@tanstack/react-query"
 import { Search, AlertCircle, CheckCircle2, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react"
@@ -11,36 +11,29 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge"
 
 import { fetchTraces, type TraceSummary } from "../../api"
-import { useTimeRange } from "../../hooks/use-time-range"
+import { useUrlTimeRange } from "../../hooks/use-url-time-range"
 import { TimeRangePicker } from "../../components/time-range-picker"
 
 function TraceExplorerPage() {
   const { t } = useTranslation("apm")
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
-  const { range, selectPreset, refresh, presets } = useTimeRange("last1h")
+  const { range, selectPreset, setCustomRange, refresh, presets, refreshInterval, setRefreshInterval, searchParams } = useUrlTimeRange()
 
-  // Initialize filters from URL searchParams (for Service Detail → Trace Explorer navigation)
   const [service, setService] = useState(searchParams.get("service") ?? "")
   const [operation, setOperation] = useState(searchParams.get("operation") ?? "")
   const [status, setStatus] = useState(searchParams.get("status") ?? "")
   const [durationMin, setDurationMin] = useState(searchParams.get("duration_min") ?? "")
   const [durationMax, setDurationMax] = useState(searchParams.get("duration_max") ?? "")
 
-  // Use URL start/end if provided (from Service Detail jump), otherwise use time range picker
-  const urlStart = searchParams.get("start")
-  const urlEnd = searchParams.get("end")
-  const effectiveStart = urlStart || range.start
-  const effectiveEnd = urlEnd || range.end
   const [page, setPage] = useState(1)
   const pageSize = 20
 
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ["apm-traces", effectiveStart, effectiveEnd, service, operation, status, durationMin, durationMax, page],
+    queryKey: ["apm-traces", range.start, range.end, service, operation, status, durationMin, durationMax, page],
     queryFn: () =>
       fetchTraces({
-        start: effectiveStart,
-        end: effectiveEnd,
+        start: range.start,
+        end: range.end,
         service: service || undefined,
         operation: operation || undefined,
         status: status || undefined,
@@ -83,6 +76,9 @@ function TraceExplorerPage() {
             presets={presets}
             onSelect={(label) => { selectPreset(label); setPage(1) }}
             onRefresh={() => { refresh(); setPage(1) }}
+            onCustomRange={(s, e) => { setCustomRange(s, e); setPage(1) }}
+            refreshInterval={refreshInterval}
+            onRefreshIntervalChange={setRefreshInterval}
           />
           <Button variant="outline" size="sm" className="h-7" onClick={() => { refresh(); refetch() }}>
             <RefreshCw className="h-3.5 w-3.5" />

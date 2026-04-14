@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { api } from "@/lib/api"
 import { toast } from "sonner"
@@ -23,6 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { useTranslation } from "react-i18next"
 
 interface ConstraintFeature {
   key: string
@@ -62,6 +63,12 @@ interface LicenseeOption {
   code: string
 }
 
+interface RegistrationOption {
+  id: number
+  code: string
+  expiresAt: string | null
+}
+
 type ModuleValues = { enabled: boolean; [featureKey: string]: unknown }
 type PlanValues = Record<string, ModuleValues>
 
@@ -89,39 +96,41 @@ function buildDefaults(schema: ConstraintModule[]): PlanValues {
 }
 
 export function IssueLicenseSheet({ open, onOpenChange }: IssueLicenseSheetProps) {
+  const { t } = useTranslation(["license", "common"])
   const queryClient = useQueryClient()
 
   const [productId, setProductId] = useState("")
   const [licenseeId, setLicenseeId] = useState("")
   const [planId, setPlanId] = useState("")
   const [registrationCode, setRegistrationCode] = useState("")
+  const [registrationMode, setRegistrationMode] = useState<"select" | "generate" | "manual">("select")
   const [validFrom, setValidFrom] = useState("")
   const [validUntil, setValidUntil] = useState("")
   const [notes, setNotes] = useState("")
   const [constraintValues, setConstraintValues] = useState<PlanValues>({})
 
-  // Reset form when sheet opens
-  const [lastOpen, setLastOpen] = useState(false)
-  if (open !== lastOpen) {
-    setLastOpen(open)
+  // Reset form when sheet opens/closes
+  useEffect(() => {
     if (open) {
-      setProductId("")
-      setLicenseeId("")
-      setPlanId("")
-      setRegistrationCode("")
-      setValidFrom(new Date().toISOString().split("T")[0])
-      setValidUntil("")
-      setNotes("")
-      setConstraintValues({})
+      queueMicrotask(() => {
+        setProductId("")
+        setLicenseeId("")
+        setPlanId("")
+        setRegistrationCode("")
+        setRegistrationMode("select")
+        setValidFrom(new Date().toISOString().split("T")[0])
+        setValidUntil("")
+        setNotes("")
+        setConstraintValues({})
+      })
     }
-  }
+  }, [open])
 
   // Fetch published products with plans
   const { data: products = [] } = useQuery({
     queryKey: ["license-products-published"],
     queryFn: async () => {
       const res = await api.get<{ items: ProductOption[] }>("/api/v1/license/products?status=published&pageSize=100")
-      // Fetch detail with plans for each product
       const detailed = await Promise.all(
         res.items.map((p) => api.get<ProductOption>(`/api/v1/license/products/${p.id}`))
       )
@@ -138,26 +147,38 @@ export function IssueLicenseSheet({ open, onOpenChange }: IssueLicenseSheetProps
   })
   const licensees = licenseesData?.items ?? []
 
+  // Fetch available registrations for selected product
+  const { data: registrationsData } = useQuery({
+    queryKey: ["license-registrations-available", productId],
+    queryFn: () =>
+      api.get<{ items: RegistrationOption[] }>(
+        `/api/v1/license/registrations?productId=${productId}&status=unbound&pageSize=100`
+      ),
+    enabled: open && !!productId && registrationMode === "select",
+  })
+  const registrations = registrationsData?.items ?? []
+
   const selectedProduct = useMemo(
     () => products.find((p) => String(p.id) === productId),
-    [products, productId],
+    [products, productId]
   )
 
   const plans = useMemo(
     () => selectedProduct?.plans ?? [],
-    [selectedProduct],
+    [selectedProduct]
   )
 
   const schema = useMemo(
     () => (selectedProduct?.constraintSchema && Array.isArray(selectedProduct.constraintSchema)
       ? selectedProduct.constraintSchema
       : []),
-    [selectedProduct],
+    [selectedProduct]
   )
 
   function handleProductChange(value: string) {
     setProductId(value)
     setPlanId("")
+    setRegistrationCode("")
     const product = products.find((p) => String(p.id) === value)
     if (product?.constraintSchema) {
       setConstraintValues(buildDefaults(product.constraintSchema))
@@ -211,7 +232,20 @@ export function IssueLicenseSheet({ open, onOpenChange }: IssueLicenseSheetProps
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["license-licenses"] })
       onOpenChange(false)
-      toast.success("许可签发成功")
+      toast.success(t("license:licenses.issueSuccess"))
+    },
+    onError: (err) => toast.error(err.message),
+  })
+
+  const generateRegMutation = useMutation({
+    mutationFn: () =>
+      api.post<RegistrationOption>("/api/v1/license/registrations/generate", {
+        productId: Number(productId) || undefined,
+        licenseeId: Number(licenseeId) || undefined,
+      }),
+    onSuccess: (data) => {
+      setRegistrationCode(data.code)
+      toast.success(t("license:registrations.generateSuccess"))
     },
     onError: (err) => toast.error(err.message),
   })
@@ -221,7 +255,7 @@ export function IssueLicenseSheet({ open, onOpenChange }: IssueLicenseSheetProps
     if (!productId || !licenseeId || !registrationCode || !validFrom) return
 
     const selectedPlan = plans.find((p) => String(p.id) === planId)
-    const planName = planId === "custom" ? "自定义" : (selectedPlan?.name ?? "自定义")
+    const planName = planId === "custom" ? t("license:licenses.custom") : (selectedPlan?.name ?? t("license:licenses.custom"))
 
     issueMutation.mutate({
       productId: Number(productId),
@@ -236,20 +270,23 @@ export function IssueLicenseSheet({ open, onOpenChange }: IssueLicenseSheetProps
     })
   }
 
+  const isPlanSelected = planId && planId !== "custom"
+  const isCustomPlan = planId === "custom"
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="overflow-y-auto sm:max-w-lg">
         <SheetHeader>
-          <SheetTitle>签发许可</SheetTitle>
-          <SheetDescription className="sr-only">为授权主体签发新许可</SheetDescription>
+          <SheetTitle>{t("license:licenses.issue")}</SheetTitle>
+          <SheetDescription className="sr-only">{t("license:licenses.issueLicenseDesc")}</SheetDescription>
         </SheetHeader>
         <form onSubmit={handleSubmit} className="flex flex-1 flex-col gap-4 px-4">
           {/* Product */}
           <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">商品 *</Label>
+            <Label className="text-xs text-muted-foreground">{t("license:licenses.productRequired")}</Label>
             <Select value={productId} onValueChange={handleProductChange}>
               <SelectTrigger className="w-full">
-                <SelectValue placeholder="选择商品" />
+                <SelectValue placeholder={t("license:licenses.selectProduct")} />
               </SelectTrigger>
               <SelectContent>
                 {products.map((p) => (
@@ -263,10 +300,10 @@ export function IssueLicenseSheet({ open, onOpenChange }: IssueLicenseSheetProps
 
           {/* Licensee */}
           <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">授权主体 *</Label>
+            <Label className="text-xs text-muted-foreground">{t("license:licenses.licenseeRequired")}</Label>
             <Select value={licenseeId} onValueChange={setLicenseeId}>
               <SelectTrigger className="w-full">
-                <SelectValue placeholder="选择授权主体" />
+                <SelectValue placeholder={t("license:licenses.selectLicensee")} />
               </SelectTrigger>
               <SelectContent>
                 {licensees.map((l) => (
@@ -281,30 +318,66 @@ export function IssueLicenseSheet({ open, onOpenChange }: IssueLicenseSheetProps
           {/* Plan */}
           {productId && (
             <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">套餐</Label>
+              <Label className="text-xs text-muted-foreground">{t("license:licenses.selectPlanOrCustom")}</Label>
               <Select value={planId} onValueChange={handlePlanChange}>
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="选择套餐或自定义" />
+                  <SelectValue placeholder={t("license:licenses.selectPlanOrCustom")} />
                 </SelectTrigger>
                 <SelectContent>
                   {plans.map((p) => (
                     <SelectItem key={p.id} value={String(p.id)}>
-                      {p.name} {p.isDefault && "(默认)"}
+                      {p.name} {p.isDefault && t("license:licenses.defaultSuffix")}
                     </SelectItem>
                   ))}
-                  <SelectItem value="custom">自定义</SelectItem>
+                  <SelectItem value="custom">{t("license:licenses.custom")}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
           )}
 
-          {/* Constraint Values */}
-          {productId && schema.length > 0 && (planId === "custom" || planId) && (
+          {/* Constraint Values - read-only summary for preset plan */}
+          {productId && schema.length > 0 && isPlanSelected && (
+            <div className="space-y-2.5 rounded-lg border bg-muted/15 p-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs text-muted-foreground">{t("license:licenses.planSummary")}</Label>
+                <Badge variant="outline" className="rounded-md border-0 bg-muted/60 text-[11px] text-muted-foreground">
+                  {schema.length} {t("license:plans.moduleCount", { count: schema.length })}
+                </Badge>
+              </div>
+              {schema.map((mod) => {
+                const modValues = constraintValues[mod.key] ?? { enabled: false }
+                const isEnabled = !!modValues.enabled
+                const enabledFeatures = mod.features.filter((f) => modValues[f.key] !== undefined)
+                return (
+                  <div key={mod.key} className="text-sm">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{mod.label || mod.key}</span>
+                      <Badge variant={isEnabled ? "default" : "outline"} className="text-[10px]">
+                        {isEnabled ? t("license:licenses.moduleEnabled") : t("license:licenses.moduleDisabled")}
+                      </Badge>
+                    </div>
+                    {isEnabled && enabledFeatures.length > 0 && (
+                      <div className="mt-1 flex flex-wrap gap-1 text-xs text-muted-foreground">
+                        {enabledFeatures.map((f) => (
+                          <span key={f.key} className="rounded bg-muted/60 px-1.5 py-0.5">
+                            {f.label || f.key}: {String(modValues[f.key])}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {/* Constraint Values - editable for custom plan */}
+          {productId && schema.length > 0 && isCustomPlan && (
             <div className="space-y-2.5">
               <div className="flex items-center justify-between">
-                <Label className="text-xs text-muted-foreground">授权配置</Label>
+                <Label className="text-xs text-muted-foreground">{t("license:plans.constraintConfig")}</Label>
                 <Badge variant="outline" className="rounded-md border-0 bg-muted/60 text-[11px] text-muted-foreground">
-                  {schema.length} 个模块
+                  {schema.length} {t("license:plans.moduleCount", { count: schema.length })}
                 </Badge>
               </div>
               {schema.map((mod) => {
@@ -323,10 +396,8 @@ export function IssueLicenseSheet({ open, onOpenChange }: IssueLicenseSheetProps
                         <p className="text-sm font-medium">{mod.label || mod.key}</p>
                       </div>
                       <Switch
-                        size="sm"
                         checked={isEnabled}
                         onCheckedChange={(checked) => setModuleEnabled(mod.key, !!checked)}
-                        disabled={planId !== "custom"}
                       />
                     </div>
                     {isEnabled && mod.features.length > 0 && (
@@ -337,7 +408,6 @@ export function IssueLicenseSheet({ open, onOpenChange }: IssueLicenseSheetProps
                             feature={feature}
                             value={modValues[feature.key]}
                             onChange={(v) => setFeatureValue(mod.key, feature.key, v)}
-                            disabled={planId !== "custom"}
                           />
                         ))}
                       </div>
@@ -349,20 +419,87 @@ export function IssueLicenseSheet({ open, onOpenChange }: IssueLicenseSheetProps
           )}
 
           {/* Registration Code */}
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">注册码 *</Label>
-            <Input
-              value={registrationCode}
-              onChange={(e) => setRegistrationCode(e.target.value)}
-              placeholder="客户端注册码"
-              required
-            />
+          <div className="space-y-2 rounded-lg border p-3">
+            <Label className="text-xs text-muted-foreground">{t("license:licenses.registrationCodeRequired")}</Label>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant={registrationMode === "select" ? "default" : "outline"}
+                size="sm"
+                onClick={() => { setRegistrationMode("select"); setRegistrationCode("") }}
+              >
+                {t("license:licenses.selectRegistrationCode")}
+              </Button>
+              <Button
+                type="button"
+                variant={registrationMode === "generate" ? "default" : "outline"}
+                size="sm"
+                onClick={() => { setRegistrationMode("generate"); setRegistrationCode("") }}
+              >
+                {t("license:licenses.autoGenerate")}
+              </Button>
+              <Button
+                type="button"
+                variant={registrationMode === "manual" ? "default" : "outline"}
+                size="sm"
+                onClick={() => { setRegistrationMode("manual"); setRegistrationCode("") }}
+              >
+                {t("license:licenses.manualInput")}
+              </Button>
+            </div>
+            {registrationMode === "select" && (
+              <>
+                <Select value={registrationCode} onValueChange={setRegistrationCode}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder={t("license:licenses.selectRegistrationCode")} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {registrations.map((r) => (
+                      <SelectItem key={r.id} value={r.code}>
+                        {r.code} {r.expiresAt ? `(${t("license:registrations.expiresAt")}: ${r.expiresAt.split("T")[0]})` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {productId && registrations.length === 0 && !registrationsData && (
+                  <p className="text-xs text-muted-foreground">{t("license:licenses.noAvailableRegistrations")}</p>
+                )}
+              </>
+            )}
+            {registrationMode === "generate" && (
+              <div className="flex gap-2">
+                <Input
+                  value={registrationCode}
+                  onChange={(e) => setRegistrationCode(e.target.value)}
+                  placeholder={t("license:licenses.registrationCodePlaceholder")}
+                  readOnly={generateRegMutation.isSuccess}
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => generateRegMutation.mutate()}
+                  disabled={generateRegMutation.isPending || !productId}
+                >
+                  {generateRegMutation.isPending ? t("common:processing") : t("license:licenses.generateRegistrationCode")}
+                </Button>
+              </div>
+            )}
+            {registrationMode === "manual" && (
+              <Input
+                value={registrationCode}
+                onChange={(e) => setRegistrationCode(e.target.value)}
+                placeholder={t("license:licenses.registrationCodePlaceholder")}
+                className="w-full"
+              />
+            )}
           </div>
 
           {/* Valid From */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">生效日期 *</Label>
+              <Label className="text-xs text-muted-foreground">{t("license:licenses.validFromDate")}</Label>
               <Input
                 type="date"
                 value={validFrom}
@@ -371,23 +508,23 @@ export function IssueLicenseSheet({ open, onOpenChange }: IssueLicenseSheetProps
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">过期日期</Label>
+              <Label className="text-xs text-muted-foreground">{t("license:licenses.validUntilDate")}</Label>
               <Input
                 type="date"
                 value={validUntil}
                 onChange={(e) => setValidUntil(e.target.value)}
-                placeholder="留空为永久"
+                placeholder={t("license:licenses.emptyForPermanent")}
               />
             </div>
           </div>
 
           {/* Notes */}
           <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">备注</Label>
+            <Label className="text-xs text-muted-foreground">{t("license:licenses.notes")}</Label>
             <Textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="可选备注"
+              placeholder={t("license:licenses.optionalNotes")}
               rows={2}
             />
           </div>
@@ -399,7 +536,7 @@ export function IssueLicenseSheet({ open, onOpenChange }: IssueLicenseSheetProps
               className="h-8 rounded-lg px-3"
               disabled={issueMutation.isPending || !productId || !licenseeId || !registrationCode}
             >
-              {issueMutation.isPending ? "签发中..." : "签发"}
+              {issueMutation.isPending ? t("license:licenses.issuing") : t("license:licenses.issueBtn")}
             </Button>
           </SheetFooter>
         </form>
@@ -412,13 +549,12 @@ function FeatureField({
   feature,
   value,
   onChange,
-  disabled,
 }: {
   feature: ConstraintFeature
   value: unknown
   onChange: (v: unknown) => void
-  disabled?: boolean
 }) {
+  const { t } = useTranslation("license")
   if (feature.type === "number") {
     return (
       <div className="rounded-md bg-background/60 px-3 py-2.5">
@@ -426,7 +562,7 @@ function FeatureField({
           <Label className="text-xs font-medium">{feature.label || feature.key}</Label>
           {(feature.min != null || feature.max != null) && (
             <Badge variant="outline" className="rounded-md border-0 bg-muted/60 text-[11px] text-muted-foreground">
-              {feature.min ?? "无"} ~ {feature.max ?? "无"}
+              {feature.min ?? t("license:plans.noLimit")} ~ {feature.max ?? t("license:plans.noLimit")}
             </Badge>
           )}
         </div>
@@ -437,7 +573,6 @@ function FeatureField({
           max={feature.max}
           onChange={(e) => onChange(e.target.value ? Number(e.target.value) : undefined)}
           className="mt-1.5 h-8 rounded-md bg-background/80 text-sm"
-          disabled={disabled}
         />
       </div>
     )
@@ -447,9 +582,9 @@ function FeatureField({
     return (
       <div className="rounded-md bg-background/60 px-3 py-2.5">
         <Label className="text-xs font-medium">{feature.label || feature.key}</Label>
-        <Select value={value != null ? String(value) : ""} onValueChange={onChange} disabled={disabled}>
-          <SelectTrigger size="sm" className="mt-1.5 w-full rounded-md bg-background/80 text-sm">
-            <SelectValue placeholder="请选择" />
+        <Select value={value != null ? String(value) : ""} onValueChange={onChange}>
+          <SelectTrigger className="mt-1.5 w-full rounded-md bg-background/80 text-sm h-8">
+            <SelectValue placeholder={t("license:plans.selectPlaceholder")} />
           </SelectTrigger>
           <SelectContent>
             {(feature.options ?? []).map((opt) => (
@@ -476,7 +611,7 @@ function FeatureField({
                   isSelected
                     ? "border-primary/30 bg-primary/10 text-foreground"
                     : "border-border bg-transparent hover:bg-accent/60"
-                } ${disabled ? "pointer-events-none opacity-60" : ""}`}
+                }`}
               >
                 <input
                   type="checkbox"
@@ -489,7 +624,6 @@ function FeatureField({
                     }
                   }}
                   className="sr-only"
-                  disabled={disabled}
                 />
                 {opt}
               </label>

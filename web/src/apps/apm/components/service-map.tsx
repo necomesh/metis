@@ -1,205 +1,155 @@
-import { useCallback, useMemo } from "react"
+import { useMemo, useCallback } from "react"
 import { useNavigate } from "react-router"
-import { useTranslation } from "react-i18next"
+import {
+  ReactFlow,
+  Controls,
+  Background,
+  BackgroundVariant,
+  useNodesState,
+  useEdgesState,
+  type Node,
+  type Edge,
+} from "@xyflow/react"
 import dagre from "@dagrejs/dagre"
+import "@xyflow/react/dist/style.css"
 
 import type { TopologyGraph } from "../api"
+import { ServiceNode } from "./topology/service-node"
+import { ServiceEdge } from "./topology/service-edge"
+
+const nodeTypes = { service: ServiceNode }
+const edgeTypes = { service: ServiceEdge }
+
+const NODE_WIDTH = 90
+const NODE_HEIGHT = 90
 
 interface ServiceMapProps {
   graph: TopologyGraph
+  timeStart?: string
+  timeEnd?: string
 }
 
-const NODE_WIDTH = 160
-const NODE_HEIGHT = 64
-const PADDING = 40
+function layoutGraph(graph: TopologyGraph) {
+  const g = new dagre.graphlib.Graph()
+  g.setGraph({ rankdir: "LR", nodesep: 60, ranksep: 180, marginx: 40, marginy: 40 })
+  g.setDefaultEdgeLabel(() => ({}))
 
-export function ServiceMap({ graph }: ServiceMapProps) {
-  const { t } = useTranslation("apm")
+  for (const node of graph.nodes) {
+    g.setNode(node.serviceName, { width: NODE_WIDTH, height: NODE_HEIGHT })
+  }
+  for (const edge of graph.edges) {
+    g.setEdge(edge.caller, edge.callee)
+  }
+
+  dagre.layout(g)
+
+  const nodes: Node[] = graph.nodes.map((n) => {
+    const pos = g.node(n.serviceName)
+    return {
+      id: n.serviceName,
+      type: "service",
+      position: { x: pos.x - NODE_WIDTH / 2, y: pos.y - NODE_HEIGHT / 2 },
+      data: n,
+    }
+  })
+
+  const edges: Edge[] = graph.edges.map((e) => ({
+    id: `${e.caller}-${e.callee}`,
+    source: e.caller,
+    target: e.callee,
+    type: "service",
+    data: e,
+  }))
+
+  return { nodes, edges }
+}
+
+export function ServiceMap({ graph, timeStart, timeEnd }: ServiceMapProps) {
   const navigate = useNavigate()
 
-  const layout = useMemo(() => {
-    const g = new dagre.graphlib.Graph()
-    g.setGraph({ rankdir: "LR", nodesep: 60, ranksep: 120 })
-    g.setDefaultEdgeLabel(() => ({}))
-
-    for (const node of graph.nodes) {
-      g.setNode(node.serviceName, { width: NODE_WIDTH, height: NODE_HEIGHT })
-    }
-    for (const edge of graph.edges) {
-      g.setEdge(edge.caller, edge.callee)
-    }
-
-    dagre.layout(g)
-
-    const nodes = graph.nodes.map((n) => {
-      const pos = g.node(n.serviceName)
-      return { ...n, x: pos.x, y: pos.y }
-    })
-
-    const edges = graph.edges.map((e) => {
-      const points = g.edge(e.caller, e.callee)?.points ?? []
-      return { ...e, points }
-    })
-
-    const graphMeta = g.graph()
-    const width = (graphMeta.width ?? 400) + PADDING * 2
-    const height = (graphMeta.height ?? 300) + PADDING * 2
-
-    return { nodes, edges, width, height }
+  const { initialNodes, initialEdges } = useMemo(() => {
+    const { nodes, edges } = layoutGraph(graph)
+    return { initialNodes: nodes, initialEdges: edges }
   }, [graph])
 
-  const handleNodeClick = useCallback(
-    (serviceName: string) => {
-      navigate(`/apm/services/${encodeURIComponent(serviceName)}`)
-    },
-    [navigate],
-  )
+  const [nodes, , onNodesChange] = useNodesState(initialNodes)
+  const [edges, , onEdgesChange] = useEdgesState(initialEdges)
 
-  const buildPath = useCallback((points: Array<{ x: number; y: number }>) => {
-    if (points.length === 0) return ""
-    const [first, ...rest] = points
-    let d = `M ${first.x + PADDING} ${first.y + PADDING}`
-    if (rest.length <= 1) {
-      for (const p of rest) {
-        d += ` L ${p.x + PADDING} ${p.y + PADDING}`
-      }
-    } else {
-      // smooth curve through points
-      for (let i = 0; i < rest.length; i++) {
-        const p = rest[i]
-        if (i === 0) {
-          const prev = first
-          const cx = (prev.x + p.x) / 2 + PADDING
-          const cy = (prev.y + p.y) / 2 + PADDING
-          d += ` Q ${prev.x + PADDING} ${prev.y + PADDING} ${cx} ${cy}`
-        } else {
-          const prev = rest[i - 1]
-          const cx = (prev.x + p.x) / 2 + PADDING
-          const cy = (prev.y + p.y) / 2 + PADDING
-          d += ` T ${cx} ${cy}`
-        }
-      }
-      const last = rest[rest.length - 1]
-      d += ` L ${last.x + PADDING} ${last.y + PADDING}`
-    }
-    return d
-  }, [])
-
-  const edgeStrokeWidth = useCallback(
-    (callCount: number) => {
-      const maxCalls = Math.max(...graph.edges.map((e) => e.callCount), 1)
-      return 1.5 + (callCount / maxCalls) * 3
+  const onNodeClick = useCallback(
+    (_: React.MouseEvent, node: Node) => {
+      const params = new URLSearchParams()
+      if (timeStart) params.set("start", timeStart)
+      if (timeEnd) params.set("end", timeEnd)
+      const qs = params.toString()
+      navigate(`/apm/services/${encodeURIComponent(node.id)}${qs ? `?${qs}` : ""}`)
     },
-    [graph.edges],
+    [navigate, timeStart, timeEnd],
   )
 
   return (
-    <svg width={layout.width} height={layout.height} className="overflow-visible">
-      <defs>
-        <marker id="arrow" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto">
-          <path d="M 0 0 L 10 3 L 0 6 Z" className="fill-muted-foreground/60" />
-        </marker>
-        <marker
-          id="arrow-error"
-          viewBox="0 0 10 6"
-          refX="10"
-          refY="3"
-          markerWidth="8"
-          markerHeight="6"
-          orient="auto"
-        >
-          <path d="M 0 0 L 10 3 L 0 6 Z" className="fill-red-500/70" />
-        </marker>
-      </defs>
+    <div className="relative h-[calc(100vh-10rem)] min-h-[500px] w-full">
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        onNodeClick={onNodeClick}
+        fitView
+        fitViewOptions={{ padding: 0.35, maxZoom: 1.1 }}
+        proOptions={{ hideAttribution: true }}
+        minZoom={0.2}
+        maxZoom={2}
+        nodesDraggable
+      >
+        <defs>
+          <marker id="arrow" viewBox="0 0 12 8" refX="11" refY="4" markerWidth="9" markerHeight="7" orient="auto">
+            <path d="M 0 0.5 L 10 4 L 0 7.5 L 2.5 4 Z" fill="hsl(var(--muted-foreground) / 0.3)" />
+          </marker>
+          <marker id="arrow-warn" viewBox="0 0 12 8" refX="11" refY="4" markerWidth="9" markerHeight="7" orient="auto">
+            <path d="M 0 0.5 L 10 4 L 0 7.5 L 2.5 4 Z" fill="hsl(38 92% 50% / 0.6)" />
+          </marker>
+          <marker id="arrow-error" viewBox="0 0 12 8" refX="11" refY="4" markerWidth="9" markerHeight="7" orient="auto">
+            <path d="M 0 0.5 L 10 4 L 0 7.5 L 2.5 4 Z" fill="hsl(0 72% 51% / 0.6)" />
+          </marker>
+        </defs>
 
-      {/* Edges */}
-      {layout.edges.map((edge) => {
-        const isError = edge.errorRate > 0.05
-        return (
-          <g key={`${edge.caller}-${edge.callee}`}>
-            <path
-              d={buildPath(edge.points)}
-              fill="none"
-              className={isError ? "stroke-red-500/60" : "stroke-muted-foreground/30"}
-              strokeWidth={edgeStrokeWidth(edge.callCount)}
-              markerEnd={isError ? "url(#arrow-error)" : "url(#arrow)"}
-            />
-            {edge.points.length > 0 && (
-              <EdgeLabel edge={edge} points={edge.points} t={t} />
-            )}
-          </g>
-        )
-      })}
+        <Controls
+          showInteractive={false}
+          className="!rounded-xl !border-border/60 !bg-card/90 !backdrop-blur-sm !shadow-md [&_button]:!border-border/40 [&_button]:!bg-transparent [&_button]:!text-muted-foreground [&_button:hover]:!bg-muted/80"
+        />
 
-      {/* Nodes */}
-      {layout.nodes.map((node) => {
-        const isError = node.errorRate > 0.05
-        const x = node.x - NODE_WIDTH / 2 + PADDING
-        const y = node.y - NODE_HEIGHT / 2 + PADDING
-        return (
-          <g
-            key={node.serviceName}
-            className="cursor-pointer"
-            onClick={() => handleNodeClick(node.serviceName)}
-          >
-            <rect
-              x={x}
-              y={y}
-              width={NODE_WIDTH}
-              height={NODE_HEIGHT}
-              rx={8}
-              className={
-                isError
-                  ? "fill-red-500/10 stroke-red-500/50"
-                  : "fill-card stroke-border"
-              }
-              strokeWidth={1.5}
-            />
-            <text
-              x={x + NODE_WIDTH / 2}
-              y={y + 24}
-              textAnchor="middle"
-              className="fill-foreground text-xs font-medium"
-            >
-              {node.serviceName.length > 18
-                ? node.serviceName.slice(0, 16) + "..."
-                : node.serviceName}
-            </text>
-            <text
-              x={x + NODE_WIDTH / 2}
-              y={y + 44}
-              textAnchor="middle"
-              className={`text-[10px] ${isError ? "fill-red-500" : "fill-muted-foreground"}`}
-            >
-              {node.requestCount} {t("topology.requests")}
-              {node.errorRate > 0 ? ` | ${(node.errorRate * 100).toFixed(1)}% err` : ""}
-            </text>
-          </g>
-        )
-      })}
-    </svg>
-  )
-}
+        <Background
+          variant={BackgroundVariant.Dots}
+          gap={24}
+          size={1}
+          className="!bg-background"
+          color="hsl(var(--muted-foreground) / 0.07)"
+        />
+      </ReactFlow>
 
-function EdgeLabel({
-  edge,
-  points,
-  t,
-}: {
-  edge: { avgDurationMs: number; callCount: number; errorRate: number }
-  points: Array<{ x: number; y: number }>
-  t: (key: string) => string
-}) {
-  const mid = points[Math.floor(points.length / 2)]
-  const isError = edge.errorRate > 0.05
-  return (
-    <text
-      x={mid.x + PADDING}
-      y={mid.y + PADDING - 6}
-      textAnchor="middle"
-      className={`text-[9px] ${isError ? "fill-red-500/80" : "fill-muted-foreground/70"}`}
-    >
-      {edge.callCount} {t("topology.calls")} | {edge.avgDurationMs.toFixed(0)}ms
-    </text>
+      {/* Legend */}
+      <div className="absolute bottom-4 right-4 flex items-center gap-4 rounded-lg border bg-card/90 backdrop-blur-sm px-3 py-2 text-[10px] text-muted-foreground shadow-sm">
+        <div className="flex items-center gap-1.5">
+          <span className="h-2 w-2 rounded-full bg-emerald-500" />
+          <span>Healthy</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="h-2 w-2 rounded-full bg-amber-500" />
+          <span>{">"} 1% err</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="h-2 w-2 rounded-full bg-red-500" />
+          <span>{">"} 5% err</span>
+        </div>
+        <div className="flex items-center gap-1.5 border-l pl-4 border-border/40">
+          <span className="flex items-center gap-0.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-primary/50" />
+            <span>traffic flow</span>
+          </span>
+        </div>
+      </div>
+    </div>
   )
 }

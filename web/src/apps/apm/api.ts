@@ -202,3 +202,108 @@ export interface TraceLogsResponse {
 export function fetchTraceLogs(traceId: string) {
   return api.get<TraceLogsResponse>(`/api/v1/apm/traces/${traceId}/logs`)
 }
+
+// --- Span Search APIs ---
+
+export interface SpanSearchParams {
+  start: string
+  end: string
+  key: string
+  value?: string
+  op?: "eq" | "contains" | "exists"
+  page?: number
+  page_size?: number
+}
+
+export interface SpanSearchResponse {
+  items: Span[]
+  total: number
+  page: number
+}
+
+export function fetchSpanSearch(params: SpanSearchParams) {
+  const sp = new URLSearchParams({ start: params.start, end: params.end, key: params.key })
+  if (params.value) sp.set("value", params.value)
+  if (params.op) sp.set("op", params.op)
+  sp.set("page", String(params.page ?? 1))
+  sp.set("page_size", String(params.page_size ?? 20))
+  return api.get<SpanSearchResponse>(`/api/v1/apm/spans/search?${sp}`)
+}
+
+// --- Analytics APIs ---
+
+export interface AnalyticsParams {
+  start: string
+  end: string
+  groupBy?: "service" | "operation" | "statusCode"
+  service?: string
+  operation?: string
+}
+
+export interface AnalyticsGroup {
+  key: string
+  requestCount: number
+  avgDurationMs: number
+  p95Ms: number
+  errorRate: number
+}
+
+export interface AnalyticsResponse {
+  groups: AnalyticsGroup[]
+}
+
+export function fetchAnalytics(params: AnalyticsParams) {
+  const sp = new URLSearchParams({ start: params.start, end: params.end })
+  if (params.groupBy) sp.set("groupBy", params.groupBy)
+  if (params.service) sp.set("service", params.service)
+  if (params.operation) sp.set("operation", params.operation)
+  return api.get<AnalyticsResponse>(`/api/v1/apm/analytics?${sp}`)
+}
+
+// --- Latency Distribution APIs ---
+
+export interface LatencyDistParams {
+  start: string
+  end: string
+  service?: string
+  operation?: string
+  buckets?: number
+}
+
+export interface LatencyBucket {
+  rangeStartMs: number
+  rangeEndMs: number
+  count: number
+}
+
+export interface LatencyDistResponse {
+  buckets: LatencyBucket[]
+}
+
+export function fetchLatencyDistribution(params: LatencyDistParams) {
+  const sp = new URLSearchParams({ start: params.start, end: params.end })
+  if (params.service) sp.set("service", params.service)
+  if (params.operation) sp.set("operation", params.operation)
+  if (params.buckets) sp.set("buckets", String(params.buckets))
+  return api.get<LatencyDistResponse>(`/api/v1/apm/latency-distribution?${sp}`)
+}
+
+// --- Error Analytics APIs ---
+
+export interface ErrorGroup {
+  errorType: string
+  message: string
+  count: number
+  lastSeen: string
+  services: string[]
+}
+
+export interface ErrorsResponse {
+  errors: ErrorGroup[]
+}
+
+export function fetchErrors(params: { start: string; end: string; service?: string }) {
+  const sp = new URLSearchParams({ start: params.start, end: params.end })
+  if (params.service) sp.set("service", params.service)
+  return api.get<ErrorsResponse>(`/api/v1/apm/errors?${sp}`)
+}
