@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { useTranslation } from "react-i18next"
-import { useNavigate } from "react-router-dom"
+import { useNavigate } from "react-router"
 import { useForm } from "react-hook-form"
 import { z } from "zod"
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import {
   DataTableActions, DataTableActionsCell, DataTableActionsHead,
-  DataTableCard, DataTableEmptyRow, DataTableLoadingRow,
+  DataTableCard, DataTableEmptyRow, DataTableLoadingRow, DataTablePagination,
 } from "@/components/ui/data-table"
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -32,10 +32,6 @@ import {
 import {
   Form, FormControl, FormField, FormItem, FormLabel, FormMessage,
 } from "@/components/ui/form"
-import {
-  Pagination, PaginationContent, PaginationItem,
-  PaginationPrevious, PaginationNext,
-} from "@/components/ui/pagination"
 import {
   type FormDefItem,
   createFormDef, updateFormDef, deleteFormDef,
@@ -214,23 +210,12 @@ export function Component() {
         </Table>
       </DataTableCard>
 
-      {totalPages > 1 && (
-        <Pagination>
-          <PaginationContent>
-            <PaginationItem>
-              <PaginationPrevious onClick={() => setPage(Math.max(1, page - 1))} aria-disabled={page <= 1} />
-            </PaginationItem>
-            <PaginationItem>
-              <span className="text-sm text-muted-foreground px-2">
-                {page} / {totalPages} ({total})
-              </span>
-            </PaginationItem>
-            <PaginationItem>
-              <PaginationNext onClick={() => setPage(Math.min(totalPages, page + 1))} aria-disabled={page >= totalPages} />
-            </PaginationItem>
-          </PaginationContent>
-        </Pagination>
-      )}
+      <DataTablePagination
+        total={total}
+        page={page}
+        totalPages={totalPages}
+        onPageChange={setPage}
+      />
 
       <Sheet open={formOpen} onOpenChange={setFormOpen}>
         <SheetContent className="sm:max-w-md">

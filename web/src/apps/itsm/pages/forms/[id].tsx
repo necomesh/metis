@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useMemo } from "react"
 import { useTranslation } from "react-i18next"
-import { useParams, useNavigate } from "react-router-dom"
+import { useParams, useNavigate } from "react-router"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { ArrowLeft, Eye, EyeOff, Save, Loader2, Plus } from "lucide-react"
 import { toast } from "sonner"
@@ -65,29 +65,30 @@ export function Component() {
   const [columns, setColumns] = useState<1 | 2 | 3>(1)
 
   // Load form definition
-  const { isLoading } = useQuery({
+  const [loadedId, setLoadedId] = useState<number | null>(null)
+  const { data, isLoading } = useQuery({
     queryKey: ["itsm-form", formId],
     queryFn: () => fetchFormDef(formId),
     enabled: !!formId,
     refetchOnWindowFocus: false,
-    select: (data) => {
-      if (data) {
-        setFormName(data.name)
-        try {
-          const schema: FormSchema = typeof data.schema === "string"
-            ? JSON.parse(data.schema)
-            : data.schema as FormSchema
-          setFields(schema.fields ?? [])
-          setLayout(schema.layout ?? null)
-          setColumns(schema.layout?.columns ?? 1)
-        } catch {
-          setFields([])
-          setLayout(null)
-        }
-      }
-      return data
-    },
   })
+
+  // Sync query data → local state (setState-during-render pattern)
+  if (data && data.id !== loadedId) {
+    setLoadedId(data.id)
+    setFormName(data.name)
+    try {
+      const schema: FormSchema = typeof data.schema === "string"
+        ? JSON.parse(data.schema)
+        : data.schema as FormSchema
+      setFields(schema.fields ?? [])
+      setLayout(schema.layout ?? null)
+      setColumns(schema.layout?.columns ?? 1)
+    } catch {
+      setFields([])
+      setLayout(null)
+    }
+  }
 
   // Save mutation
   const saveMut = useMutation({
