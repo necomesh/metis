@@ -317,7 +317,7 @@ func (h *ProductHandler) RotateKeyImpact(c *gin.Context) {
 }
 
 type BulkReissueRequest struct {
-	LicenseIDs []uint `json:"licenseIds" binding:"required"`
+	LicenseIDs []uint `json:"licenseIds"`
 }
 
 func (h *ProductHandler) BulkReissue(c *gin.Context) {

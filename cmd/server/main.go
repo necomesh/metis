@@ -88,6 +88,10 @@ func main() {
 		jwtSecret := []byte(cfg.JWTSecret)
 		do.ProvideValue(injector, jwtSecret)
 
+		// License key secret from config (for license private key encryption)
+		licenseKeySecret := []byte(cfg.LicenseKeySecret)
+		do.ProvideNamedValue(injector, "licenseKeySecret", licenseKeySecret)
+
 		// Encryption key from secret_key (for API key encryption etc.)
 		do.ProvideValue(injector, crypto.EncryptionKey(crypto.DeriveKey(cfg.SecretKey)))
 

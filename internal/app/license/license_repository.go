@@ -116,13 +116,8 @@ func (r *LicenseRepo) UpdateStatus(id uint, updates map[string]any) error {
 	return r.db.Model(&License{}).Where("id = ?", id).Updates(updates).Error
 }
 
-func (r *LicenseRepo) FindExpired(now time.Time) ([]License, error) {
-	var items []License
-	err := r.db.Where("lifecycle_status IN ? AND valid_until IS NOT NULL AND valid_until <= ?", []string{LicenseLifecyclePending, LicenseLifecycleActive}, now).Find(&items).Error
-	if err != nil {
-		return nil, err
-	}
-	return items, nil
+func (r *LicenseRepo) UpdateStatusInTx(tx *gorm.DB, id uint, updates map[string]any) error {
+	return tx.Model(&License{}).Where("id = ?", id).Updates(updates).Error
 }
 
 func (r *LicenseRepo) UpdateExpiredStatus(now time.Time, statuses []string) error {
@@ -148,6 +143,11 @@ func (r *LicenseRepo) FindByProductID(productID uint) ([]License, error) {
 	return items, nil
 }
 
-func (r *LicenseRepo) UpdateInTx(tx *gorm.DB, l *License) error {
-	return tx.Save(l).Error
+func (r *LicenseRepo) FindReissueableByProductID(productID uint, version int) ([]License, error) {
+	var items []License
+	err := r.db.Where("product_id = ? AND status != ? AND key_version < ?", productID, LicenseStatusRevoked, version).Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
 }

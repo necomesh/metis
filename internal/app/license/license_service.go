@@ -29,24 +29,27 @@ var (
 )
 
 type LicenseService struct {
-	licenseRepo  *LicenseRepo
-	productRepo  *ProductRepo
-	licenseeRepo *LicenseeRepo
-	keyRepo      *ProductKeyRepo
-	regRepo      *LicenseRegistrationRepo
-	db           *database.DB
-	jwtSecret    []byte
+	licenseRepo      *LicenseRepo
+	productRepo      *ProductRepo
+	licenseeRepo     *LicenseeRepo
+	keyRepo          *ProductKeyRepo
+	regRepo          *LicenseRegistrationRepo
+	db               *database.DB
+	jwtSecret        []byte
+	licenseKeySecret []byte
 }
 
 func NewLicenseService(i do.Injector) (*LicenseService, error) {
+	licenseKeySecret, _ := do.InvokeNamed[[]byte](i, "licenseKeySecret")
 	return &LicenseService{
-		licenseRepo:  do.MustInvoke[*LicenseRepo](i),
-		productRepo:  do.MustInvoke[*ProductRepo](i),
-		licenseeRepo: do.MustInvoke[*LicenseeRepo](i),
-		keyRepo:      do.MustInvoke[*ProductKeyRepo](i),
-		regRepo:      do.MustInvoke[*LicenseRegistrationRepo](i),
-		db:           do.MustInvoke[*database.DB](i),
-		jwtSecret:    do.MustInvoke[[]byte](i),
+		licenseRepo:      do.MustInvoke[*LicenseRepo](i),
+		productRepo:      do.MustInvoke[*ProductRepo](i),
+		licenseeRepo:     do.MustInvoke[*LicenseeRepo](i),
+		keyRepo:          do.MustInvoke[*ProductKeyRepo](i),
+		regRepo:          do.MustInvoke[*LicenseRegistrationRepo](i),
+		db:               do.MustInvoke[*database.DB](i),
+		jwtSecret:        do.MustInvoke[[]byte](i),
+		licenseKeySecret: licenseKeySecret,
 	}, nil
 }
 
@@ -116,7 +119,7 @@ func deriveLifecycleStatus(validFrom time.Time, validUntil *time.Time) string {
 	return LicenseLifecycleActive
 }
 
-func (s *LicenseService) IssueLicense(params IssueLicenseParams) (*License, error) {
+func (s *LicenseService) issueLicenseInTx(tx *gorm.DB, params IssueLicenseParams) (*License, error) {
 	// Validate product
 	product, err := s.productRepo.FindByID(params.ProductID)
 	if err != nil {
@@ -151,7 +154,7 @@ func (s *LicenseService) IssueLicense(params IssueLicenseParams) (*License, erro
 	}
 
 	// Get encryption key
-	encKey, err := GetEncryptionKeyWithFallback(s.jwtSecret)
+	encKey, err := GetEncryptionKeyWithFallback(s.licenseKeySecret, s.jwtSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +202,7 @@ func (s *LicenseService) IssueLicense(params IssueLicenseParams) (*License, erro
 						Code:       params.RegistrationCode,
 						Source:     "manual_input",
 					}
-					if err := s.regRepo.Create(r); err != nil {
+					if err := s.regRepo.CreateInTx(tx, r); err != nil {
 						return nil, err
 					}
 				} else {
@@ -218,7 +221,7 @@ func (s *LicenseService) IssueLicense(params IssueLicenseParams) (*License, erro
 		reg = r
 	}
 
-	// Create license record in transaction
+	// Create license record
 	license := &License{
 		ProductID:        &params.ProductID,
 		LicenseeID:       &params.LicenseeID,
@@ -237,21 +240,28 @@ func (s *LicenseService) IssueLicense(params IssueLicenseParams) (*License, erro
 		Notes:            params.Notes,
 	}
 
-	err = s.db.Transaction(func(tx *gorm.DB) error {
-		if err := s.licenseRepo.CreateInTx(tx, license); err != nil {
-			return err
+	if err := s.licenseRepo.CreateInTx(tx, license); err != nil {
+		return nil, err
+	}
+	if reg != nil {
+		if err := s.regRepo.UpdateBoundLicenseInTx(tx, reg.ID, license.ID); err != nil {
+			return nil, err
 		}
-		if reg != nil {
-			if err := s.regRepo.UpdateBoundLicenseInTx(tx, reg.ID, license.ID); err != nil {
-				return err
-			}
-		}
-		return nil
+	}
+
+	return license, nil
+}
+
+func (s *LicenseService) IssueLicense(params IssueLicenseParams) (*License, error) {
+	var license *License
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var err error
+		license, err = s.issueLicenseInTx(tx, params)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-
 	return license, nil
 }
 
@@ -307,33 +317,42 @@ func (s *LicenseService) UpgradeLicense(id uint, params IssueLicenseParams) (*Li
 		return nil, ErrLicenseAlreadyRevoked
 	}
 
-	// Unbind registration from original license so it can be reused for upgrade
-	if original.RegistrationCode != "" && original.RegistrationCode == params.RegistrationCode {
-		if err := s.regRepo.UnbindLicenseInTx(s.db.DB, params.RegistrationCode); err != nil {
-			return nil, err
+	var newLicense *License
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		// Unbind registration from original license so it can be reused for upgrade
+		if original.RegistrationCode != "" && original.RegistrationCode == params.RegistrationCode {
+			if err := s.regRepo.UnbindLicenseInTx(tx, params.RegistrationCode); err != nil {
+				return err
+			}
 		}
-	}
 
-	// Issue new license
-	newLicense, err := s.IssueLicense(params)
+		// Issue new license in the same transaction
+		var err error
+		newLicense, err = s.issueLicenseInTx(tx, params)
+		if err != nil {
+			return err
+		}
+
+		now := time.Now()
+		// Revoke original and link to new
+		if err := s.licenseRepo.UpdateStatusInTx(tx, id, map[string]any{
+			"status":           LicenseStatusRevoked,
+			"lifecycle_status": LicenseLifecycleRevoked,
+			"revoked_at":       now,
+			"revoked_by":       params.IssuedBy,
+		}); err != nil {
+			return err
+		}
+
+		if err := s.licenseRepo.UpdateStatusInTx(tx, newLicense.ID, map[string]any{
+			"original_license_id": id,
+		}); err != nil {
+			return err
+		}
+
+		return nil
+	})
 	if err != nil {
-		return nil, err
-	}
-
-	now := time.Now()
-	// Revoke original and link to new
-	if err := s.licenseRepo.UpdateStatus(id, map[string]any{
-		"status":           LicenseStatusRevoked,
-		"lifecycle_status": LicenseLifecycleRevoked,
-		"revoked_at":       now,
-		"revoked_by":       params.IssuedBy,
-	}); err != nil {
-		return nil, err
-	}
-
-	if err := s.licenseRepo.UpdateStatus(newLicense.ID, map[string]any{
-		"original_license_id": id,
-	}); err != nil {
 		return nil, err
 	}
 
@@ -580,13 +599,6 @@ func (s *LicenseService) AssessKeyRotationImpact(productID uint) (*RotateKeyImpa
 }
 
 func (s *LicenseService) BulkReissueLicenses(productID uint, ids []uint, issuedBy uint) (int, error) {
-	if len(ids) == 0 {
-		return 0, nil
-	}
-	if len(ids) > 100 {
-		return 0, ErrBulkReissueTooMany
-	}
-
 	key, err := s.keyRepo.FindCurrentByProductID(productID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -595,7 +607,22 @@ func (s *LicenseService) BulkReissueLicenses(productID uint, ids []uint, issuedB
 		return 0, err
 	}
 
-	encKey, err := GetEncryptionKeyWithFallback(s.jwtSecret)
+	if len(ids) == 0 {
+		licenses, err := s.licenseRepo.FindReissueableByProductID(productID, key.Version)
+		if err != nil {
+			return 0, err
+		}
+		ids = make([]uint, 0, len(licenses))
+		for _, l := range licenses {
+			ids = append(ids, l.ID)
+		}
+	}
+
+	if len(ids) > 100 {
+		return 0, ErrBulkReissueTooMany
+	}
+
+	encKey, err := GetEncryptionKeyWithFallback(s.licenseKeySecret, s.jwtSecret)
 	if err != nil {
 		return 0, err
 	}

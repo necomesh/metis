@@ -14,6 +14,9 @@ func seedITSM(db *gorm.DB, enforcer *casbin.Enforcer) error {
 	if err := seedMenus(db); err != nil {
 		return err
 	}
+	if err := seedCatalogs(db); err != nil {
+		return err
+	}
 	if err := seedPolicies(enforcer); err != nil {
 		return err
 	}
@@ -27,6 +30,104 @@ func seedITSM(db *gorm.DB, enforcer *casbin.Enforcer) error {
 		return err
 	}
 	return tools.SeedAgents(db)
+}
+
+func seedCatalogs(db *gorm.DB) error {
+	type catalogSeed struct {
+		Name        string
+		Code        string
+		Description string
+		Icon        string
+		SortOrder   int
+		ParentCode  string // empty for root
+	}
+
+	seeds := []catalogSeed{
+		// ── 一级域 ──────────────────────────────────────────
+		{Name: "账号与权限", Code: "account-access", Description: "围绕身份、账户与访问控制的目录分类。", Icon: "ShieldCheck", SortOrder: 10},
+		{Name: "终端与办公支持", Code: "workplace-support", Description: "围绕终端设备、办公环境与桌面支持的目录分类。", Icon: "Monitor", SortOrder: 20},
+		{Name: "基础设施与网络", Code: "infra-network", Description: "围绕网络、主机、存储和基础运行环境的目录分类。", Icon: "Globe", SortOrder: 30},
+		{Name: "应用与平台支持", Code: "application-platform", Description: "围绕企业应用、发布平台和数据库服务的目录分类。", Icon: "Container", SortOrder: 40},
+		{Name: "安全与合规", Code: "security-compliance", Description: "围绕安全事件、漏洞治理与审计合规的目录分类。", Icon: "ShieldAlert", SortOrder: 50},
+		{Name: "监控与告警", Code: "monitoring-alerting", Description: "围绕监控平台、告警治理和值班机制的目录分类。", Icon: "Bell", SortOrder: 60},
+
+		// ── 账号与权限 子分类 ─────────────────────────────────
+		{Name: "账号开通", Code: "account-access:provisioning", ParentCode: "account-access", Description: "员工账号开通、账号重建与账号合并。", Icon: "User", SortOrder: 1},
+		{Name: "权限申请", Code: "account-access:authorization", ParentCode: "account-access", Description: "系统角色、数据权限与临时授权相关分类。", Icon: "Lock", SortOrder: 2},
+		{Name: "密码与 MFA", Code: "account-access:credential", ParentCode: "account-access", Description: "密码重置、MFA 绑定与身份验证协助。", Icon: "KeyRound", SortOrder: 3},
+
+		// ── 终端与办公支持 子分类 ─────────────────────────────
+		{Name: "电脑与外设", Code: "workplace-support:endpoint", ParentCode: "workplace-support", Description: "笔记本、显示器、外设与桌面环境支持。", Icon: "Monitor", SortOrder: 1},
+		{Name: "办公软件支持", Code: "workplace-support:office-software", ParentCode: "workplace-support", Description: "办公套件、协作工具与客户端故障处理。", Icon: "LayoutGrid", SortOrder: 2},
+		{Name: "打印与会议室设备", Code: "workplace-support:meeting-room", ParentCode: "workplace-support", Description: "打印、投屏、音视频设备与会议室终端支持。", Icon: "Video", SortOrder: 3},
+
+		// ── 基础设施与网络 子分类 ─────────────────────────────
+		{Name: "网络与 VPN", Code: "infra-network:network", ParentCode: "infra-network", Description: "办公网络、专线、VPN 与连通性支持。", Icon: "Globe", SortOrder: 1},
+		{Name: "服务器与主机", Code: "infra-network:compute", ParentCode: "infra-network", Description: "物理机、云主机与运行环境相关分类。", Icon: "Server", SortOrder: 2},
+		{Name: "存储与备份", Code: "infra-network:storage", ParentCode: "infra-network", Description: "共享存储、对象存储与备份恢复支持。", Icon: "Database", SortOrder: 3},
+
+		// ── 应用与平台支持 子分类 ─────────────────────────────
+		{Name: "企业应用支持", Code: "application-platform:business-app", ParentCode: "application-platform", Description: "内部业务系统和通用平台的日常支持。", Icon: "LayoutGrid", SortOrder: 1},
+		{Name: "发布与变更协助", Code: "application-platform:release", ParentCode: "application-platform", Description: "发布窗口、变更执行与回滚协助。", Icon: "Container", SortOrder: 2},
+		{Name: "数据库支持", Code: "application-platform:database", ParentCode: "application-platform", Description: "数据库开通、巡检与性能支持。", Icon: "Database", SortOrder: 3},
+
+		// ── 安全与合规 子分类 ─────────────────────────────────
+		{Name: "安全事件协助", Code: "security-compliance:incident", ParentCode: "security-compliance", Description: "安全事件上报、分析与应急支持。", Icon: "Bell", SortOrder: 1},
+		{Name: "漏洞与基线", Code: "security-compliance:vulnerability", ParentCode: "security-compliance", Description: "漏洞修复、基线加固与巡检协助。", Icon: "Bug", SortOrder: 2},
+		{Name: "审计与合规支持", Code: "security-compliance:audit", ParentCode: "security-compliance", Description: "审计材料准备、合规检查与追踪协助。", Icon: "FileSearch", SortOrder: 3},
+
+		// ── 监控与告警 子分类 ─────────────────────────────────
+		{Name: "监控接入", Code: "monitoring-alerting:onboarding", ParentCode: "monitoring-alerting", Description: "新增监控项、采集接入和指标配置。", Icon: "LineChart", SortOrder: 1},
+		{Name: "告警治理", Code: "monitoring-alerting:governance", ParentCode: "monitoring-alerting", Description: "告警收敛、规则优化与噪音治理。", Icon: "BellRing", SortOrder: 2},
+		{Name: "值班与通知策略", Code: "monitoring-alerting:oncall", ParentCode: "monitoring-alerting", Description: "值班排班、升级策略和通知链路维护。", Icon: "Clock", SortOrder: 3},
+	}
+
+	// First pass: create root catalogs (no parent)
+	for _, s := range seeds {
+		if s.ParentCode != "" {
+			continue
+		}
+		var existing ServiceCatalog
+		if err := db.Where("code = ?", s.Code).First(&existing).Error; err == nil {
+			continue
+		}
+		cat := ServiceCatalog{
+			Name: s.Name, Code: s.Code, Description: s.Description,
+			Icon: s.Icon, SortOrder: s.SortOrder, IsActive: true,
+		}
+		if err := db.Create(&cat).Error; err != nil {
+			slog.Error("seed: failed to create catalog", "code", s.Code, "error", err)
+			continue
+		}
+		slog.Info("seed: created catalog", "code", s.Code, "name", s.Name)
+	}
+
+	// Second pass: create child catalogs
+	for _, s := range seeds {
+		if s.ParentCode == "" {
+			continue
+		}
+		var existing ServiceCatalog
+		if err := db.Where("code = ?", s.Code).First(&existing).Error; err == nil {
+			continue
+		}
+		var parent ServiceCatalog
+		if err := db.Where("code = ?", s.ParentCode).First(&parent).Error; err != nil {
+			slog.Error("seed: parent catalog not found", "code", s.Code, "parentCode", s.ParentCode, "error", err)
+			continue
+		}
+		cat := ServiceCatalog{
+			Name: s.Name, Code: s.Code, Description: s.Description,
+			Icon: s.Icon, ParentID: &parent.ID, SortOrder: s.SortOrder, IsActive: true,
+		}
+		if err := db.Create(&cat).Error; err != nil {
+			slog.Error("seed: failed to create catalog", "code", s.Code, "error", err)
+			continue
+		}
+		slog.Info("seed: created catalog", "code", s.Code, "name", s.Name)
+	}
+
+	return nil
 }
 
 func seedMenus(db *gorm.DB) error {

@@ -49,6 +49,7 @@ func (j *JSONField) UnmarshalJSON(data []byte) error {
 type ServiceCatalog struct {
 	model.BaseModel
 	Name        string `json:"name" gorm:"size:128;not null"`
+	Code        string `json:"code" gorm:"size:64;uniqueIndex"`
 	Description string `json:"description" gorm:"size:512"`
 	Icon        string `json:"icon" gorm:"size:64"`
 	ParentID    *uint  `json:"parentId" gorm:"index"`
@@ -61,6 +62,7 @@ func (ServiceCatalog) TableName() string { return "itsm_service_catalogs" }
 type ServiceCatalogResponse struct {
 	ID          uint                     `json:"id"`
 	Name        string                   `json:"name"`
+	Code        string                   `json:"code"`
 	Description string                   `json:"description"`
 	Icon        string                   `json:"icon"`
 	ParentID    *uint                    `json:"parentId"`
@@ -75,6 +77,7 @@ func (c *ServiceCatalog) ToResponse() ServiceCatalogResponse {
 	return ServiceCatalogResponse{
 		ID:          c.ID,
 		Name:        c.Name,
+		Code:        c.Code,
 		Description: c.Description,
 		Icon:        c.Icon,
 		ParentID:    c.ParentID,

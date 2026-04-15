@@ -11,6 +11,7 @@ var (
 	ErrCatalogNotFound    = errors.New("service catalog not found")
 	ErrCatalogHasChildren = errors.New("catalog has sub-categories, cannot delete")
 	ErrCatalogHasServices = errors.New("catalog has services, cannot delete")
+	ErrCatalogTooDeep     = errors.New("service catalog supports at most two levels")
 )
 
 type CatalogService struct {
@@ -22,18 +23,24 @@ func NewCatalogService(i do.Injector) (*CatalogService, error) {
 	return &CatalogService{repo: repo}, nil
 }
 
-func (s *CatalogService) Create(name, description, icon string, parentID *uint, sortOrder int) (*ServiceCatalog, error) {
+func (s *CatalogService) Create(name, code, description, icon string, parentID *uint, sortOrder int) (*ServiceCatalog, error) {
 	if parentID != nil {
-		if _, err := s.repo.FindByID(*parentID); err != nil {
+		parent, err := s.repo.FindByID(*parentID)
+		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil, ErrCatalogNotFound
 			}
 			return nil, err
 		}
+		// Enforce two-level limit: parent must be a root node
+		if parent.ParentID != nil {
+			return nil, ErrCatalogTooDeep
+		}
 	}
 
 	catalog := &ServiceCatalog{
 		Name:        name,
+		Code:        code,
 		Description: description,
 		Icon:        icon,
 		ParentID:    parentID,

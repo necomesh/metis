@@ -330,15 +330,6 @@ func (l *License) ToResponse() LicenseResponse {
 
 // --- Licensee ---
 
-type BusinessInfo struct {
-	Address     string `json:"address,omitempty"`
-	TaxID       string `json:"taxId,omitempty"`
-	BankName    string `json:"bankName,omitempty"`
-	BankAccount string `json:"bankAccount,omitempty"`
-	Swift       string `json:"swift,omitempty"`
-	IBAN        string `json:"iban,omitempty"`
-}
-
 type Licensee struct {
 	model.BaseModel
 	Name   string `json:"name" gorm:"size:128;not null;uniqueIndex"`

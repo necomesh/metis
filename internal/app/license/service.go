@@ -18,7 +18,7 @@ var (
 	ErrPlanNotFound          = errors.New("error.license.plan_not_found")
 	ErrPlanNameExists        = errors.New("error.license.plan_name_exists")
 	ErrInvalidConstraintSchema = errors.New("error.license.invalid_constraint_schema")
-	ErrInvalidConstraintValues = errors.New("invalid constraint values")
+	ErrInvalidConstraintValues = errors.New("error.license.invalid_constraint_values")
 )
 
 // Valid status transitions
@@ -31,20 +31,23 @@ var statusTransitions = map[string][]string{
 // --- ProductService ---
 
 type ProductService struct {
-	productRepo    *ProductRepo
-	planRepo       *PlanRepo
-	keyRepo        *ProductKeyRepo
-	db             *database.DB
-	jwtSecret      []byte
+	productRepo       *ProductRepo
+	planRepo          *PlanRepo
+	keyRepo           *ProductKeyRepo
+	db                *database.DB
+	jwtSecret         []byte
+	licenseKeySecret  []byte
 }
 
 func NewProductService(i do.Injector) (*ProductService, error) {
+	licenseKeySecret, _ := do.InvokeNamed[[]byte](i, "licenseKeySecret")
 	return &ProductService{
-		productRepo: do.MustInvoke[*ProductRepo](i),
-		planRepo:    do.MustInvoke[*PlanRepo](i),
-		keyRepo:     do.MustInvoke[*ProductKeyRepo](i),
-		db:          do.MustInvoke[*database.DB](i),
-		jwtSecret:   do.MustInvoke[[]byte](i),
+		productRepo:      do.MustInvoke[*ProductRepo](i),
+		planRepo:         do.MustInvoke[*PlanRepo](i),
+		keyRepo:          do.MustInvoke[*ProductKeyRepo](i),
+		db:               do.MustInvoke[*database.DB](i),
+		jwtSecret:        do.MustInvoke[[]byte](i),
+		licenseKeySecret: licenseKeySecret,
 	}, nil
 }
 
@@ -57,7 +60,7 @@ func (s *ProductService) CreateProduct(name, code, description string) (*Product
 		return nil, ErrProductCodeExists
 	}
 
-	encKey, err := GetEncryptionKeyWithFallback(s.jwtSecret)
+	encKey, err := GetEncryptionKeyWithFallback(s.licenseKeySecret, s.jwtSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +185,7 @@ func (s *ProductService) UpdateStatus(id uint, newStatus string) error {
 }
 
 func (s *ProductService) RotateKey(productID uint) (*ProductKey, error) {
-	encKey, err := GetEncryptionKeyWithFallback(s.jwtSecret)
+	encKey, err := GetEncryptionKeyWithFallback(s.licenseKeySecret, s.jwtSecret)
 	if err != nil {
 		return nil, err
 	}

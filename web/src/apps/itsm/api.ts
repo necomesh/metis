@@ -6,7 +6,9 @@ export interface CatalogItem {
   id: number
   parentId: number | null
   name: string
+  code: string
   description: string
+  icon: string
   sortOrder: number
   isActive: boolean
   children?: CatalogItem[]
@@ -20,8 +22,10 @@ export function fetchCatalogTree() {
 
 export function createCatalog(data: {
   name: string
+  code: string
   parentId?: number | null
   description?: string
+  icon?: string
   sortOrder?: number
 }) {
   return api.post<CatalogItem>("/api/v1/itsm/catalogs", data)
@@ -31,8 +35,10 @@ export function updateCatalog(
   id: number,
   data: Partial<{
     name: string
+    code: string
     parentId: number | null
     description: string
+    icon: string
     sortOrder: number
     isActive: boolean
   }>,

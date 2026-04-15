@@ -21,6 +21,7 @@ func NewCatalogHandler(i do.Injector) (*CatalogHandler, error) {
 
 type CreateCatalogRequest struct {
 	Name        string `json:"name" binding:"required,max=128"`
+	Code        string `json:"code" binding:"required,max=64"`
 	Description string `json:"description" binding:"max=512"`
 	Icon        string `json:"icon" binding:"max=64"`
 	ParentID    *uint  `json:"parentId"`
@@ -37,10 +38,14 @@ func (h *CatalogHandler) Create(c *gin.Context) {
 	c.Set("audit_action", "itsm.catalog.create")
 	c.Set("audit_resource", "service_catalog")
 
-	catalog, err := h.svc.Create(req.Name, req.Description, req.Icon, req.ParentID, req.SortOrder)
+	catalog, err := h.svc.Create(req.Name, req.Code, req.Description, req.Icon, req.ParentID, req.SortOrder)
 	if err != nil {
 		if errors.Is(err, ErrCatalogNotFound) {
 			handler.Fail(c, http.StatusBadRequest, "parent catalog not found")
+			return
+		}
+		if errors.Is(err, ErrCatalogTooDeep) {
+			handler.Fail(c, http.StatusBadRequest, err.Error())
 			return
 		}
 		handler.Fail(c, http.StatusInternalServerError, err.Error())
@@ -62,6 +67,7 @@ func (h *CatalogHandler) Tree(c *gin.Context) {
 
 type UpdateCatalogRequest struct {
 	Name        *string `json:"name" binding:"omitempty,max=128"`
+	Code        *string `json:"code" binding:"omitempty,max=64"`
 	Description *string `json:"description" binding:"omitempty,max=512"`
 	Icon        *string `json:"icon" binding:"omitempty,max=64"`
 	ParentID    *uint   `json:"parentId"`
@@ -89,6 +95,9 @@ func (h *CatalogHandler) Update(c *gin.Context) {
 	updates := map[string]any{}
 	if req.Name != nil {
 		updates["name"] = *req.Name
+	}
+	if req.Code != nil {
+		updates["code"] = *req.Code
 	}
 	if req.Description != nil {
 		updates["description"] = *req.Description

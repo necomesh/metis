@@ -1,5 +1,6 @@
 import { useRef, useState, useMemo } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useTranslation } from "react-i18next"
 import {
   Plus,
   Trash2,
@@ -40,18 +41,20 @@ interface ConstraintEditorProps {
   canEdit: boolean
 }
 
-const TYPE_META: Record<string, { label: string; icon: typeof Hash }> = {
-  number: { label: "数值", icon: Hash },
-  enum: { label: "枚举", icon: List },
-  multiSelect: { label: "多选", icon: ListChecks },
+const TYPE_ICONS: Record<string, typeof Hash> = {
+  number: Hash,
+  enum: List,
+  multiSelect: ListChecks,
 }
 
 function useKeyCounter() {
+  const [randPrefix] = useState(() => `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`)
   const counterRef = useRef(0)
-  return (prefix: string) => `${prefix}_${++counterRef.current}`
+  return (prefix: string) => `${prefix}_${randPrefix}_${counterRef.current++}`
 }
 
 export function ConstraintEditor({ productId, schema, canEdit }: ConstraintEditorProps) {
+  const { t } = useTranslation(["license", "common"])
   const queryClient = useQueryClient()
   const nextKey = useKeyCounter()
   const [modules, setModules] = useState<ConstraintModule[]>(() =>
@@ -66,7 +69,7 @@ export function ConstraintEditor({ productId, schema, canEdit }: ConstraintEdito
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["license-product", String(productId)] })
-      toast.success("授权项已保存")
+      toast.success(t("license:constraints.saved"))
     },
     onError: (err) => toast.error(err.message),
   })
@@ -121,7 +124,7 @@ export function ConstraintEditor({ productId, schema, canEdit }: ConstraintEdito
       {modules.length === 0 && (
         <div className="rounded-lg border border-dashed bg-muted/20 px-6 py-10 text-center">
           <p className="text-sm text-muted-foreground">
-            暂无授权模块。添加模块来定义该商品可授权的功能与配额。
+            {t("license:constraints.emptyHint")}
           </p>
         </div>
       )}
@@ -143,7 +146,7 @@ export function ConstraintEditor({ productId, schema, canEdit }: ConstraintEdito
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" className="rounded-lg" onClick={handleAddModule}>
             <Plus className="mr-1.5 h-4 w-4" />
-            添加模块
+            {t("license:constraints.addModule")}
           </Button>
         </div>
       )}
@@ -152,7 +155,7 @@ export function ConstraintEditor({ productId, schema, canEdit }: ConstraintEdito
         <div className="flex gap-2 border-t pt-3">
           <Button size="sm" className="rounded-lg" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
             <Save className="mr-1.5 h-4 w-4" />
-            {saveMutation.isPending ? "保存中..." : "保存"}
+            {saveMutation.isPending ? t("common:saving") : t("common:save")}
           </Button>
           <Button
             variant="outline"
@@ -162,7 +165,7 @@ export function ConstraintEditor({ productId, schema, canEdit }: ConstraintEdito
               setModules(schema && Array.isArray(schema) ? structuredClone(schema) : [])
             }
           >
-            重置
+            {t("common:reset")}
           </Button>
         </div>
       )}
@@ -189,6 +192,7 @@ function ModuleCard({
   onRemoveFeature: (index: number) => void
   onUpdateFeature: (index: number, f: ConstraintFeature) => void
 }) {
+  const { t } = useTranslation("license")
   const [expanded, setExpanded] = useState(true)
   const [showKey, setShowKey] = useState(false)
 
@@ -205,13 +209,13 @@ function ModuleCard({
         <Input
           value={mod.label}
           onChange={(e) => onUpdate({ ...mod, label: e.target.value })}
-          placeholder="模块名称，如：监控"
+          placeholder={t("constraints.modulePlaceholder")}
           className="h-8 max-w-[260px] flex-1 border-0 bg-transparent px-0 text-sm font-medium shadow-none focus-visible:ring-0"
           disabled={disabled}
         />
         {mod.features.length > 0 && (
           <Badge variant="outline" className="rounded-md border-0 bg-muted/60 text-[11px] text-muted-foreground">
-            {mod.features.length} 项
+            {t("constraints.itemCount", { count: mod.features.length })}
           </Badge>
         )}
         <span className="flex-1" />
@@ -221,7 +225,7 @@ function ModuleCard({
               type="button"
               className="rounded-md p-1 text-muted-foreground transition-colors hover:text-foreground"
               onClick={() => setShowKey(!showKey)}
-              title="编辑标识 key"
+              title={t("constraints.editKey")}
             >
               <Settings className="h-3.5 w-3.5" />
             </button>
@@ -239,11 +243,11 @@ function ModuleCard({
 
       {showKey && !disabled && (
         <div className="mx-4 mb-4 flex items-center gap-2 rounded-md bg-background/60 px-3 py-2">
-          <Label className="text-xs text-muted-foreground shrink-0">标识 key</Label>
+          <Label className="text-xs text-muted-foreground shrink-0">{t("constraints.identifierKey")}</Label>
           <Input
             value={mod.key}
             onChange={(e) => onUpdate({ ...mod, key: e.target.value })}
-            placeholder="模块唯一标识"
+            placeholder={t("constraints.moduleKeyPlaceholder")}
             className="h-8 max-w-[220px] font-mono text-xs"
           />
         </div>
@@ -253,7 +257,7 @@ function ModuleCard({
         <div className="px-4 pb-4">
           {mod.features.length === 0 && (
             <p className="py-4 text-xs text-muted-foreground">
-              此模块暂无授权项，可直接作为功能开关使用。
+              {t("constraints.noFeatureHint")}
             </p>
           )}
 
@@ -275,15 +279,15 @@ function ModuleCard({
             <div className="mt-4 flex flex-wrap gap-1.5 border-t pt-3">
               <Button variant="outline" size="sm" className="h-7 rounded-md px-2 text-xs" onClick={() => onAddFeature("number")}>
                 <Hash className="mr-1 h-3 w-3" />
-                数值
+                {t("constraints.number")}
               </Button>
               <Button variant="outline" size="sm" className="h-7 rounded-md px-2 text-xs" onClick={() => onAddFeature("enum")}>
                 <List className="mr-1 h-3 w-3" />
-                枚举
+                {t("constraints.enum")}
               </Button>
               <Button variant="outline" size="sm" className="h-7 rounded-md px-2 text-xs" onClick={() => onAddFeature("multiSelect")}>
                 <ListChecks className="mr-1 h-3 w-3" />
-                多选
+                {t("constraints.multiSelect")}
               </Button>
             </div>
           )}
@@ -295,18 +299,18 @@ function ModuleCard({
 
 // --- Feature row ---
 
-function featureSummary(feature: ConstraintFeature): string {
+function featureSummary(feature: ConstraintFeature, t: (key: string, opts?: object) => string): string {
   if (feature.type === "number") {
     const parts: string[] = []
     if (feature.min != null) parts.push(`${feature.min}`)
     if (feature.max != null) parts.push(`${feature.max}`)
     if (parts.length === 2) return `${parts[0]} ~ ${parts[1]}`
-    if (feature.default != null) return `默认 ${feature.default}`
+    if (feature.default != null) return t("constraints.defaultValue", { value: feature.default })
     return ""
   }
   if (feature.type === "enum" || feature.type === "multiSelect") {
     const count = (feature.options ?? []).length
-    return count > 0 ? `${count} 个选项` : ""
+    return count > 0 ? t("constraints.optionCount", { count }) : ""
   }
   return ""
 }
@@ -322,9 +326,9 @@ function FeatureRow({
   onUpdate: (f: ConstraintFeature) => void
   onRemove: () => void
 }) {
+  const { t } = useTranslation("license")
   const [showAdvanced, setShowAdvanced] = useState(false)
-  const meta = TYPE_META[feature.type]
-  const Icon = meta?.icon ?? Hash
+  const Icon = TYPE_ICONS[feature.type] ?? Hash
 
   return (
     <div className="rounded-md bg-background/60 px-3 py-3">
@@ -335,15 +339,15 @@ function FeatureRow({
         <Input
           value={feature.label}
           onChange={(e) => onUpdate({ ...feature, label: e.target.value })}
-          placeholder="名称，如：最大节点数"
+          placeholder={t("constraints.featurePlaceholder")}
           className="h-8 max-w-[220px] flex-1 border-0 bg-transparent px-0 text-sm font-medium shadow-none focus-visible:ring-0"
           disabled={disabled}
         />
         <Badge variant="secondary" className="shrink-0 rounded-md border-0 bg-muted/60 text-[10px]">
-          {meta?.label ?? feature.type}
+          {t(`constraints.${feature.type}` as const) ?? feature.type}
         </Badge>
         <span className="flex-1 truncate text-xs text-muted-foreground">
-          {featureSummary(feature)}
+          {featureSummary(feature, t)}
         </span>
         {!disabled && (
           <>
@@ -351,7 +355,7 @@ function FeatureRow({
               type="button"
               className="rounded-md p-1 text-muted-foreground transition-colors hover:text-foreground"
               onClick={() => setShowAdvanced(!showAdvanced)}
-              title="详细设置"
+              title={t("constraints.advancedSettings")}
             >
               <Settings className="h-3.5 w-3.5" />
             </button>
@@ -370,7 +374,7 @@ function FeatureRow({
       {showAdvanced && !disabled && (
         <div className="mt-3 space-y-3 rounded-md bg-muted/30 px-3 py-3">
           <div className="flex items-center gap-2">
-            <Label className="text-xs text-muted-foreground shrink-0 w-16">标识 key</Label>
+            <Label className="text-xs text-muted-foreground shrink-0 w-16">{t("constraints.identifierKey")}</Label>
             <Input
               value={feature.key}
               onChange={(e) => onUpdate({ ...feature, key: e.target.value })}
@@ -400,10 +404,11 @@ function NumberFeatureEditor({
   onChange: (f: ConstraintFeature) => void
   disabled: boolean
 }) {
+  const { t } = useTranslation("license")
   return (
     <div className="grid gap-2 sm:grid-cols-3">
       <div className="rounded-md border bg-background/70 px-3 py-2">
-        <Label className="text-[11px] text-muted-foreground">最小</Label>
+        <Label className="text-[11px] text-muted-foreground">{t("constraints.min")}</Label>
         <Input
           type="number"
           value={feature.min ?? ""}
@@ -415,7 +420,7 @@ function NumberFeatureEditor({
         />
       </div>
       <div className="rounded-md border bg-background/70 px-3 py-2">
-        <Label className="text-[11px] text-muted-foreground">最大</Label>
+        <Label className="text-[11px] text-muted-foreground">{t("constraints.max")}</Label>
         <Input
           type="number"
           value={feature.max ?? ""}
@@ -427,7 +432,7 @@ function NumberFeatureEditor({
         />
       </div>
       <div className="rounded-md border bg-background/70 px-3 py-2">
-        <Label className="text-[11px] text-muted-foreground">默认</Label>
+        <Label className="text-[11px] text-muted-foreground">{t("constraints.default")}</Label>
         <Input
           type="number"
           value={feature.default != null ? String(feature.default) : ""}
@@ -451,6 +456,7 @@ function OptionsFeatureEditor({
   onChange: (f: ConstraintFeature) => void
   disabled: boolean
 }) {
+  const { t } = useTranslation("license")
   const [newOption, setNewOption] = useState("")
   const options = feature.options ?? []
 
@@ -486,7 +492,7 @@ function OptionsFeatureEditor({
         <Input
           value={newOption}
           onChange={(e) => setNewOption(e.target.value)}
-          placeholder="添加选项..."
+          placeholder={t("constraints.addOption")}
           className="h-8 w-32 rounded-md border-dashed bg-transparent text-xs"
           onKeyDown={(e) => {
             if (e.key === "Enter") {

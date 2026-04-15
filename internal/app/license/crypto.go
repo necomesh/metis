@@ -87,9 +87,13 @@ func GetEncryptionKey(jwtSecret []byte) ([]byte, error) {
 	return nil, ErrNoEncryptionKey
 }
 
-// GetEncryptionKeyWithFallback returns the encryption key, using jwtSecret as fallback.
+// GetEncryptionKeyWithFallback returns the encryption key.
 // The licenseKeySecret (from metis.yaml) takes priority over jwtSecret.
-func GetEncryptionKeyWithFallback(jwtSecret []byte) ([]byte, error) {
+func GetEncryptionKeyWithFallback(licenseKeySecret, jwtSecret []byte) ([]byte, error) {
+	if len(licenseKeySecret) > 0 {
+		h := sha256.Sum256(licenseKeySecret)
+		return h[:], nil
+	}
 	return GetEncryptionKey(jwtSecret)
 }
 
