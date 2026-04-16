@@ -174,11 +174,7 @@ func (s *ServiceDefService) validateCatalogID(catalogID uint) error {
 func (s *ServiceDefService) validateEngineFields(engineType string, formID *uint, workflowJSON JSONField, collaborationSpec string, agentID *uint) error {
 	switch engineType {
 	case "classic":
-		if agentID != nil {
-			return ErrServiceEngineMismatch
-		}
-	case "smart":
-		if formID != nil {
+		if agentID != nil && *agentID != 0 {
 			return ErrServiceEngineMismatch
 		}
 	}
