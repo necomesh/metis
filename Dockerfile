@@ -22,7 +22,7 @@ COPY scripts/ scripts/
 
 ARG APPS=""
 
-RUN cd web && bun install --frozen-lockfile
+RUN cd web && bun install
 
 COPY web/ web/
 
