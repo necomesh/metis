@@ -92,7 +92,12 @@ push:
 	git commit -m "Update"
 	git push
 
-.PHONY: web-build web-dev refer-clone dev build release release-license build-license build-sidecar release-sidecar run push test test-license test-fuzz
+test-llm:
+	@test -f .env.test || (echo "Missing .env.test — copy .env.test.example and fill in values" && exit 1)
+	@export $$(cat .env.test | xargs) && \
+	go test ./internal/app/itsm/ -run TestLLM -v -timeout 120s
+
+.PHONY: web-build web-dev refer-clone dev build release release-license build-license build-sidecar release-sidecar run push test test-license test-fuzz test-llm
 
 # Backward-compat aliases
 license: build-license

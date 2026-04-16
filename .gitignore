@@ -30,6 +30,7 @@ config.yml
 # Env (legacy, no longer used)
 .env
 .env.local
+.env.test
 server
 sidecar
 !cmd/server
