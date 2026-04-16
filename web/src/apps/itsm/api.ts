@@ -768,3 +768,25 @@ export interface ProcessVariableItem {
 export function fetchTicketVariables(ticketId: number) {
   return api.get<ProcessVariableItem[]>(`/api/v1/itsm/tickets/${ticketId}/variables`).then((r) => r ?? [])
 }
+
+// --- Execution Tokens ---
+
+export interface TokenItem {
+  id: number
+  ticketId: number
+  parentTokenId: number | null
+  nodeId: string
+  status: string
+  tokenType: string
+  scopeId: string
+  createdAt: string
+  updatedAt: string
+}
+
+export function fetchTicketTokens(ticketId: number) {
+  return api.get<TokenItem[]>(`/api/v1/itsm/tickets/${ticketId}/tokens`).then((r) => r ?? [])
+}
+
+export function updateTicketVariable(ticketId: number, key: string, data: { value: unknown; valueType?: string }) {
+  return api.put<ProcessVariableItem>(`/api/v1/itsm/tickets/${ticketId}/variables/${encodeURIComponent(key)}`, data)
+}

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next"
 import { z } from "zod"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { Loader2 } from "lucide-react"
 import { api } from "@/lib/api"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -119,15 +120,17 @@ export function ProductSheet({ open, onOpenChange, product }: ProductSheetProps)
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="sm:max-w-lg">
-        <SheetHeader>
+      <SheetContent className="sm:max-w-md flex flex-col">
+        <SheetHeader className="pb-2">
           <SheetTitle>{isEditing ? t("license:products.editProduct") : t("license:products.create")}</SheetTitle>
           <SheetDescription className="sr-only">
             {isEditing ? t("license:products.editProduct") : t("license:products.create")}
           </SheetDescription>
         </SheetHeader>
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-1 flex-col gap-5 px-4">
+          <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-1 flex-col gap-4 px-4">
+            <div className="text-sm font-medium text-muted-foreground">{t("license:products.basicInfo")}</div>
+
             <FormField
               control={form.control}
               name="name"
@@ -148,9 +151,8 @@ export function ProductSheet({ open, onOpenChange, product }: ProductSheetProps)
                 <FormItem>
                   <FormLabel>{t("license:products.productCode")}</FormLabel>
                   {isEditing ? (
-                    <div>
-                      <Input value={field.value} disabled />
-                      <p className="text-xs text-muted-foreground mt-1">{t("license:products.codeImmutable")}</p>
+                    <div className="rounded-md border bg-muted px-3 py-2 text-sm font-mono text-muted-foreground">
+                      {field.value}
                     </div>
                   ) : (
                     <>
@@ -166,6 +168,7 @@ export function ProductSheet({ open, onOpenChange, product }: ProductSheetProps)
                 </FormItem>
               )}
             />
+
             <FormField
               control={form.control}
               name="description"
@@ -180,8 +183,9 @@ export function ProductSheet({ open, onOpenChange, product }: ProductSheetProps)
               )}
             />
 
-            <SheetFooter>
+            <SheetFooter className="pt-2">
               <Button type="submit" size="sm" disabled={isPending}>
+                {isPending && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
                 {isPending ? t("common:saving") : isEditing ? t("common:save") : t("common:create")}
               </Button>
             </SheetFooter>

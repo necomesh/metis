@@ -165,15 +165,15 @@ export function PlanSheet({ open, onOpenChange, productId, plan, constraintSchem
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="overflow-y-auto sm:max-w-lg">
+      <SheetContent className="sm:max-w-lg">
         <SheetHeader>
           <SheetTitle>{isEditing ? "编辑套餐" : "新建套餐"}</SheetTitle>
           <SheetDescription className="sr-only">
             {isEditing ? "修改套餐信息" : "为商品创建新套餐"}
           </SheetDescription>
         </SheetHeader>
-        <form onSubmit={handleSubmit} className="flex flex-1 flex-col gap-4 px-4">
-          <div className="space-y-1.5 rounded-lg bg-muted/20 px-3 py-3">
+        <form onSubmit={handleSubmit} className="flex flex-1 flex-col gap-4 overflow-y-auto px-6 pt-3 pb-6">
+          <div className="space-y-1.5 rounded-lg bg-muted/20 py-3">
             <Label htmlFor="plan-name" className="text-xs text-muted-foreground">套餐名称</Label>
             <Input
               id="plan-name"
@@ -186,7 +186,7 @@ export function PlanSheet({ open, onOpenChange, productId, plan, constraintSchem
           </div>
 
           {modules.length > 0 && (
-            <div className="space-y-2.5">
+            <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <Label className="text-xs text-muted-foreground">授权配置</Label>
                 <Badge variant="outline" className="rounded-md border-0 bg-muted/60 text-[11px] text-muted-foreground">

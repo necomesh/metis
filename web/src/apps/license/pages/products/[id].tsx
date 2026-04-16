@@ -6,9 +6,6 @@ import {
   ArrowLeft,
   Check,
   Copy,
-  Eye,
-  EyeOff,
-  Key,
   Loader2,
   Pencil,
   RefreshCw,
@@ -18,6 +15,7 @@ import { usePermission } from "@/hooks/use-permission"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   AlertDialog,
@@ -42,26 +40,7 @@ import { formatDateTime } from "@/lib/utils"
 import { ProductSheet, type ProductItem } from "../../components/product-sheet"
 import { ConstraintEditor } from "../../components/constraint-editor"
 import { PlanTab } from "../../components/plan-tab"
-
-const STATUS_VARIANTS: Record<string, "default" | "secondary" | "outline"> = {
-  unpublished: "secondary",
-  published: "default",
-  archived: "outline",
-}
-
-const STATUS_ACTION_KEYS: Record<string, Array<{ status: string; labelKey: string }>> = {
-  unpublished: [
-    { status: "published", labelKey: "status.publish" },
-    { status: "archived", labelKey: "status.archiveAction" },
-  ],
-  published: [
-    { status: "unpublished", labelKey: "status.unpublish" },
-    { status: "archived", labelKey: "status.archiveAction" },
-  ],
-  archived: [
-    { status: "unpublished", labelKey: "status.restoreAction" },
-  ],
-}
+import { STATUS_STYLES, STATUS_ACTION_CONFIG } from "../../constants"
 
 interface ConstraintFeature {
   key: string
@@ -121,7 +100,6 @@ export function Component() {
   const [editOpen, setEditOpen] = useState(false)
   const [impactOpen, setImpactOpen] = useState(false)
   const [bulkReissueOpen, setBulkReissueOpen] = useState(false)
-  const [showLicenseKey, setShowLicenseKey] = useState(false)
   const [copiedField, setCopiedField] = useState<string | null>(null)
 
   const canUpdate = usePermission("license:product:update")
@@ -170,7 +148,7 @@ export function Component() {
   })
 
   const bulkReissueMutation = useMutation({
-    mutationFn: () => api.post(`/api/v1/license/products/${id}/bulk-reissue`, { licenseIds: [] }),
+    mutationFn: () => api.post<{ reissued: number }>(`/api/v1/license/products/${id}/bulk-reissue`, { licenseIds: [] }),
     onSuccess: (data: { reissued: number }) => {
       queryClient.invalidateQueries({ queryKey: ["license-licenses"] })
       queryClient.invalidateQueries({ queryKey: ["license-product-key-impact", id] })
@@ -195,9 +173,9 @@ export function Component() {
     )
   }
 
-  const variant = STATUS_VARIANTS[product.status] ?? ("secondary" as const)
+  const statusStyle = STATUS_STYLES[product.status] ?? STATUS_STYLES.unpublished
   const statusKey = product.status as string
-  const actions = STATUS_ACTION_KEYS[product.status] ?? []
+  const actions = STATUS_ACTION_CONFIG[product.status] ?? []
 
   function handleTabChange(value: string) {
     const nextParams = new URLSearchParams(searchParams)
@@ -233,115 +211,135 @@ export function Component() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => navigate("/license/products")}>
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
-        <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <h2 className="text-lg font-semibold">{product.name}</h2>
-            <Badge variant={variant}>{t(`license:status.${statusKey}`, product.status)}</Badge>
-          </div>
-          <p className="text-sm text-muted-foreground font-mono">{product.code}</p>
-        </div>
-        {canUpdate && (
-          <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
-            <Pencil className="mr-1.5 h-3.5 w-3.5" />
-            {t("common:edit")}
+    <div className="space-y-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          <Button variant="outline" size="icon" onClick={() => navigate("/license/products")} className="h-8 w-8 shrink-0">
+            <ArrowLeft className="h-4 w-4" />
           </Button>
-        )}
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <h2 className="text-lg font-semibold">{product.name}</h2>
+              <Badge
+                variant={statusStyle.variant}
+                className={statusStyle.className}
+              >
+                {t(`license:status.${statusKey}`, product.status)}
+              </Badge>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
+              <span className="bg-muted px-1.5 py-0.5 rounded text-xs">{product.code}</span>
+            </div>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {canUpdate && actions.map((action: any) => {
+            const ActionIcon = action.icon
+            const actionLabel = t(`license:${action.labelKey}`)
+            return (
+              <AlertDialog key={action.status}>
+                <AlertDialogTrigger asChild>
+                  <Button variant={action.variant} size="sm">
+                    <ActionIcon className="mr-1.5 h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">{actionLabel}</span>
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>{t("license:products.confirmAction", { action: actionLabel })}</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      {t("license:products.confirmActionDesc", { name: product.name, action: actionLabel })}
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>{t("common:cancel")}</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={() => statusMutation.mutate(action.status)}
+                      disabled={statusMutation.isPending}
+                    >
+                      {actionLabel}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )
+          })}
+          {canUpdate && (
+            <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+              <Pencil className="mr-1.5 h-3.5 w-3.5" />
+              <span className="hidden sm:inline">{t("common:edit")}</span>
+            </Button>
+          )}
+        </div>
       </div>
 
       <Tabs value={activeTab} onValueChange={handleTabChange}>
-        <TabsList className="h-auto w-fit max-w-full flex-wrap justify-start gap-1 rounded-lg bg-muted/50 p-1">
-          <TabsTrigger value="info" className="h-8 flex-none px-3 text-xs sm:text-sm">
+        <TabsList variant="line" className="h-auto w-full justify-start gap-0 rounded-none border-b bg-transparent p-0">
+          <TabsTrigger
+            value="info"
+            className="h-auto flex-none rounded-md border-0 px-4 pb-3 pt-0 text-sm font-medium focus-visible:ring-0 focus-visible:outline-none data-[state=active]:bg-muted/60 data-[state=active]:shadow-none after:bg-primary"
+          >
             {t("license:products.basicInfo")}
           </TabsTrigger>
-          <TabsTrigger value="schema" className="h-8 flex-none px-3 text-xs sm:text-sm">
+          <TabsTrigger
+            value="schema"
+            className="h-auto flex-none rounded-md border-0 px-4 pb-3 pt-0 text-sm font-medium focus-visible:ring-0 focus-visible:outline-none data-[state=active]:bg-muted/60 data-[state=active]:shadow-none after:bg-primary"
+          >
             {t("license:products.constraintDef")}
           </TabsTrigger>
-          <TabsTrigger value="plans" className="h-8 flex-none px-3 text-xs sm:text-sm">
+          <TabsTrigger
+            value="plans"
+            className="h-auto flex-none rounded-md border-0 px-4 pb-3 pt-0 text-sm font-medium focus-visible:ring-0 focus-visible:outline-none data-[state=active]:bg-muted/60 data-[state=active]:shadow-none after:bg-primary"
+          >
             {t("license:products.planManagement")}
           </TabsTrigger>
-          <TabsTrigger value="keys" className="h-8 flex-none px-3 text-xs sm:text-sm">
+          <TabsTrigger
+            value="keys"
+            className="h-auto flex-none rounded-md border-0 px-4 pb-3 pt-0 text-sm font-medium focus-visible:ring-0 focus-visible:outline-none data-[state=active]:bg-muted/60 data-[state=active]:shadow-none after:bg-primary"
+          >
             {t("license:products.keyManagement")}
           </TabsTrigger>
         </TabsList>
 
         <TabsContent value="info" className="space-y-4">
-          <div className="rounded-lg border">
-            <div className="grid gap-x-6 gap-y-4 px-4 py-4 text-sm sm:grid-cols-2 lg:grid-cols-3">
-              <div>
-                <p className="text-muted-foreground">{t("common:name")}</p>
-                <p className="mt-1 font-medium">{product.name}</p>
+          <section className="space-y-3">
+            <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">{t("common:name")}</p>
+                <p className="font-medium text-foreground">{product.name}</p>
               </div>
-              <div>
-                <p className="text-muted-foreground">{t("license:products.code")}</p>
-                <p className="mt-1 font-mono">{product.code}</p>
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">{t("license:products.code")}</p>
+                <code className="text-sm font-mono text-foreground">{product.code}</code>
               </div>
-              <div>
-                <p className="text-muted-foreground">{t("common:status")}</p>
-                <div className="mt-1">
-                  <Badge variant={variant}>{t(`license:status.${statusKey}`, product.status)}</Badge>
-                </div>
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">{t("license:products.licenseModules")}</p>
+                <p className="font-medium tabular-nums text-foreground">{modules.length}</p>
               </div>
-              <div>
-                <p className="text-muted-foreground">{t("license:products.licenseModules")}</p>
-                <p className="mt-1">{modules.length}</p>
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">{t("license:products.planQuantity")}</p>
+                <p className="font-medium tabular-nums text-foreground">{product.planCount}</p>
               </div>
-              <div>
-                <p className="text-muted-foreground">{t("license:products.planQuantity")}</p>
-                <p className="mt-1">{product.planCount}</p>
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">{t("common:createdAt")}</p>
+                <p className="text-sm text-foreground">{formatDateTime(product.createdAt)}</p>
               </div>
-              <div>
-                <p className="text-muted-foreground">{t("common:updatedAt")}</p>
-                <p className="mt-1">{formatDateTime(product.updatedAt)}</p>
-              </div>
-              <div className="sm:col-span-2 lg:col-span-3">
-                <p className="text-muted-foreground">{t("common:description")}</p>
-                <p className="mt-1 leading-6">
-                  {product.description || t("license:products.noDescription")}
-                </p>
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">{t("common:updatedAt")}</p>
+                <p className="text-sm text-foreground">{formatDateTime(product.updatedAt)}</p>
               </div>
             </div>
-          </div>
+          </section>
 
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            {canUpdate && actions.length > 0 && (
-              <>
-                {actions.map((action) => {
-                  const actionLabel = t(`license:${action.labelKey}`)
-                  return (
-                    <AlertDialog key={action.status}>
-                      <AlertDialogTrigger asChild>
-                        <Button variant="outline" size="sm">
-                          {actionLabel}
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>{t("license:products.confirmAction", { action: actionLabel })}</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            {t("license:products.confirmActionDesc", { name: product.name, action: actionLabel })}
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>{t("common:cancel")}</AlertDialogCancel>
-                          <AlertDialogAction
-                            onClick={() => statusMutation.mutate(action.status)}
-                            disabled={statusMutation.isPending}
-                          >
-                            {actionLabel}
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  )
-                })}
-              </>
-            )}
-          </div>
+          {product.description && (
+            <>
+              <Separator />
+              <section className="space-y-2">
+                <h3 className="text-sm font-medium text-muted-foreground">{t("common:description")}</h3>
+                <p className="text-sm leading-6 text-foreground/90">{product.description}</p>
+              </section>
+            </>
+          )}
         </TabsContent>
 
         <TabsContent value="schema">
@@ -363,63 +361,105 @@ export function Component() {
         </TabsContent>
 
         <TabsContent value="keys" className="space-y-4">
-          {/* License Key */}
           {product.licenseKey && (
-            <div className="rounded-lg border p-4 space-y-2">
-              <p className="text-sm font-medium">{t("license:licenses.licenseKey")}</p>
-              <div className="flex items-center gap-2">
-                <code className="flex-1 truncate rounded bg-muted px-2 py-1 text-xs font-mono">
-                  {showLicenseKey ? product.licenseKey : "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"}
-                </code>
-                <Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => setShowLicenseKey((v) => !v)}>
-                  {showLicenseKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </Button>
-                <Button type="button" variant="outline" size="sm" className="h-7 px-2 shrink-0" onClick={() => handleCopy(product.licenseKey, "licenseKey")}>
-                  {copiedField === "licenseKey" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                  <span className="ml-1">{copiedField === "licenseKey" ? t("common:copied") : t("common:copy")}</span>
+            <section className="space-y-2.5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <h3 className="text-sm font-medium text-foreground">{t("license:licenses.licenseKey")}</h3>
+                  <p className="text-xs text-muted-foreground">{t("license:products.licenseKeyHint", "Use this key to issue licenses for this product.")}</p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={copiedField === "licenseKey" ? "default" : "outline"}
+                  className="shrink-0"
+                  onClick={() => handleCopy(product.licenseKey, "licenseKey")}
+                >
+                  {copiedField === "licenseKey" ? (
+                    <>
+                      <Check className="mr-2 h-3.5 w-3.5" />
+                      {t("common:copied")}
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="mr-2 h-3.5 w-3.5" />
+                      {t("common:copy")}
+                    </>
+                  )}
                 </Button>
               </div>
-            </div>
+              <div className="rounded-md border bg-muted/20 px-3 py-2.5">
+                <code className="block text-xs font-mono leading-6 text-foreground break-all">
+                  {product.licenseKey}
+                </code>
+              </div>
+            </section>
           )}
 
-          {/* Signing Key */}
-          <div className="rounded-lg border p-4">
-            {publicKey ? (
-              <div className="space-y-4 text-sm">
-                <div className="flex items-center gap-2">
-                  <Key className="h-4 w-4 text-muted-foreground" />
-                  <span className="font-medium">{t("license:products.currentKey")}</span>
-                  <Badge variant="secondary">v{publicKey.version}</Badge>
+          <Separator />
+
+          <section className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <h3 className="text-sm font-medium text-foreground">{t("license:products.currentKey")}</h3>
+                {publicKey ? (
+                  <p className="text-xs text-muted-foreground">
+                    {t("common:createdAt")} {formatDateTime(publicKey.createdAt)}
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">{t("license:products.noKeyInfo")}</p>
+                )}
+              </div>
+              {publicKey && (
+                <Badge variant="secondary" className="px-2.5 py-0.5 text-xs font-medium">v{publicKey.version}</Badge>
+              )}
+            </div>
+
+            {publicKey && (
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between gap-3">
+                  <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t("license:products.publicKey")}</h4>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 px-3"
+                    onClick={() => handleCopy(publicKey.publicKey, "publicKey")}
+                  >
+                    {copiedField === "publicKey" ? (
+                      <>
+                        <Check className="mr-2 h-3.5 w-3.5" />
+                        {t("common:copied")}
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="mr-2 h-3.5 w-3.5" />
+                        {t("common:copy")}
+                      </>
+                    )}
+                  </Button>
                 </div>
-                <div>
-                  <p className="text-muted-foreground">{t("license:products.publicKey")}</p>
-                  <pre className="mt-1 rounded bg-muted p-3 text-xs break-all whitespace-pre-wrap font-mono">
+                <div className="rounded-md border bg-muted/20 px-3 py-2.5">
+                  <pre className="text-xs break-all whitespace-pre-wrap font-mono leading-6 text-foreground">
                     {publicKey.publicKey}
                   </pre>
                 </div>
-                <div>
-                  <p className="text-muted-foreground">{t("common:createdAt")}</p>
-                  <p className="mt-1">{formatDateTime(publicKey.createdAt)}</p>
-                </div>
               </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">{t("license:products.noKeyInfo")}</p>
             )}
-          </div>
-
-          {canManageKey && (
-            <div className="flex flex-wrap justify-end gap-2">
-              {impact && impact.affectedCount > 0 && (
-                <Button variant="outline" size="sm" onClick={() => setBulkReissueOpen(true)}>
-                  {t("license:products.bulkReissue")}
+            {canManageKey && (
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <Button variant="outline" onClick={handleRotateKeyClick}>
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  {t("license:products.rotateKey")}
                 </Button>
-              )}
-              <Button variant="outline" size="sm" onClick={handleRotateKeyClick}>
-                <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-                {t("license:products.rotateKey")}
-              </Button>
-            </div>
-          )}
+                {impact && impact.affectedCount > 0 && (
+                  <Button variant="secondary" onClick={() => setBulkReissueOpen(true)}>
+                    {t("license:products.bulkReissue")}
+                  </Button>
+                )}
+              </div>
+            )}
+          </section>
         </TabsContent>
       </Tabs>
 
@@ -451,7 +491,7 @@ export function Component() {
               {t("common:cancel")}
             </Button>
             {impact && impact.affectedCount > 0 && (
-              <Button variant="outline" onClick={() => setBulkReissueOpen(true)}>
+              <Button variant="secondary" onClick={() => setBulkReissueOpen(true)}>
                 {t("license:products.bulkReissue")}
               </Button>
             )}

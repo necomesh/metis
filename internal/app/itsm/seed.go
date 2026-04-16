@@ -96,16 +96,13 @@ func seedCatalogs(db *gorm.DB) error {
 		if s.ParentCode != "" {
 			continue
 		}
-		var existing ServiceCatalog
-		if err := db.Where("code = ?", s.Code).First(&existing).Error; err == nil {
-			continue
-		}
-		cat := ServiceCatalog{
+		if ok, err := upsertSeedCatalog(db, ServiceCatalog{
 			Name: s.Name, Code: s.Code, Description: s.Description,
 			Icon: s.Icon, SortOrder: s.SortOrder, IsActive: true,
-		}
-		if err := db.Create(&cat).Error; err != nil {
+		}); err != nil {
 			slog.Error("seed: failed to create catalog", "code", s.Code, "error", err)
+			continue
+		} else if !ok {
 			continue
 		}
 		slog.Info("seed: created catalog", "code", s.Code, "name", s.Name)
@@ -129,14 +126,36 @@ func seedCatalogs(db *gorm.DB) error {
 			Name: s.Name, Code: s.Code, Description: s.Description,
 			Icon: s.Icon, ParentID: &parent.ID, SortOrder: s.SortOrder, IsActive: true,
 		}
-		if err := db.Create(&cat).Error; err != nil {
+		if ok, err := upsertSeedCatalog(db, cat); err != nil {
 			slog.Error("seed: failed to create catalog", "code", s.Code, "error", err)
+			continue
+		} else if !ok {
 			continue
 		}
 		slog.Info("seed: created catalog", "code", s.Code, "name", s.Name)
 	}
 
 	return nil
+}
+
+func upsertSeedCatalog(db *gorm.DB, cat ServiceCatalog) (bool, error) {
+	var existing ServiceCatalog
+	if err := db.Where("code = ?", cat.Code).First(&existing).Error; err == nil {
+		return false, nil
+	}
+	if err := db.Unscoped().Where("code = ?", cat.Code).First(&existing).Error; err == nil {
+		updates := map[string]any{
+			"name":        cat.Name,
+			"description": cat.Description,
+			"icon":        cat.Icon,
+			"parent_id":   cat.ParentID,
+			"sort_order":  cat.SortOrder,
+			"is_active":   true,
+			"deleted_at":  nil,
+		}
+		return true, db.Unscoped().Model(&ServiceCatalog{}).Where("id = ?", existing.ID).Updates(updates).Error
+	}
+	return true, db.Create(&cat).Error
 }
 
 func seedMenus(db *gorm.DB) error {
@@ -456,19 +475,19 @@ func seedFormDefinitions(db *gorm.DB) error {
 			Name:        "通用事件表单",
 			Code:        "form_general_incident",
 			Description: "适用于一般事件上报的通用表单",
-			Schema: `{"version":1,"fields":[{"key":"title","type":"text","label":"标题","required":true,"validation":[{"rule":"required","message":"请输入标题"},{"rule":"maxLength","value":200,"message":"标题不能超过200字"}],"width":"full"},{"key":"description","type":"textarea","label":"描述","required":true,"validation":[{"rule":"required","message":"请输入描述"}],"width":"full","props":{"rows":4}},{"key":"urgency","type":"select","label":"紧急程度","required":true,"validation":[{"rule":"required","message":"请选择紧急程度"}],"options":[{"label":"低","value":"low"},{"label":"中","value":"medium"},{"label":"高","value":"high"},{"label":"紧急","value":"critical"}],"defaultValue":"medium","width":"half"},{"key":"impact","type":"select","label":"影响范围","required":true,"validation":[{"rule":"required","message":"请选择影响范围"}],"options":[{"label":"个人","value":"individual"},{"label":"部门","value":"department"},{"label":"全公司","value":"company"}],"defaultValue":"individual","width":"half"},{"key":"contact","type":"text","label":"联系方式","placeholder":"手机号或邮箱","width":"full"}],"layout":{"columns":2,"sections":[{"title":"基本信息","fields":["title","description"]},{"title":"分类与影响","fields":["urgency","impact","contact"]}]}}`,
+			Schema:      `{"version":1,"fields":[{"key":"title","type":"text","label":"标题","required":true,"validation":[{"rule":"required","message":"请输入标题"},{"rule":"maxLength","value":200,"message":"标题不能超过200字"}],"width":"full"},{"key":"description","type":"textarea","label":"描述","required":true,"validation":[{"rule":"required","message":"请输入描述"}],"width":"full","props":{"rows":4}},{"key":"urgency","type":"select","label":"紧急程度","required":true,"validation":[{"rule":"required","message":"请选择紧急程度"}],"options":[{"label":"低","value":"low"},{"label":"中","value":"medium"},{"label":"高","value":"high"},{"label":"紧急","value":"critical"}],"defaultValue":"medium","width":"half"},{"key":"impact","type":"select","label":"影响范围","required":true,"validation":[{"rule":"required","message":"请选择影响范围"}],"options":[{"label":"个人","value":"individual"},{"label":"部门","value":"department"},{"label":"全公司","value":"company"}],"defaultValue":"individual","width":"half"},{"key":"contact","type":"text","label":"联系方式","placeholder":"手机号或邮箱","width":"full"}],"layout":{"columns":2,"sections":[{"title":"基本信息","fields":["title","description"]},{"title":"分类与影响","fields":["urgency","impact","contact"]}]}}`,
 		},
 		{
 			Name:        "变更申请表单",
 			Code:        "form_change_request",
 			Description: "适用于变更申请流程的表单",
-			Schema: `{"version":1,"fields":[{"key":"title","type":"text","label":"变更标题","required":true,"validation":[{"rule":"required","message":"请输入变更标题"}],"width":"full"},{"key":"description","type":"textarea","label":"变更描述","required":true,"validation":[{"rule":"required","message":"请输入变更描述"}],"width":"full","props":{"rows":4}},{"key":"reason","type":"textarea","label":"变更原因","required":true,"validation":[{"rule":"required","message":"请输入变更原因"}],"width":"full","props":{"rows":3}},{"key":"planned_time","type":"datetime","label":"计划执行时间","required":true,"validation":[{"rule":"required","message":"请选择计划执行时间"}],"width":"half"},{"key":"impact_assessment","type":"textarea","label":"影响评估","required":true,"validation":[{"rule":"required","message":"请填写影响评估"}],"width":"full","props":{"rows":3}},{"key":"rollback_plan","type":"textarea","label":"回滚方案","required":true,"validation":[{"rule":"required","message":"请填写回滚方案"}],"width":"full","props":{"rows":3}}],"layout":{"columns":2,"sections":[{"title":"变更信息","fields":["title","description","reason"]},{"title":"执行计划","fields":["planned_time","impact_assessment","rollback_plan"]}]}}`,
+			Schema:      `{"version":1,"fields":[{"key":"title","type":"text","label":"变更标题","required":true,"validation":[{"rule":"required","message":"请输入变更标题"}],"width":"full"},{"key":"description","type":"textarea","label":"变更描述","required":true,"validation":[{"rule":"required","message":"请输入变更描述"}],"width":"full","props":{"rows":4}},{"key":"reason","type":"textarea","label":"变更原因","required":true,"validation":[{"rule":"required","message":"请输入变更原因"}],"width":"full","props":{"rows":3}},{"key":"planned_time","type":"datetime","label":"计划执行时间","required":true,"validation":[{"rule":"required","message":"请选择计划执行时间"}],"width":"half"},{"key":"impact_assessment","type":"textarea","label":"影响评估","required":true,"validation":[{"rule":"required","message":"请填写影响评估"}],"width":"full","props":{"rows":3}},{"key":"rollback_plan","type":"textarea","label":"回滚方案","required":true,"validation":[{"rule":"required","message":"请填写回滚方案"}],"width":"full","props":{"rows":3}}],"layout":{"columns":2,"sections":[{"title":"变更信息","fields":["title","description","reason"]},{"title":"执行计划","fields":["planned_time","impact_assessment","rollback_plan"]}]}}`,
 		},
 		{
 			Name:        "服务请求表单",
 			Code:        "form_service_request",
 			Description: "适用于一般服务请求的通用表单",
-			Schema: `{"version":1,"fields":[{"key":"title","type":"text","label":"请求标题","required":true,"validation":[{"rule":"required","message":"请输入请求标题"}],"width":"full"},{"key":"description","type":"textarea","label":"请求描述","required":true,"validation":[{"rule":"required","message":"请输入请求描述"}],"width":"full","props":{"rows":4}},{"key":"expected_date","type":"date","label":"期望完成日期","width":"half"},{"key":"remarks","type":"textarea","label":"备注","width":"full","props":{"rows":3}}],"layout":{"columns":2,"sections":[{"title":"请求信息","fields":["title","description"]},{"title":"补充信息","fields":["expected_date","remarks"]}]}}`,
+			Schema:      `{"version":1,"fields":[{"key":"title","type":"text","label":"请求标题","required":true,"validation":[{"rule":"required","message":"请输入请求标题"}],"width":"full"},{"key":"description","type":"textarea","label":"请求描述","required":true,"validation":[{"rule":"required","message":"请输入请求描述"}],"width":"full","props":{"rows":4}},{"key":"expected_date","type":"date","label":"期望完成日期","width":"half"},{"key":"remarks","type":"textarea","label":"备注","width":"full","props":{"rows":3}}],"layout":{"columns":2,"sections":[{"title":"请求信息","fields":["title","description"]},{"title":"补充信息","fields":["expected_date","remarks"]}]}}`,
 		},
 	}
 
@@ -520,58 +539,58 @@ func seedServiceDefinitions(db *gorm.DB) error {
 
 	seeds := []serviceSeed{
 		{
-			Name:        "Copilot 账号申请",
-			Code:        "copilot-account-request",
-			Description: "用于验证服务申请与审批闭环的内置服务。",
-			CatalogCode: "account-access:provisioning",
-			SLACode:     "rapid-workplace",
-			FormCode:    "form_service_request",
+			Name:              "Copilot 账号申请",
+			Code:              "copilot-account-request",
+			Description:       "用于验证服务申请与审批闭环的内置服务。",
+			CatalogCode:       "account-access:provisioning",
+			SLACode:           "rapid-workplace",
+			FormCode:          "form_service_request",
 			CollaborationSpec: "收集提单用户的Github账号信息和申请理由（可选），交给信息部的IT管理员审批，审批通过后结束流程。",
 		},
 		{
-			Name:        "高风险变更协同申请（Boss）",
-			Code:        "boss-serial-change-request",
-			Description: "用于在系统内直接查看复杂表单、表格明细与两级串签流程图的 Boss 级内置服务。",
-			CatalogCode: "application-platform:release",
-			SLACode:     "infra-change",
+			Name:              "高风险变更协同申请（Boss）",
+			Code:              "boss-serial-change-request",
+			Description:       "用于在系统内直接查看复杂表单、表格明细与两级串签流程图的 Boss 级内置服务。",
+			CatalogCode:       "application-platform:release",
+			SLACode:           "infra-change",
 			CollaborationSpec: `用户通过 IT 服务台提交高风险变更协同申请。服务台需要收集申请主题、申请类别、风险等级、期望完成时间、变更开始时间、变更结束时间、影响范围、回滚要求、影响模块以及变更明细表。申请类别必须支持：生产变更(prod_change)、访问授权(access_grant)、应急支持(emergency_support)。风险等级必须支持：低(low)、中(medium)、高(high)。回滚要求必须支持：需要(required)、不需要(not_required)。影响模块必须支持多选：网关(gateway)、支付(payment)、监控(monitoring)、订单(order)。变更明细表至少包含系统、资源、权限级别、生效时段、变更理由。权限级别必须支持：只读(read)、读写(read_write)。申请提交后，先交给指定用户 serial-reviewer 审批，审批参与者类型必须使用 user。serial-reviewer 审批通过后，再交给信息部的运维管理员岗位审批，审批参与者类型必须使用 position_department，部门编码使用 it，岗位编码使用 ops_admin。运维管理员审批通过后直接结束流程，不要生成驳回分支。`,
 		},
 		{
-			Name:        "生产数据库备份白名单临时放行申请",
-			Code:        "db-backup-whitelist-action-e2e",
-			Description: "用于验证请求节点预检动作、审批后自动放行动作与工单闭环。",
-			CatalogCode: "application-platform:database",
-			SLACode:     "infra-change",
+			Name:              "生产数据库备份白名单临时放行申请",
+			Code:              "db-backup-whitelist-action-e2e",
+			Description:       "用于验证请求节点预检动作、审批后自动放行动作与工单闭环。",
+			CatalogCode:       "application-platform:database",
+			SLACode:           "infra-change",
 			CollaborationSpec: `用户提交生产数据库备份白名单临时放行申请。系统先进入申请人请求节点，并在进入节点时自动执行预检动作，校验目标数据库、运维来源 IP 和放行时间窗信息是否齐备。申请人提交后，交给信息部的数据库管理员岗位审批，审批参与者类型必须使用 position_department，部门编码使用 it，岗位编码使用 dba_admin。审批通过后，在离开审批节点时自动执行白名单放行动作，并在动作成功后直接结束流程。`,
 			Actions: []ServiceAction{
 				{
 					Name: "备份白名单预检", Code: "backup_whitelist_precheck",
 					Description: "在申请人提交前校验数据库、时间窗与来源 IP 是否齐备。",
-					ActionType: "http", IsActive: true,
+					ActionType:  "http", IsActive: true,
 					ConfigJSON: JSONField(`{"url":"/precheck","method":"POST","timeout_seconds":5}`),
 				},
 				{
 					Name: "执行备份白名单放行", Code: "backup_whitelist_apply",
 					Description: "审批通过后自动执行数据库备份白名单放行。",
-					ActionType: "http", IsActive: true,
+					ActionType:  "http", IsActive: true,
 					ConfigJSON: JSONField(`{"url":"/apply","method":"POST","timeout_seconds":5}`),
 				},
 			},
 		},
 		{
-			Name:        "生产服务器临时访问申请",
-			Code:        "prod-server-temporary-access",
-			Description: "用于验证生产服务器临时访问在主机运维、网络诊断与安全审计语境下的真实分支审批。",
-			CatalogCode: "infra-network:compute",
-			SLACode:     "critical-business",
+			Name:              "生产服务器临时访问申请",
+			Code:              "prod-server-temporary-access",
+			Description:       "用于验证生产服务器临时访问在主机运维、网络诊断与安全审计语境下的真实分支审批。",
+			CatalogCode:       "infra-network:compute",
+			SLACode:           "critical-business",
 			CollaborationSpec: `用户通过 IT 服务台提交生产服务器临时访问申请。服务台需要收集访问服务器、访问时段、操作目的和访问原因。如果访问原因属于应用发布、进程排障、日志排查、磁盘清理、主机巡检或生产运维操作，则交给信息部的运维管理员岗位审批，审批参与者类型必须使用 position_department，部门编码使用 it，岗位编码使用 ops_admin。如果访问原因属于网络抓包、连通性诊断、ACL 调整、负载均衡变更或防火墙策略调整，则交给信息部的网络管理员岗位审批，审批参与者类型必须使用 position_department，部门编码使用 it，岗位编码使用 network_admin。如果访问原因属于安全审计、入侵排查、漏洞修复验证、取证分析或合规检查，则交给信息部的信息安全管理员岗位审批，审批参与者类型必须使用 position_department，部门编码使用 it，岗位编码使用 security_admin。审批通过后直接结束流程，不要生成驳回分支。`,
 		},
 		{
-			Name:        "VPN 开通申请",
-			Code:        "vpn-access-request",
-			Description: "用于验证 VPN 开通申请在服务匹配、拟提单确认与分支审批下的完整闭环。",
-			CatalogCode: "infra-network:network",
-			SLACode:     "standard",
+			Name:              "VPN 开通申请",
+			Code:              "vpn-access-request",
+			Description:       "用于验证 VPN 开通申请在服务匹配、拟提单确认与分支审批下的完整闭环。",
+			CatalogCode:       "infra-network:network",
+			SLACode:           "standard",
 			CollaborationSpec: `用户通过 IT 服务台提交 VPN 开通申请。服务台需要收集 VPN 账号、设备与用途说明、访问原因。如果访问原因属于线上支持、故障排查、生产应急或网络接入问题，则交给信息部的网络管理员岗位审批，审批参与者类型必须使用 position_department，部门编码使用 it，岗位编码使用 network_admin。如果访问原因属于外部协作、长期远程办公、跨境访问或安全合规事项，则交给信息部的信息安全管理员岗位审批，审批参与者类型必须使用 position_department，部门编码使用 it，岗位编码使用 security_admin。审批通过后直接结束流程，不要生成驳回分支。`,
 		},
 	}

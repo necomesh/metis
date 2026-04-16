@@ -74,6 +74,7 @@ func (a *ITSMApp) Providers(i do.Injector) {
 	do.Provide(i, NewTicketRepo)
 	do.Provide(i, NewTimelineRepo)
 	do.Provide(i, NewVariableRepository)
+	do.Provide(i, NewTokenRepository)
 
 	// Engine components
 	do.Provide(i, func(i do.Injector) (*engine.ParticipantResolver, error) {
@@ -151,6 +152,7 @@ func (a *ITSMApp) Providers(i do.Injector) {
 	do.Provide(i, NewEngineConfigHandler)
 	do.Provide(i, NewWorkflowGenerateHandler)
 	do.Provide(i, NewVariableHandler)
+	do.Provide(i, NewTokenHandler)
 }
 
 func (a *ITSMApp) Routes(api *gin.RouterGroup) {
@@ -166,6 +168,7 @@ func (a *ITSMApp) Routes(api *gin.RouterGroup) {
 	engineConfigH := do.MustInvoke[*EngineConfigHandler](a.injector)
 	workflowGenH := do.MustInvoke[*WorkflowGenerateHandler](a.injector)
 	variableH := do.MustInvoke[*VariableHandler](a.injector)
+	tokenH := do.MustInvoke[*TokenHandler](a.injector)
 
 	g := api.Group("/itsm")
 	{
@@ -244,6 +247,9 @@ func (a *ITSMApp) Routes(api *gin.RouterGroup) {
 		g.GET("/tickets/:id/activities", ticketH.Activities)
 		// Process variables
 		g.GET("/tickets/:id/variables", variableH.List)
+		g.PUT("/tickets/:id/variables/:key", variableH.Update)
+		// Execution tokens
+		g.GET("/tickets/:id/tokens", tokenH.List)
 		// Phase 3: Smart engine override routes
 		g.POST("/tickets/:id/activities/:aid/confirm", ticketH.ConfirmActivity)
 		g.POST("/tickets/:id/activities/:aid/reject", ticketH.RejectActivity)
