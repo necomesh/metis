@@ -12,7 +12,8 @@ import {
 import "@xyflow/react/dist/style.css"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Badge } from "@/components/ui/badge"
-import { nodeTypes } from "./custom-nodes"
+import { nodeTypes } from "./nodes"
+import { edgeTypes } from "./custom-edges"
 import { type WFNodeData, NODE_COLORS } from "./types"
 import type { ActivityItem } from "../../api"
 
@@ -82,7 +83,7 @@ export function WorkflowViewer({ workflowJson, activities, currentActivityId }: 
 
       return {
         id: n.id,
-        type: "workflow",
+        type: nodeData.nodeType ?? (n.type === "workflow" ? "form" : n.type) ?? "form",
         position: n.position,
         data: nodeData,
         className,
@@ -95,7 +96,7 @@ export function WorkflowViewer({ workflowJson, activities, currentActivityId }: 
       id: e.id,
       source: e.source,
       target: e.target,
-      type: "smoothstep",
+      type: "workflow",
       markerEnd: { type: MarkerType.ArrowClosed },
       data: e.data,
       style: visitedEdgeIds.has(e.id)
@@ -120,6 +121,7 @@ export function WorkflowViewer({ workflowJson, activities, currentActivityId }: 
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodeClick={onNodeClick}
         nodesDraggable={false}
         nodesConnectable={false}

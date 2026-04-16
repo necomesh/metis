@@ -341,7 +341,13 @@
       "gateway": "Gateway",
       "exclusive": "Exclusive Gateway",
       "notify": "Notify",
-      "wait": "Wait"
+      "wait": "Wait",
+      "timer": "Timer",
+      "signal": "Signal",
+      "parallel": "Parallel Gateway",
+      "inclusive": "Inclusive Gateway",
+      "subprocess": "Subprocess",
+      "script": "Script"
     },
     "prop": {
       "label": "Label",
@@ -363,7 +369,18 @@
       "condField": "Field",
       "condOperator": "Operator",
       "condValue": "Value",
-      "deleteEdge": "Delete Edge"
+      "deleteEdge": "Delete Edge",
+      "formBinding": "Form Binding",
+      "selectForm": "Select Form",
+      "formFields": "Form Fields",
+      "serviceAction": "Service Action",
+      "selectAction": "Select Action",
+      "channelType": "Notification Channel",
+      "selectChannel": "Select Channel",
+      "template": "Message Template",
+      "inputMapping": "Input Mapping",
+      "outputMapping": "Output Mapping",
+      "scriptAssignments": "Script Assignments"
     },
     "viewer": {
       "outcome": "Outcome",
@@ -377,7 +394,51 @@
       "position": "Position",
       "department": "Department",
       "positionDepartment": "Position (Dept)",
-      "requesterManager": "Requester Manager"
+      "requesterManager": "Requester Manager",
+      "add": "Add Participant",
+      "searchUser": "Search users..."
+    },
+    "group": {
+      "events": "Events",
+      "tasks": "Tasks",
+      "gateways": "Gateways",
+      "other": "Other"
+    },
+    "summary": {
+      "formBound": "Form bound",
+      "formUnbound": "No form",
+      "actionBound": "Action bound",
+      "actionUnbound": "No action",
+      "notifyUnset": "No channel"
+    },
+    "condition": {
+      "add": "Add Condition",
+      "addGroup": "Add Group"
+    },
+    "mapping": {
+      "source": "Source",
+      "target": "Target",
+      "add": "Add Mapping",
+      "variable": "Variable",
+      "formField": "Form Field"
+    },
+    "script": {
+      "variable": "Variable",
+      "expression": "Expression",
+      "add": "Add Assignment"
+    },
+    "channel": {
+      "email": "Email",
+      "internal": "In-app",
+      "webhook": "Webhook"
+    },
+    "autoLayout": "Auto Layout",
+    "copied": "Copied {{count}} nodes",
+    "ctx": {
+      "paste": "Paste",
+      "selectAll": "Select All",
+      "copy": "Copy",
+      "delete": "Delete"
     }
   },
   "approval": {

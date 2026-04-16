@@ -341,7 +341,13 @@
       "gateway": "网关",
       "exclusive": "排他网关",
       "notify": "通知",
-      "wait": "等待"
+      "wait": "等待",
+      "timer": "定时器",
+      "signal": "信号",
+      "parallel": "并行网关",
+      "inclusive": "包含网关",
+      "subprocess": "子流程",
+      "script": "脚本"
     },
     "prop": {
       "label": "名称",
@@ -363,7 +369,18 @@
       "condField": "字段",
       "condOperator": "运算符",
       "condValue": "值",
-      "deleteEdge": "删除连线"
+      "deleteEdge": "删除连线",
+      "formBinding": "绑定表单",
+      "selectForm": "选择表单",
+      "formFields": "表单字段",
+      "serviceAction": "服务动作",
+      "selectAction": "选择动作",
+      "channelType": "通知通道",
+      "selectChannel": "选择通道",
+      "template": "消息模板",
+      "inputMapping": "输入映射",
+      "outputMapping": "输出映射",
+      "scriptAssignments": "脚本赋值"
     },
     "viewer": {
       "outcome": "结果",
@@ -377,7 +394,51 @@
       "position": "岗位",
       "department": "部门",
       "positionDepartment": "岗位(部门)",
-      "requesterManager": "提交人上级"
+      "requesterManager": "提交人上级",
+      "add": "添加参与人",
+      "searchUser": "搜索用户..."
+    },
+    "group": {
+      "events": "事件",
+      "tasks": "任务",
+      "gateways": "网关",
+      "other": "其他"
+    },
+    "summary": {
+      "formBound": "已绑定表单",
+      "formUnbound": "未绑定表单",
+      "actionBound": "已绑定动作",
+      "actionUnbound": "未绑定动作",
+      "notifyUnset": "未设置通道"
+    },
+    "condition": {
+      "add": "添加条件",
+      "addGroup": "添加条件组"
+    },
+    "mapping": {
+      "source": "来源",
+      "target": "目标",
+      "add": "添加映射",
+      "variable": "流程变量",
+      "formField": "表单字段"
+    },
+    "script": {
+      "variable": "变量名",
+      "expression": "表达式",
+      "add": "添加赋值"
+    },
+    "channel": {
+      "email": "邮件",
+      "internal": "站内信",
+      "webhook": "Webhook"
+    },
+    "autoLayout": "自动布局",
+    "copied": "已复制 {{count}} 个节点",
+    "ctx": {
+      "paste": "粘贴",
+      "selectAll": "全选",
+      "copy": "复制",
+      "delete": "删除"
     }
   },
   "approval": {
