@@ -2,16 +2,19 @@ package itsm
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/samber/do/v2"
 	"gorm.io/gorm"
 )
 
 var (
-	ErrCatalogNotFound    = errors.New("service catalog not found")
-	ErrCatalogHasChildren = errors.New("catalog has sub-categories, cannot delete")
-	ErrCatalogHasServices = errors.New("catalog has services, cannot delete")
-	ErrCatalogTooDeep     = errors.New("service catalog supports at most two levels")
+	ErrCatalogNotFound      = errors.New("service catalog not found")
+	ErrCatalogHasChildren   = errors.New("catalog has sub-categories, cannot delete")
+	ErrCatalogHasServices   = errors.New("catalog has services, cannot delete")
+	ErrCatalogTooDeep       = errors.New("service catalog supports at most two levels")
+	ErrCatalogCodeExists    = errors.New("catalog code already exists")
+	ErrCatalogInvalidParent = errors.New("invalid catalog parent")
 )
 
 type CatalogService struct {
@@ -24,17 +27,12 @@ func NewCatalogService(i do.Injector) (*CatalogService, error) {
 }
 
 func (s *CatalogService) Create(name, code, description, icon string, parentID *uint, sortOrder int) (*ServiceCatalog, error) {
+	if _, err := s.repo.FindByCode(code); err == nil {
+		return nil, ErrCatalogCodeExists
+	}
 	if parentID != nil {
-		parent, err := s.repo.FindByID(*parentID)
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, ErrCatalogNotFound
-			}
+		if err := s.validateParentChange(0, *parentID); err != nil {
 			return nil, err
-		}
-		// Enforce two-level limit: parent must be a root node
-		if parent.ParentID != nil {
-			return nil, ErrCatalogTooDeep
 		}
 	}
 
@@ -65,13 +63,27 @@ func (s *CatalogService) Get(id uint) (*ServiceCatalog, error) {
 }
 
 func (s *CatalogService) Update(id uint, updates map[string]any) (*ServiceCatalog, error) {
-	if _, err := s.repo.FindByID(id); err != nil {
+	existing, err := s.repo.FindByID(id)
+	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrCatalogNotFound
 		}
 		return nil, err
 	}
+	if code, ok := updates["code"].(string); ok && code != existing.Code {
+		if _, err := s.repo.FindByCode(code); err == nil {
+			return nil, ErrCatalogCodeExists
+		}
+	}
+	if parentID, ok := updates["parent_id"].(uint); ok {
+		if err := s.validateParentChange(id, parentID); err != nil {
+			return nil, err
+		}
+	}
 	if err := s.repo.Update(id, updates); err != nil {
+		if isSQLiteUniqueError(err) {
+			return nil, ErrCatalogCodeExists
+		}
 		return nil, err
 	}
 	return s.repo.FindByID(id)
@@ -133,4 +145,65 @@ func ptrEq(a, b *uint) bool {
 		return false
 	}
 	return *a == *b
+}
+
+func (s *CatalogService) validateParentChange(id, parentID uint) error {
+	if id != 0 && id == parentID {
+		return ErrCatalogInvalidParent
+	}
+	parent, err := s.repo.FindByID(parentID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrCatalogNotFound
+		}
+		return err
+	}
+	if id == 0 {
+		if parent.ParentID != nil {
+			return ErrCatalogTooDeep
+		}
+		return nil
+	}
+	all, err := s.repo.FindAll()
+	if err != nil {
+		return err
+	}
+	if isDescendantCatalog(all, parentID, id) {
+		return ErrCatalogInvalidParent
+	}
+	if parent.ParentID != nil {
+		return ErrCatalogTooDeep
+	}
+	return nil
+}
+
+func isDescendantCatalog(catalogs []ServiceCatalog, candidateID, ancestorID uint) bool {
+	current := candidateID
+	for {
+		found := false
+		for _, c := range catalogs {
+			if c.ID != current {
+				continue
+			}
+			found = true
+			if c.ParentID == nil {
+				return false
+			}
+			if *c.ParentID == ancestorID {
+				return true
+			}
+			current = *c.ParentID
+			break
+		}
+		if !found {
+			return false
+		}
+	}
+}
+
+func isSQLiteUniqueError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "UNIQUE constraint failed")
 }

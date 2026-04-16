@@ -12,12 +12,23 @@ import {
   Loader2,
   Pencil,
   RefreshCw,
+  Archive,
+  RotateCcw,
+  Rocket,
 } from "lucide-react"
 import { api } from "@/lib/api"
 import { usePermission } from "@/hooks/use-permission"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardAction,
+} from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   AlertDialog,
@@ -43,23 +54,38 @@ import { ProductSheet, type ProductItem } from "../../components/product-sheet"
 import { ConstraintEditor } from "../../components/constraint-editor"
 import { PlanTab } from "../../components/plan-tab"
 
-const STATUS_VARIANTS: Record<string, "default" | "secondary" | "outline"> = {
-  unpublished: "secondary",
-  published: "default",
-  archived: "outline",
+const STATUS_STYLES: Record<
+  string,
+  { variant: "default" | "secondary" | "outline" | "destructive"; className: string }
+> = {
+  unpublished: {
+    variant: "secondary",
+    className: "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-900",
+  },
+  published: {
+    variant: "default",
+    className: "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-900",
+  },
+  archived: {
+    variant: "outline",
+    className: "bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-900 dark:text-slate-400 dark:border-slate-800",
+  },
 }
 
-const STATUS_ACTION_KEYS: Record<string, Array<{ status: string; labelKey: string }>> = {
+const STATUS_ACTION_CONFIG: Record<
+  string,
+  Array<{ status: string; labelKey: string; variant: "default" | "secondary" | "outline" | "destructive"; icon: React.ElementType }>
+> = {
   unpublished: [
-    { status: "published", labelKey: "status.publish" },
-    { status: "archived", labelKey: "status.archiveAction" },
+    { status: "published", labelKey: "status.publish", variant: "default", icon: Rocket },
+    { status: "archived", labelKey: "status.archiveAction", variant: "outline", icon: Archive },
   ],
   published: [
-    { status: "unpublished", labelKey: "status.unpublish" },
-    { status: "archived", labelKey: "status.archiveAction" },
+    { status: "unpublished", labelKey: "status.unpublish", variant: "secondary", icon: EyeOff },
+    { status: "archived", labelKey: "status.archiveAction", variant: "outline", icon: Archive },
   ],
   archived: [
-    { status: "unpublished", labelKey: "status.restoreAction" },
+    { status: "unpublished", labelKey: "status.restoreAction", variant: "default", icon: RotateCcw },
   ],
 }
 
@@ -195,9 +221,9 @@ export function Component() {
     )
   }
 
-  const variant = STATUS_VARIANTS[product.status] ?? ("secondary" as const)
+  const statusStyle = STATUS_STYLES[product.status] ?? STATUS_STYLES.unpublished
   const statusKey = product.status as string
-  const actions = STATUS_ACTION_KEYS[product.status] ?? []
+  const actions = STATUS_ACTION_CONFIG[product.status] ?? []
 
   function handleTabChange(value: string) {
     const nextParams = new URLSearchParams(searchParams)
@@ -234,88 +260,116 @@ export function Component() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => navigate("/license/products")}>
+      <Card className="flex-row items-center gap-4 py-4">
+        <Button variant="ghost" size="icon" onClick={() => navigate("/license/products")} className="ml-4 shrink-0">
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <h2 className="text-lg font-semibold">{product.name}</h2>
-            <Badge variant={variant}>{t(`license:status.${statusKey}`, product.status)}</Badge>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <CardTitle className="text-lg">{product.name}</CardTitle>
+            <Badge
+              variant={statusStyle.variant}
+              className={statusStyle.className}
+            >
+              {t(`license:status.${statusKey}`, product.status)}
+            </Badge>
           </div>
-          <p className="text-sm text-muted-foreground font-mono">{product.code}</p>
+          <CardDescription className="font-mono mt-1">{product.code}</CardDescription>
         </div>
         {canUpdate && (
-          <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
-            <Pencil className="mr-1.5 h-3.5 w-3.5" />
-            {t("common:edit")}
-          </Button>
+          <CardAction className="mr-4">
+            <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+              <Pencil className="mr-1.5 h-3.5 w-3.5" />
+              {t("common:edit")}
+            </Button>
+          </CardAction>
         )}
-      </div>
+      </Card>
 
       <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList className="h-auto w-fit max-w-full flex-wrap justify-start gap-1 rounded-lg bg-muted/50 p-1">
-          <TabsTrigger value="info" className="h-8 flex-none px-3 text-xs sm:text-sm">
+          <TabsTrigger
+            value="info"
+            className="h-8 flex-none px-3 text-xs sm:text-sm data-[state=active]:bg-background data-[state=active]:shadow-sm"
+          >
             {t("license:products.basicInfo")}
           </TabsTrigger>
-          <TabsTrigger value="schema" className="h-8 flex-none px-3 text-xs sm:text-sm">
+          <TabsTrigger
+            value="schema"
+            className="h-8 flex-none px-3 text-xs sm:text-sm data-[state=active]:bg-background data-[state=active]:shadow-sm"
+          >
             {t("license:products.constraintDef")}
           </TabsTrigger>
-          <TabsTrigger value="plans" className="h-8 flex-none px-3 text-xs sm:text-sm">
+          <TabsTrigger
+            value="plans"
+            className="h-8 flex-none px-3 text-xs sm:text-sm data-[state=active]:bg-background data-[state=active]:shadow-sm"
+          >
             {t("license:products.planManagement")}
           </TabsTrigger>
-          <TabsTrigger value="keys" className="h-8 flex-none px-3 text-xs sm:text-sm">
+          <TabsTrigger
+            value="keys"
+            className="h-8 flex-none px-3 text-xs sm:text-sm data-[state=active]:bg-background data-[state=active]:shadow-sm"
+          >
             {t("license:products.keyManagement")}
           </TabsTrigger>
         </TabsList>
 
         <TabsContent value="info" className="space-y-4">
-          <div className="rounded-lg border">
-            <div className="grid gap-x-6 gap-y-4 px-4 py-4 text-sm sm:grid-cols-2 lg:grid-cols-3">
-              <div>
-                <p className="text-muted-foreground">{t("common:name")}</p>
-                <p className="mt-1 font-medium">{product.name}</p>
-              </div>
-              <div>
-                <p className="text-muted-foreground">{t("license:products.code")}</p>
-                <p className="mt-1 font-mono">{product.code}</p>
-              </div>
-              <div>
-                <p className="text-muted-foreground">{t("common:status")}</p>
-                <div className="mt-1">
-                  <Badge variant={variant}>{t(`license:status.${statusKey}`, product.status)}</Badge>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-3">
+                <div className="rounded-lg border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">{t("common:name")}</p>
+                  <p className="mt-1 font-medium">{product.name}</p>
+                </div>
+                <div className="rounded-lg border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">{t("license:products.code")}</p>
+                  <p className="mt-1 font-mono">{product.code}</p>
+                </div>
+                <div className="rounded-lg border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">{t("common:status")}</p>
+                  <div className="mt-1">
+                    <Badge
+                      variant={statusStyle.variant}
+                      className={statusStyle.className}
+                    >
+                      {t(`license:status.${statusKey}`, product.status)}
+                    </Badge>
+                  </div>
+                </div>
+                <div className="rounded-lg border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">{t("license:products.licenseModules")}</p>
+                  <p className="mt-1 font-medium">{modules.length}</p>
+                </div>
+                <div className="rounded-lg border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">{t("license:products.planQuantity")}</p>
+                  <p className="mt-1 font-medium">{product.planCount}</p>
+                </div>
+                <div className="rounded-lg border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">{t("common:updatedAt")}</p>
+                  <p className="mt-1">{formatDateTime(product.updatedAt)}</p>
+                </div>
+                <div className="rounded-lg border-l-4 border-l-primary bg-muted/30 p-3 sm:col-span-2 lg:col-span-3">
+                  <p className="text-xs text-muted-foreground">{t("common:description")}</p>
+                  <p className="mt-1 leading-6">
+                    {product.description || t("license:products.noDescription")}
+                  </p>
                 </div>
               </div>
-              <div>
-                <p className="text-muted-foreground">{t("license:products.licenseModules")}</p>
-                <p className="mt-1">{modules.length}</p>
-              </div>
-              <div>
-                <p className="text-muted-foreground">{t("license:products.planQuantity")}</p>
-                <p className="mt-1">{product.planCount}</p>
-              </div>
-              <div>
-                <p className="text-muted-foreground">{t("common:updatedAt")}</p>
-                <p className="mt-1">{formatDateTime(product.updatedAt)}</p>
-              </div>
-              <div className="sm:col-span-2 lg:col-span-3">
-                <p className="text-muted-foreground">{t("common:description")}</p>
-                <p className="mt-1 leading-6">
-                  {product.description || t("license:products.noDescription")}
-                </p>
-              </div>
-            </div>
-          </div>
+            </CardContent>
+          </Card>
 
           <div className="flex flex-wrap items-center justify-end gap-2">
             {canUpdate && actions.length > 0 && (
               <>
                 {actions.map((action) => {
+                  const ActionIcon = action.icon
                   const actionLabel = t(`license:${action.labelKey}`)
                   return (
                     <AlertDialog key={action.status}>
                       <AlertDialogTrigger asChild>
-                        <Button variant="outline" size="sm">
+                        <Button variant={action.variant} size="sm">
+                          <ActionIcon className="mr-1.5 h-3.5 w-3.5" />
                           {actionLabel}
                         </Button>
                       </AlertDialogTrigger>
@@ -365,56 +419,108 @@ export function Component() {
         <TabsContent value="keys" className="space-y-4">
           {/* License Key */}
           {product.licenseKey && (
-            <div className="rounded-lg border p-4 space-y-2">
-              <p className="text-sm font-medium">{t("license:licenses.licenseKey")}</p>
-              <div className="flex items-center gap-2">
-                <code className="flex-1 truncate rounded bg-muted px-2 py-1 text-xs font-mono">
-                  {showLicenseKey ? product.licenseKey : "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"}
-                </code>
-                <Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => setShowLicenseKey((v) => !v)}>
-                  {showLicenseKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </Button>
-                <Button type="button" variant="outline" size="sm" className="h-7 px-2 shrink-0" onClick={() => handleCopy(product.licenseKey, "licenseKey")}>
-                  {copiedField === "licenseKey" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                  <span className="ml-1">{copiedField === "licenseKey" ? t("common:copied") : t("common:copy")}</span>
-                </Button>
-              </div>
-            </div>
+            <Card className="overflow-hidden">
+              <CardHeader className="bg-muted/30 pb-4">
+                <CardTitle className="text-sm font-medium">{t("license:licenses.licenseKey")}</CardTitle>              
+              </CardHeader>
+              <CardContent className="pt-4">
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 truncate rounded-md bg-slate-950 px-3 py-2 text-xs font-mono text-slate-50 dark:bg-slate-900">
+                    {showLicenseKey ? product.licenseKey : "••••••••••••••••••••••••••••••••"}
+                  </code>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 shrink-0"
+                    onClick={() => setShowLicenseKey((v) => !v)}
+                  >
+                    {showLicenseKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={copiedField === "licenseKey" ? "default" : "outline"}
+                    size="sm"
+                    className="h-8 shrink-0 px-2"
+                    onClick={() => handleCopy(product.licenseKey, "licenseKey")}
+                  >
+                    {copiedField === "licenseKey" ? (
+                      <>
+                        <Check className="h-3.5 w-3.5" />
+                        <span className="ml-1">{t("common:copied")}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="h-3.5 w-3.5" />
+                        <span className="ml-1">{t("common:copy")}</span>
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
           )}
 
           {/* Signing Key */}
-          <div className="rounded-lg border p-4">
-            {publicKey ? (
-              <div className="space-y-4 text-sm">
-                <div className="flex items-center gap-2">
-                  <Key className="h-4 w-4 text-muted-foreground" />
-                  <span className="font-medium">{t("license:products.currentKey")}</span>
+          <Card className="overflow-hidden">
+            <CardHeader className="bg-muted/30 pb-4">
+              <div className="flex items-center gap-2">
+                <Key className="h-4 w-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">{t("license:products.currentKey")}</CardTitle>
+                {publicKey && (
                   <Badge variant="secondary">v{publicKey.version}</Badge>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">{t("license:products.publicKey")}</p>
-                  <pre className="mt-1 rounded bg-muted p-3 text-xs break-all whitespace-pre-wrap font-mono">
-                    {publicKey.publicKey}
-                  </pre>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">{t("common:createdAt")}</p>
-                  <p className="mt-1">{formatDateTime(publicKey.createdAt)}</p>
-                </div>
+                )}
               </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">{t("license:products.noKeyInfo")}</p>
-            )}
-          </div>
+            </CardHeader>
+            <CardContent className="space-y-4 pt-4">
+              {publicKey ? (
+                <>
+                  <div>
+                    <p className="text-xs text-muted-foreground">{t("license:products.publicKey")}</p>
+                    <div className="relative mt-2">
+                      <pre className="rounded-md bg-slate-950 p-4 text-xs break-all whitespace-pre-wrap font-mono text-slate-50 dark:bg-slate-900">
+                        {publicKey.publicKey}
+                      </pre>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        className="absolute right-2 top-2 h-7 px-2"
+                        onClick={() => handleCopy(publicKey.publicKey, "publicKey")}
+                      >
+                        {copiedField === "publicKey" ? (
+                          <>
+                            <Check className="h-3.5 w-3.5" />
+                            <span className="ml-1">{t("common:copied")}</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="h-3.5 w-3.5" />
+                            <span className="ml-1">{t("common:copy")}</span>
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm">
+                    <p className="text-muted-foreground">{t("common:createdAt")}</p>
+                    <p>{formatDateTime(publicKey.createdAt)}</p>
+                  </div>
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">{t("license:products.noKeyInfo")}</p>
+              )}
+            </CardContent>
+          </Card>
 
           {canManageKey && (
             <div className="flex flex-wrap justify-end gap-2">
               {impact && impact.affectedCount > 0 && (
-                <Button variant="outline" size="sm" onClick={() => setBulkReissueOpen(true)}>
+                <Button variant="secondary" size="sm" onClick={() => setBulkReissueOpen(true)}>
                   {t("license:products.bulkReissue")}
                 </Button>
               )}
-              <Button variant="outline" size="sm" onClick={handleRotateKeyClick}>
+              <Button variant="outline" size="sm" className="border-amber-200 text-amber-700 hover:bg-amber-50 hover:text-amber-800 dark:border-amber-900 dark:text-amber-400 dark:hover:bg-amber-950" onClick={handleRotateKeyClick}>
                 <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
                 {t("license:products.rotateKey")}
               </Button>
@@ -451,7 +557,7 @@ export function Component() {
               {t("common:cancel")}
             </Button>
             {impact && impact.affectedCount > 0 && (
-              <Button variant="outline" onClick={() => setBulkReissueOpen(true)}>
+              <Button variant="secondary" onClick={() => setBulkReissueOpen(true)}>
                 {t("license:products.bulkReissue")}
               </Button>
             )}

@@ -27,6 +27,14 @@ func (r *CatalogRepo) FindByID(id uint) (*ServiceCatalog, error) {
 	return &c, nil
 }
 
+func (r *CatalogRepo) FindByCode(code string) (*ServiceCatalog, error) {
+	var c ServiceCatalog
+	if err := r.db.Where("code = ?", code).First(&c).Error; err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
 func (r *CatalogRepo) Update(id uint, updates map[string]any) error {
 	return r.db.Model(&ServiceCatalog{}).Where("id = ?", id).Updates(updates).Error
 }

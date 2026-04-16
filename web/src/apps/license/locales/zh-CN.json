@@ -1,6 +1,7 @@
 {
   "products": {
     "title": "商品管理",
+    "subtitle": "管理商品、套餐与授权密钥",
     "create": "新建商品",
     "editProduct": "编辑商品",
     "searchPlaceholder": "搜索名称或编码",

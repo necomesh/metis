@@ -40,11 +40,15 @@ func (h *CatalogHandler) Create(c *gin.Context) {
 
 	catalog, err := h.svc.Create(req.Name, req.Code, req.Description, req.Icon, req.ParentID, req.SortOrder)
 	if err != nil {
+		if errors.Is(err, ErrCatalogCodeExists) {
+			handler.Fail(c, http.StatusConflict, err.Error())
+			return
+		}
 		if errors.Is(err, ErrCatalogNotFound) {
 			handler.Fail(c, http.StatusBadRequest, "parent catalog not found")
 			return
 		}
-		if errors.Is(err, ErrCatalogTooDeep) {
+		if errors.Is(err, ErrCatalogTooDeep) || errors.Is(err, ErrCatalogInvalidParent) {
 			handler.Fail(c, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -117,8 +121,16 @@ func (h *CatalogHandler) Update(c *gin.Context) {
 
 	catalog, err := h.svc.Update(id, updates)
 	if err != nil {
+		if errors.Is(err, ErrCatalogCodeExists) {
+			handler.Fail(c, http.StatusConflict, err.Error())
+			return
+		}
 		if errors.Is(err, ErrCatalogNotFound) {
 			handler.Fail(c, http.StatusNotFound, err.Error())
+			return
+		}
+		if errors.Is(err, ErrCatalogTooDeep) || errors.Is(err, ErrCatalogInvalidParent) {
+			handler.Fail(c, http.StatusBadRequest, err.Error())
 			return
 		}
 		handler.Fail(c, http.StatusInternalServerError, err.Error())
