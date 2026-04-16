@@ -387,7 +387,8 @@
       "finishedAt": "完成时间",
       "close": "关闭",
       "workflowGraph": "流程图",
-      "activityDetail": "节点详情"
+      "activityDetail": "节点详情",
+      "noActivities": "该节点暂无活动记录"
     },
     "participant": {
       "user": "指定用户",
@@ -580,6 +581,11 @@
     "value": "值",
     "type": "类型",
     "source": "来源",
-    "updatedAt": "更新时间"
+    "updatedAt": "更新时间",
+    "scope": "作用域",
+    "updated": "变量已更新",
+    "updateFailed": "变量更新失败",
+    "invalidJson": "无效的 JSON 格式",
+    "invalidNumber": "无效的数字"
   }
 }

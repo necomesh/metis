@@ -387,7 +387,8 @@
       "finishedAt": "Finished",
       "close": "Close",
       "workflowGraph": "Workflow",
-      "activityDetail": "Activity Detail"
+      "activityDetail": "Activity Detail",
+      "noActivities": "No activity records for this node"
     },
     "participant": {
       "user": "User",
@@ -580,6 +581,11 @@
     "value": "Value",
     "type": "Type",
     "source": "Source",
-    "updatedAt": "Updated At"
+    "updatedAt": "Updated At",
+    "scope": "Scope",
+    "updated": "Variable updated",
+    "updateFailed": "Failed to update variable",
+    "invalidJson": "Invalid JSON format",
+    "invalidNumber": "Invalid number"
   }
 }

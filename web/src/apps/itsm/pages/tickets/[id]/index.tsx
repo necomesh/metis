@@ -36,7 +36,7 @@ import {
 import { usePermission } from "@/hooks/use-permission"
 import { useAuthStore } from "@/stores/auth"
 import {
-  fetchTicket, fetchTicketTimeline, fetchTicketActivities,
+  fetchTicket, fetchTicketTimeline, fetchTicketActivities, fetchTicketTokens,
   assignTicket, completeTicket, cancelTicket, progressTicket, fetchUsers,
 } from "../../../api"
 import { WorkflowViewer } from "../../../components/workflow"
@@ -141,6 +141,12 @@ export function Component() {
   const { data: activities = [] } = useQuery({
     queryKey: ["itsm-ticket-activities", ticketId],
     queryFn: () => fetchTicketActivities(ticketId),
+    enabled: ticketId > 0,
+  })
+
+  const { data: tokens = [] } = useQuery({
+    queryKey: ["itsm-ticket-tokens", ticketId],
+    queryFn: () => fetchTicketTokens(ticketId),
     enabled: ticketId > 0,
   })
 
@@ -373,6 +379,7 @@ export function Component() {
             <WorkflowViewer
               workflowJson={ticket.workflowJson}
               activities={activities}
+              tokens={tokens}
               currentActivityId={ticket.currentActivityId}
             />
             {/* Activity action buttons */}

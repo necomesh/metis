@@ -1,16 +1,19 @@
 ## MODIFIED Requirements
 
-### Requirement: Variables panel in ticket detail
-The ticket detail page SHALL display a "Variables" panel showing all process variables for the current ticket. The panel SHALL be read-only and display: variable key, deserialized value, value type, source, and last updated time.
+### Requirement: 工单详情页集成 Runtime Viewer
+工单详情页 SHALL 使用增强的 WorkflowViewer（token 驱动）替代现有的 activity-based viewer，并传入 tokens 数据。
 
-#### Scenario: Ticket with variables
-- **WHEN** a user views a ticket that has 5 process variables
-- **THEN** the variables panel displays a table with 5 rows showing key, value, type, source, updatedAt
+#### Scenario: Classic 引擎工单显示 Runtime Viewer
+- **WHEN** 打开 classic 引擎工单详情页
+- **THEN** 流程图区域使用 token 驱动的节点高亮，支持节点点击查看活动历史
 
-#### Scenario: Ticket with no variables
-- **WHEN** a user views a ticket that has no process variables
-- **THEN** the variables panel displays an empty state message
+#### Scenario: 旧工单降级渲染
+- **WHEN** 打开无 token 数据的旧工单
+- **THEN** 流程图区域降级到 activity-based 高亮，功能与改造前一致
 
-#### Scenario: Variable value display
-- **WHEN** a variable has value_type="json" and value=`["a","b"]`
-- **THEN** the panel displays the value as formatted JSON text
+### Requirement: 增强的 VariablesPanel 集成
+工单详情页 SHALL 使用增强的 VariablesPanel（scope 分组 + 管理员编辑）。
+
+#### Scenario: 管理员查看工单变量
+- **WHEN** 管理员打开工单详情页
+- **THEN** 变量面板显示 scope 分组 + 编辑按钮

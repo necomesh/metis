@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useState } from "react"
+import { useMemo, useCallback, useState, useRef } from "react"
 import { useTranslation } from "react-i18next"
 import {
   ReactFlow,
@@ -15,24 +15,40 @@ import { Badge } from "@/components/ui/badge"
 import { nodeTypes } from "./nodes"
 import { edgeTypes } from "./custom-edges"
 import { type WFNodeData, NODE_COLORS } from "./types"
-import type { ActivityItem } from "../../api"
+import type { ActivityItem, TokenItem } from "../../api"
 
 interface WorkflowViewerProps {
   workflowJson: unknown
   activities: ActivityItem[]
+  tokens?: TokenItem[]
   currentActivityId?: number | null
 }
 
-export function WorkflowViewer({ workflowJson, activities, currentActivityId }: WorkflowViewerProps) {
+export function WorkflowViewer({ workflowJson, activities, tokens = [], currentActivityId }: WorkflowViewerProps) {
   const { t } = useTranslation("itsm")
-  const [clickedActivity, setClickedActivity] = useState<ActivityItem | null>(null)
-  const [popoverPos, setPopoverPos] = useState<{ x: number; y: number } | null>(null)
+  const [popoverNodeId, setPopoverNodeId] = useState<string | null>(null)
+  const [popoverAnchor, setPopoverAnchor] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
 
-  // Build activity lookup by nodeId
-  const activityMap = useMemo(() => {
-    const map = new Map<string, ActivityItem>()
+  const useTokenMode = tokens.length > 0
+
+  // Build token lookup by nodeId
+  const tokensByNode = useMemo(() => {
+    const map = new Map<string, TokenItem[]>()
+    for (const tk of tokens) {
+      const list = map.get(tk.nodeId) ?? []
+      list.push(tk)
+      map.set(tk.nodeId, list)
+    }
+    return map
+  }, [tokens])
+
+  // Build activity lookup: nodeId → ActivityItem[]
+  const activitiesByNode = useMemo(() => {
+    const map = new Map<string, ActivityItem[]>()
     for (const a of activities) {
-      map.set(a.nodeId, a)
+      const list = map.get(a.nodeId) ?? []
+      list.push(a)
+      map.set(a.nodeId, list)
     }
     return map
   }, [activities])
@@ -55,30 +71,44 @@ export function WorkflowViewer({ workflowJson, activities, currentActivityId }: 
       id: string; source: string; target: string; data?: Record<string, unknown>
     }>
 
-    // Map node IDs that have completed activities
+    // Determine node states
     const completedNodeIds = new Set<string>()
     const activeNodeIds = new Set<string>()
-    for (const a of activities) {
-      if (a.status === "completed") completedNodeIds.add(a.nodeId)
-      else if (a.status === "pending" || a.status === "in_progress") activeNodeIds.add(a.nodeId)
+    const cancelledNodeIds = new Set<string>()
+
+    if (useTokenMode) {
+      // Token-driven state
+      for (const tk of tokens) {
+        if (tk.status === "active") activeNodeIds.add(tk.nodeId)
+        else if (tk.status === "completed") completedNodeIds.add(tk.nodeId)
+        else if (tk.status === "cancelled") cancelledNodeIds.add(tk.nodeId)
+      }
+    } else {
+      // Fallback: activity-driven state
+      for (const a of activities) {
+        if (a.status === "completed") completedNodeIds.add(a.nodeId)
+        else if (a.status === "pending" || a.status === "in_progress") activeNodeIds.add(a.nodeId)
+      }
     }
 
-    // Track edges between completed/active nodes
+    // Track visited edges
     const visitedEdgeIds = new Set<string>()
     for (const e of rawEdges) {
-      if (completedNodeIds.has(e.source) && (completedNodeIds.has(e.target) || activeNodeIds.has(e.target))) {
-        visitedEdgeIds.add(e.id)
-      }
+      const srcDone = completedNodeIds.has(e.source) || activeNodeIds.has(e.source)
+      const tgtDone = completedNodeIds.has(e.target) || activeNodeIds.has(e.target)
+      if (srcDone && tgtDone) visitedEdgeIds.add(e.id)
     }
 
     const nodes: Node[] = rawNodes.map((n) => {
       const nodeData = (n.data ?? {}) as WFNodeData
       const isActive = activeNodeIds.has(n.id)
       const isCompleted = completedNodeIds.has(n.id)
+      const isCancelled = cancelledNodeIds.has(n.id)
 
       let className = ""
-      if (isActive) className = "ring-2 ring-blue-500 ring-offset-2"
+      if (isActive) className = "ring-2 ring-green-500 ring-offset-2 animate-pulse"
       else if (isCompleted) className = "opacity-70"
+      else if (isCancelled) className = "opacity-50 line-through"
       else className = "opacity-40"
 
       return {
@@ -106,14 +136,17 @@ export function WorkflowViewer({ workflowJson, activities, currentActivityId }: 
     }))
 
     return { nodes, edges }
-  }, [workflowJson, activities])
+  }, [workflowJson, activities, tokens, useTokenMode])
 
   const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
-    const activity = activityMap.get(node.id)
-    if (activity && activity.status === "completed") {
-      setClickedActivity(activity)
-    }
-  }, [activityMap])
+    setPopoverNodeId((prev) => (prev === node.id ? null : node.id))
+  }, [])
+
+  const onPaneClick = useCallback(() => {
+    setPopoverNodeId(null)
+  }, [])
+
+  const popoverActivities = popoverNodeId ? (activitiesByNode.get(popoverNodeId) ?? []) : []
 
   return (
     <div className="h-[400px] w-full rounded-md border">
@@ -123,6 +156,7 @@ export function WorkflowViewer({ workflowJson, activities, currentActivityId }: 
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodeClick={onNodeClick}
+        onPaneClick={onPaneClick}
         nodesDraggable={false}
         nodesConnectable={false}
         elementsSelectable={false}
@@ -134,33 +168,51 @@ export function WorkflowViewer({ workflowJson, activities, currentActivityId }: 
         <MiniMap
           nodeColor={(n) => {
             const nodeData = n.data as WFNodeData
-            const activity = activityMap.get(n.id)
-            if (activity?.status === "completed") return "#22c55e"
-            if (activity?.status === "pending" || activity?.status === "in_progress") return "#3b82f6"
+            if (useTokenMode) {
+              const tks = tokensByNode.get(n.id)
+              if (tks?.some((tk) => tk.status === "active")) return "#22c55e"
+              if (tks?.some((tk) => tk.status === "completed")) return "#9ca3af"
+              return NODE_COLORS[nodeData?.nodeType] ?? "#6b7280"
+            }
+            // Activity fallback
+            const acts = activitiesByNode.get(n.id)
+            if (acts?.some((a) => a.status === "completed")) return "#22c55e"
+            if (acts?.some((a) => a.status === "pending" || a.status === "in_progress")) return "#3b82f6"
             return NODE_COLORS[nodeData?.nodeType] ?? "#6b7280"
           }}
           maskColor="rgba(0,0,0,0.05)"
         />
       </ReactFlow>
-      {clickedActivity && (
-        <div className="border-t bg-muted/30 p-3">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium">{clickedActivity.name}</span>
-            <Badge variant={clickedActivity.status === "completed" ? "default" : "secondary"}>
-              {clickedActivity.status}
-            </Badge>
-          </div>
-          {clickedActivity.transitionOutcome && (
-            <p className="mt-1 text-xs text-muted-foreground">
-              {t("workflow.viewer.outcome")}: {clickedActivity.transitionOutcome}
-            </p>
+      {popoverNodeId && (
+        <div className="border-t bg-muted/30 p-3 max-h-48 overflow-auto">
+          {popoverActivities.length === 0 ? (
+            <p className="text-xs text-muted-foreground">{t("workflow.viewer.noActivities")}</p>
+          ) : (
+            <div className="space-y-2">
+              {popoverActivities.map((a) => (
+                <div key={a.id} className="flex items-center gap-2 text-sm">
+                  <span className="font-medium">{a.name}</span>
+                  <Badge
+                    variant={a.status === "completed" ? "default" : a.status === "failed" ? "destructive" : "secondary"}
+                    className="text-xs"
+                  >
+                    {a.status}
+                  </Badge>
+                  {a.transitionOutcome && (
+                    <Badge variant="outline" className="text-xs">
+                      {a.transitionOutcome}
+                    </Badge>
+                  )}
+                  {a.finishedAt && (
+                    <span className="text-xs text-muted-foreground">
+                      {new Date(a.finishedAt).toLocaleString()}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
           )}
-          {clickedActivity.finishedAt && (
-            <p className="text-xs text-muted-foreground">
-              {t("workflow.viewer.finishedAt")}: {new Date(clickedActivity.finishedAt).toLocaleString()}
-            </p>
-          )}
-          <button className="mt-1 text-xs text-muted-foreground underline" onClick={() => setClickedActivity(null)}>
+          <button className="mt-2 text-xs text-muted-foreground underline" onClick={() => setPopoverNodeId(null)}>
             {t("workflow.viewer.close")}
           </button>
         </div>
