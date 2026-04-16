@@ -1,7 +1,7 @@
 # Binary
 license
 dist/
-
+!doc-website/docs/license/
 # Database
 *.db
 *.db-journal
