@@ -1,17 +1,25 @@
 package itsm
 
-// vpn_support_test.go — VPN workflow fixture and service publish helpers for BDD tests.
+// vpn_support_test.go — VPN workflow LLM generation and service publish helpers for BDD tests.
+//
+// Uses the LLM (gated by LLM_TEST_* env vars) to generate the VPN workflow
+// from the collaboration spec, matching the bklite-cloud approach.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"testing"
+	"time"
+
+	"metis/internal/app/itsm/engine"
+	"metis/internal/llm"
 )
 
-// vpnWorkflowIDs holds dynamic IDs needed for building the VPN workflow fixture.
-type vpnWorkflowIDs struct {
-	NetworkAdminPosID  uint
-	SecurityAdminPosID uint
-}
+// vpnCollaborationSpec is the collaboration spec for the VPN activation service.
+// Mirrors the seed data in seed.go.
+const vpnCollaborationSpec = `用户通过 IT 服务台提交 VPN 开通申请。服务台需要收集 VPN 账号、设备与用途说明、访问原因。如果访问原因属于线上支持、故障排查、生产应急或网络接入问题，则交给信息部的网络管理员岗位审批，审批参与者类型必须使用 position_department，部门编码使用 it，岗位编码使用 network_admin。如果访问原因属于外部协作、长期远程办公、跨境访问或安全合规事项，则交给信息部的信息安全管理员岗位审批，审批参与者类型必须使用 position_department，部门编码使用 it，岗位编码使用 security_admin。审批通过后直接结束流程，不要生成驳回分支。`
 
 // vpnSampleFormData provides typical VPN request form values for BDD tests.
 // The "request_kind" field drives the exclusive gateway routing.
@@ -21,40 +29,114 @@ var vpnSampleFormData = map[string]any{
 	"reason":       "需要远程访问内网开发环境",
 }
 
-// buildVPNWorkflowJSON returns a valid ReactFlow workflow JSON for the VPN activation service.
-//
-// Topology:
-//
-//	start → form_submit → exclusive_gw →[form.request_kind=="network_support"]→ approve_network → end_network
-//	                                    →[default]→ approve_security → end_security
-func buildVPNWorkflowJSON(ids vpnWorkflowIDs) json.RawMessage {
-	workflow := fmt.Sprintf(`{
-  "nodes": [
-    {"id":"node_start","type":"start","data":{"label":"开始"},"position":{"x":250,"y":0}},
-    {"id":"node_form","type":"form","data":{"label":"填写VPN申请表"},"position":{"x":250,"y":100}},
-    {"id":"node_gw","type":"exclusive","data":{"label":"路由审批"},"position":{"x":250,"y":200}},
-    {"id":"node_approve_network","type":"approve","data":{"label":"网络管理员审批","approve_mode":"single","participants":[{"type":"position","value":"%d"}]},"position":{"x":100,"y":300}},
-    {"id":"node_approve_security","type":"approve","data":{"label":"安全管理员审批","approve_mode":"single","participants":[{"type":"position","value":"%d"}]},"position":{"x":400,"y":300}},
-    {"id":"node_end_network","type":"end","data":{"label":"完成(网络)"},"position":{"x":100,"y":400}},
-    {"id":"node_end_security","type":"end","data":{"label":"完成(安全)"},"position":{"x":400,"y":400}}
-  ],
-  "edges": [
-    {"id":"edge_start_form","source":"node_start","target":"node_form","data":{}},
-    {"id":"edge_form_gw","source":"node_form","target":"node_gw","data":{}},
-    {"id":"edge_gw_network","source":"node_gw","target":"node_approve_network","data":{"condition":{"field":"form.request_kind","operator":"equals","value":"network_support","edge_id":"edge_gw_network"}}},
-    {"id":"edge_gw_security","source":"node_gw","target":"node_approve_security","data":{"default":true}},
-    {"id":"edge_approve_network_end","source":"node_approve_network","target":"node_end_network","data":{}},
-    {"id":"edge_approve_security_end","source":"node_approve_security","target":"node_end_security","data":{}}
-  ]
-}`, ids.NetworkAdminPosID, ids.SecurityAdminPosID)
+// llmConfig holds LLM configuration loaded from environment variables.
+type llmConfig struct {
+	baseURL string
+	apiKey  string
+	model   string
+}
 
-	return json.RawMessage(workflow)
+// requireLLMConfig loads LLM config from env or skips the test.
+func requireLLMConfig(t *testing.T) llmConfig {
+	t.Helper()
+	baseURL := os.Getenv("LLM_TEST_BASE_URL")
+	apiKey := os.Getenv("LLM_TEST_API_KEY")
+	model := os.Getenv("LLM_TEST_MODEL")
+	if baseURL == "" || apiKey == "" || model == "" {
+		t.Skip("LLM integration test skipped: set LLM_TEST_BASE_URL, LLM_TEST_API_KEY, LLM_TEST_MODEL")
+	}
+	return llmConfig{baseURL: baseURL, apiKey: apiKey, model: model}
+}
+
+// hasLLMConfig checks whether LLM env vars are set (non-skip version for TestBDD).
+func hasLLMConfig() bool {
+	return os.Getenv("LLM_TEST_BASE_URL") != "" &&
+		os.Getenv("LLM_TEST_API_KEY") != "" &&
+		os.Getenv("LLM_TEST_MODEL") != ""
+}
+
+// generateVPNWorkflow calls the LLM to generate a VPN workflow JSON from the collaboration spec.
+// It retries up to maxRetries times, feeding validation errors back to the LLM.
+func generateVPNWorkflow(cfg llmConfig) (json.RawMessage, error) {
+	client, err := llm.NewClient(llm.ProtocolOpenAI, cfg.baseURL, cfg.apiKey)
+	if err != nil {
+		return nil, fmt.Errorf("create LLM client: %w", err)
+	}
+
+	svc := &WorkflowGenerateService{}
+	maxRetries := 3
+	temp := float32(0.3)
+
+	var lastErrors []engine.ValidationError
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		userMsg := svc.buildUserMessage(vpnCollaborationSpec, "", lastErrors)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		resp, err := client.Chat(ctx, llm.ChatRequest{
+			Model: cfg.model,
+			Messages: []llm.Message{
+				{Role: llm.RoleSystem, Content: itsmGeneratorSystemPrompt},
+				{Role: llm.RoleUser, Content: userMsg},
+			},
+			Temperature: &temp,
+			MaxTokens:   4096,
+		})
+		cancel()
+
+		if err != nil {
+			if attempt < maxRetries {
+				continue
+			}
+			return nil, fmt.Errorf("LLM call failed after %d attempts: %w", attempt+1, err)
+		}
+
+		workflowJSON, extractErr := extractJSON(resp.Content)
+		if extractErr != nil {
+			lastErrors = []engine.ValidationError{
+				{Message: fmt.Sprintf("输出不是有效 JSON: %v", extractErr)},
+			}
+			if attempt < maxRetries {
+				continue
+			}
+			return nil, fmt.Errorf("JSON extraction failed after %d attempts: %w", attempt+1, extractErr)
+		}
+
+		validationErrors := engine.ValidateWorkflow(workflowJSON)
+		// Filter to only blocking errors (not warnings)
+		var blockingErrors []engine.ValidationError
+		for _, e := range validationErrors {
+			if !e.IsWarning() {
+				blockingErrors = append(blockingErrors, e)
+			}
+		}
+
+		if len(blockingErrors) == 0 {
+			return workflowJSON, nil
+		}
+
+		lastErrors = blockingErrors
+		if attempt < maxRetries {
+			continue
+		}
+
+		// Return last attempt with errors
+		return nil, fmt.Errorf("workflow validation failed after %d attempts: %v", attempt+1, blockingErrors)
+	}
+
+	return nil, fmt.Errorf("workflow generation failed")
 }
 
 // publishVPNService creates the full service configuration for VPN BDD tests:
-// ServiceCatalog + Priority + ServiceDefinition with workflow JSON.
-func publishVPNService(bc *bddContext, ids vpnWorkflowIDs) error {
-	// 1. ServiceCatalog
+// ServiceCatalog + Priority + ServiceDefinition with LLM-generated workflow JSON.
+func publishVPNService(bc *bddContext, cfg llmConfig) error {
+	// 1. Generate workflow via LLM
+	workflowJSON, err := generateVPNWorkflow(cfg)
+	if err != nil {
+		return fmt.Errorf("generate VPN workflow: %w", err)
+	}
+
+	// 2. ServiceCatalog
 	catalog := &ServiceCatalog{
 		Name:     "VPN服务",
 		Code:     "vpn",
@@ -64,7 +146,7 @@ func publishVPNService(bc *bddContext, ids vpnWorkflowIDs) error {
 		return fmt.Errorf("create service catalog: %w", err)
 	}
 
-	// 2. Priority
+	// 3. Priority
 	priority := &Priority{
 		Name:     "普通",
 		Code:     "normal",
@@ -77,14 +159,15 @@ func publishVPNService(bc *bddContext, ids vpnWorkflowIDs) error {
 	}
 	bc.priority = priority
 
-	// 3. ServiceDefinition
+	// 4. ServiceDefinition
 	svc := &ServiceDefinition{
-		Name:         "VPN开通申请",
-		Code:         "vpn-activation",
-		CatalogID:    catalog.ID,
-		EngineType:   "classic",
-		WorkflowJSON: JSONField(buildVPNWorkflowJSON(ids)),
-		IsActive:     true,
+		Name:              "VPN开通申请",
+		Code:              "vpn-activation",
+		CatalogID:         catalog.ID,
+		EngineType:        "classic",
+		WorkflowJSON:      JSONField(workflowJSON),
+		CollaborationSpec: vpnCollaborationSpec,
+		IsActive:          true,
 	}
 	if err := bc.db.Create(svc).Error; err != nil {
 		return fmt.Errorf("create service definition: %w", err)

@@ -6,43 +6,21 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"metis/internal/scheduler"
+	"metis/internal/service"
 )
 
 type TaskHandler struct {
-	engine *scheduler.Engine
+	svc *service.TaskService
 }
 
 func (h *TaskHandler) ListTasks(c *gin.Context) {
 	taskType := c.Query("type")
 	ctx := c.Request.Context()
 
-	states, err := h.engine.GetStore().ListTaskStates(ctx, taskType)
+	infos, err := h.svc.ListTasks(ctx, taskType)
 	if err != nil {
 		Fail(c, http.StatusInternalServerError, "failed to list tasks")
 		return
-	}
-
-	registry := h.engine.GetRegistry()
-	var infos []scheduler.TaskInfo
-	for _, state := range states {
-		info := scheduler.TaskInfo{TaskState: *state}
-		// Attach last execution summary
-		if last, err := h.engine.GetStore().GetLastExecution(ctx, state.Name); err == nil {
-			var duration int64
-			if last.StartedAt != nil && last.FinishedAt != nil {
-				duration = last.FinishedAt.Sub(*last.StartedAt).Milliseconds()
-			}
-			info.LastExecution = &scheduler.LastExecution{
-				Timestamp: last.CreatedAt,
-				Status:    last.Status,
-				Duration:  duration,
-			}
-		}
-		// Only include tasks that are still in the registry
-		if _, ok := registry[state.Name]; ok {
-			infos = append(infos, info)
-		}
 	}
 
 	OK(c, infos)
@@ -52,29 +30,11 @@ func (h *TaskHandler) GetTask(c *gin.Context) {
 	name := c.Param("name")
 	ctx := c.Request.Context()
 
-	state, err := h.engine.GetStore().GetTaskState(ctx, name)
+	info, execs, err := h.svc.GetTask(ctx, name)
 	if err != nil {
 		Fail(c, http.StatusNotFound, "task not found")
 		return
 	}
-
-	info := scheduler.TaskInfo{TaskState: *state}
-	if last, err := h.engine.GetStore().GetLastExecution(ctx, name); err == nil {
-		var duration int64
-		if last.StartedAt != nil && last.FinishedAt != nil {
-			duration = last.FinishedAt.Sub(*last.StartedAt).Milliseconds()
-		}
-		info.LastExecution = &scheduler.LastExecution{
-			Timestamp: last.CreatedAt,
-			Status:    last.Status,
-			Duration:  duration,
-		}
-	}
-
-	// Get recent executions
-	execs, _, _ := h.engine.GetStore().ListExecutions(ctx, scheduler.ExecutionFilter{
-		TaskName: name, Page: 1, PageSize: 20,
-	})
 
 	OK(c, gin.H{
 		"task":             info,
@@ -87,11 +47,7 @@ func (h *TaskHandler) ListExecutions(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
 
-	execs, total, err := h.engine.GetStore().ListExecutions(c.Request.Context(), scheduler.ExecutionFilter{
-		TaskName: name,
-		Page:     page,
-		PageSize: pageSize,
-	})
+	execs, total, err := h.svc.ListExecutions(c.Request.Context(), name, page, pageSize)
 	if err != nil {
 		Fail(c, http.StatusInternalServerError, "failed to list executions")
 		return
@@ -106,7 +62,7 @@ func (h *TaskHandler) ListExecutions(c *gin.Context) {
 }
 
 func (h *TaskHandler) GetStats(c *gin.Context) {
-	stats, err := h.engine.GetStore().Stats(c.Request.Context())
+	stats, err := h.svc.GetStats(c.Request.Context())
 	if err != nil {
 		Fail(c, http.StatusInternalServerError, "failed to get stats")
 		return
@@ -116,7 +72,7 @@ func (h *TaskHandler) GetStats(c *gin.Context) {
 
 func (h *TaskHandler) PauseTask(c *gin.Context) {
 	name := c.Param("name")
-	if err := h.engine.PauseTask(name); err != nil {
+	if err := h.svc.PauseTask(name); err != nil {
 		Fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -125,7 +81,7 @@ func (h *TaskHandler) PauseTask(c *gin.Context) {
 
 func (h *TaskHandler) ResumeTask(c *gin.Context) {
 	name := c.Param("name")
-	if err := h.engine.ResumeTask(name); err != nil {
+	if err := h.svc.ResumeTask(name); err != nil {
 		Fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -134,7 +90,7 @@ func (h *TaskHandler) ResumeTask(c *gin.Context) {
 
 func (h *TaskHandler) TriggerTask(c *gin.Context) {
 	name := c.Param("name")
-	exec, err := h.engine.TriggerTask(name)
+	exec, err := h.svc.TriggerTask(name)
 	if err != nil {
 		Fail(c, http.StatusBadRequest, err.Error())
 		return

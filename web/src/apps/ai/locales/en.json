@@ -315,10 +315,12 @@
     "fromScratch": "From Scratch",
     "tabs": {
       "overview": "Overview",
+      "config": "Configuration",
       "bindings": "Capabilities",
       "sessions": "Sessions",
       "settings": "Settings"
     },
+    "noItems": "No items available",
     "empty": "No agents",
     "emptyHint": "Click \"New Agent\" to create your first AI agent",
     "createSuccess": "Agent created successfully",

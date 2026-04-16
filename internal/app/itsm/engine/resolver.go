@@ -12,6 +12,7 @@ type OrgService interface {
 	FindUsersByPositionID(positionID uint) ([]uint, error)
 	FindUsersByDepartmentID(departmentID uint) ([]uint, error)
 	FindManagerByUserID(userID uint) (uint, error)
+	FindUsersByPositionCodeAndDepartmentCode(positionCode, departmentCode string) ([]uint, error)
 }
 
 // ParticipantResolver resolves participant configurations to user IDs.
@@ -55,6 +56,15 @@ func (r *ParticipantResolver) Resolve(tx *gorm.DB, ticketID uint, p Participant)
 			return nil, fmt.Errorf("invalid department ID %q: %w", p.Value, err)
 		}
 		return r.orgService.FindUsersByDepartmentID(uint(deptID))
+
+	case "position_department":
+		if r.orgService == nil {
+			return nil, fmt.Errorf("参与人解析失败：position_department 类型需要安装组织架构模块")
+		}
+		if p.PositionCode == "" || p.DepartmentCode == "" {
+			return nil, fmt.Errorf("position_department 类型需要同时指定 position_code 和 department_code")
+		}
+		return r.orgService.FindUsersByPositionCodeAndDepartmentCode(p.PositionCode, p.DepartmentCode)
 
 	default:
 		return nil, fmt.Errorf("unsupported participant type: %s", p.Type)

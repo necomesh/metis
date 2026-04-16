@@ -11,7 +11,6 @@ import (
 	"metis/internal/pkg/oauth"
 	"metis/internal/pkg/token"
 	"metis/internal/repository"
-	"metis/internal/scheduler"
 	"metis/internal/service"
 )
 
@@ -46,7 +45,7 @@ func New(i do.Injector) (*Handler, error) {
 	roleSvc := do.MustInvoke[*service.RoleService](i)
 	menuSvc := do.MustInvoke[*service.MenuService](i)
 	casbinSvc := do.MustInvoke[*service.CasbinService](i)
-	engine := do.MustInvoke[*scheduler.Engine](i)
+	taskSvc := do.MustInvoke[*service.TaskService](i)
 	sessionSvc := do.MustInvoke[*service.SessionService](i)
 	settingsSvc := do.MustInvoke[*service.SettingsService](i)
 	notifSvc := do.MustInvoke[*service.NotificationService](i)
@@ -83,7 +82,7 @@ func New(i do.Injector) (*Handler, error) {
 		user:         &UserHandler{userSvc: userSvc, connRepo: connRepo},
 		role:         &RoleHandler{roleSvc: roleSvc, casbinSvc: casbinSvc, menuSvc: menuSvc, roleRepo: roleRepo},
 		menu:         &MenuHandler{menuSvc: menuSvc},
-		task:         &TaskHandler{engine: engine},
+		task:         &TaskHandler{svc: taskSvc},
 		session:      &SessionHandler{sessionSvc: sessionSvc},
 		notification: &NotificationHandler{notifSvc: notifSvc},
 		announcement: &AnnouncementHandler{notifSvc: notifSvc},

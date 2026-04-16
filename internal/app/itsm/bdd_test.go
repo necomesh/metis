@@ -2,8 +2,8 @@ package itsm
 
 // bdd_test.go — godog BDD test suite entry point for ITSM.
 //
-// Run BDD tests:
-//   go test ./internal/app/itsm/ -run TestBDD -v
+// Run BDD tests (requires LLM_TEST_* env vars):
+//   LLM_TEST_BASE_URL=... LLM_TEST_API_KEY=... LLM_TEST_MODEL=... go test ./internal/app/itsm/ -run TestBDD -v
 //   make test-bdd
 
 import (
@@ -14,6 +14,10 @@ import (
 )
 
 func TestBDD(t *testing.T) {
+	if !hasLLMConfig() {
+		t.Skip("BDD tests require LLM: set LLM_TEST_BASE_URL, LLM_TEST_API_KEY, LLM_TEST_MODEL")
+	}
+
 	suite := godog.TestSuite{
 		Name:                "itsm-bdd",
 		ScenarioInitializer: initializeScenario,

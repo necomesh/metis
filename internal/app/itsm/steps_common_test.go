@@ -152,6 +152,26 @@ func (s *testOrgService) FindManagerByUserID(userID uint) (uint, error) {
 	return *user.ManagerID, nil
 }
 
+func (s *testOrgService) FindUsersByPositionCodeAndDepartmentCode(positionCode, departmentCode string) ([]uint, error) {
+	var pos org.Position
+	if err := s.db.Where("code = ?", positionCode).First(&pos).Error; err != nil {
+		return nil, fmt.Errorf("position code %q not found: %w", positionCode, err)
+	}
+	var dept org.Department
+	if err := s.db.Where("code = ?", departmentCode).First(&dept).Error; err != nil {
+		return nil, fmt.Errorf("department code %q not found: %w", departmentCode, err)
+	}
+	var ups []org.UserPosition
+	if err := s.db.Where("position_id = ? AND department_id = ?", pos.ID, dept.ID).Find(&ups).Error; err != nil {
+		return nil, err
+	}
+	ids := make([]uint, 0, len(ups))
+	for _, up := range ups {
+		ids = append(ids, up.UserID)
+	}
+	return ids, nil
+}
+
 // Compile-time check.
 var _ engine.OrgService = (*testOrgService)(nil)
 

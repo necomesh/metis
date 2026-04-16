@@ -47,8 +47,16 @@ registerApp({
           lazy: () => import("./pages/agents/index"),
         },
         {
+          path: "create",
+          lazy: () => import("./pages/agents/create"),
+        },
+        {
           path: ":id",
           lazy: () => import("./pages/agents/[id]"),
+        },
+        {
+          path: ":id/edit",
+          lazy: () => import("./pages/agents/[id]/edit"),
         },
       ],
     },

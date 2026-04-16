@@ -27,7 +27,6 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { AgentSheet } from "./components/agent-sheet"
 
 const TYPE_CONFIG: Record<string, { icon: typeof Bot; gradient: string }> = {
   assistant: { icon: BrainCircuit, gradient: "from-violet-500/10 to-indigo-500/10" },
@@ -36,7 +35,6 @@ const TYPE_CONFIG: Record<string, { icon: typeof Bot; gradient: string }> = {
 
 function AgentCard({
   agent,
-  onEdit,
   onChat,
   chattingId,
   canUpdate,
@@ -44,7 +42,6 @@ function AgentCard({
   onDelete,
 }: {
   agent: AgentInfo
-  onEdit: () => void
   onChat: () => void
   chattingId: number | null
   canUpdate: boolean
@@ -59,7 +56,6 @@ function AgentCard({
 
   return (
     <div className={`group relative flex flex-col gap-3 rounded-lg border bg-card p-4 transition-all duration-200 hover:shadow-sm hover:border-primary/30 ${!agent.isActive ? "opacity-50" : ""}`}>
-      {/* Top row: icon + name + menu */}
       <div className="flex items-start gap-3">
         <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-gradient-to-br ${config.gradient}`}>
           <Icon className="h-4.5 w-4.5 text-foreground/70" />
@@ -76,7 +72,6 @@ function AgentCard({
           </p>
         </div>
 
-        {/* Action menu */}
         {(canUpdate || canDelete) && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -90,7 +85,7 @@ function AgentCard({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               {canUpdate && (
-                <DropdownMenuItem onClick={onEdit}>
+                <DropdownMenuItem onClick={() => navigate(`/ai/agents/${agent.id}/edit`)}>
                   <Pencil className="mr-2 h-3.5 w-3.5" />
                   {t("common:edit")}
                 </DropdownMenuItem>
@@ -113,7 +108,6 @@ function AgentCard({
         )}
       </div>
 
-      {/* Bottom: status + chat button */}
       <div className="mt-auto flex items-center justify-between pt-1">
         <Badge variant={agent.isActive ? "default" : "secondary"} className="text-[10px]">
           {agent.isActive ? t("ai:statusLabels.active") : t("ai:statusLabels.inactive")}
@@ -141,8 +135,6 @@ export function Component() {
   const { t } = useTranslation(["ai", "common"])
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const [formOpen, setFormOpen] = useState(false)
-  const [editing, setEditing] = useState<AgentInfo | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<AgentInfo | null>(null)
 
   const canCreate = usePermission("ai:agent:create")
@@ -173,22 +165,12 @@ export function Component() {
     onError: (err) => toast.error(err.message),
   })
 
-  function handleCreate() {
-    setEditing(null)
-    setFormOpen(true)
-  }
-
-  function handleEdit(item: AgentInfo) {
-    setEditing(item)
-    setFormOpen(true)
-  }
-
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">{t("ai:agents.title")}</h2>
         {canCreate && (
-          <Button size="sm" onClick={handleCreate}>
+          <Button size="sm" onClick={() => navigate("/ai/agents/create")}>
             <Plus className="mr-1.5 h-4 w-4" />
             {t("ai:agents.create")}
           </Button>
@@ -232,7 +214,6 @@ export function Component() {
             <AgentCard
               key={agent.id}
               agent={agent}
-              onEdit={() => handleEdit(agent)}
               onChat={() => createSessionMutation.mutate(agent.id)}
               chattingId={createSessionMutation.isPending ? (createSessionMutation.variables ?? null) : null}
               canUpdate={canUpdate}
@@ -245,9 +226,6 @@ export function Component() {
 
       <DataTablePagination total={total} page={page} totalPages={totalPages} onPageChange={setPage} />
 
-      <AgentSheet open={formOpen} onOpenChange={setFormOpen} agent={editing} />
-
-      {/* Delete confirmation dialog */}
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}>
         <AlertDialogContent>
           <AlertDialogHeader>

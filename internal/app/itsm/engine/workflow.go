@@ -53,8 +53,10 @@ type NodeData struct {
 
 // Participant defines who should handle a node.
 type Participant struct {
-	Type  string `json:"type"`  // user | position | department | requester_manager
-	Value string `json:"value"` // user ID, position ID, or department ID (string for flexibility)
+	Type           string `json:"type"`            // user | position | department | position_department | requester_manager
+	Value          string `json:"value,omitempty"`  // user ID, position ID, or department ID (string for flexibility)
+	PositionCode   string `json:"position_code,omitempty"`   // position_department: position code
+	DepartmentCode string `json:"department_code,omitempty"` // position_department: department code
 }
 
 // Assignment defines a variable assignment for script nodes.
