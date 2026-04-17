@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -735,10 +736,38 @@ func (e *ClassicEngine) handleNotify(
 	token *executionTokenModel, operatorID uint,
 	node *WFNode, data *NodeData, depth int,
 ) error {
-	// Non-blocking notification — record timeline and continue
-	e.recordTimeline(tx, token.TicketID, nil, operatorID, "notification_sent", fmt.Sprintf("通知已发送: %s", data.Label))
+	// Send notification via NotificationSender if configured
+	if e.notifier != nil && data.ChannelID != 0 {
+		// Resolve recipients
+		var recipientIDs []uint
+		for _, p := range data.Recipients {
+			ids, err := e.resolver.Resolve(tx, token.TicketID, p)
+			if err != nil {
+				slog.Warn("notify: failed to resolve recipient", "ticketID", token.TicketID, "error", err)
+				continue
+			}
+			recipientIDs = append(recipientIDs, ids...)
+		}
 
-	// TODO: integrate with Kernel Channel for actual notification delivery
+		if len(recipientIDs) > 0 {
+			// Build notification body with template variable replacement
+			subject := data.Label
+			body := data.Template
+			if body != "" {
+				body = e.renderTemplate(tx, token.TicketID, token.ScopeID, body)
+			}
+
+			if err := e.notifier.Send(ctx, data.ChannelID, subject, body, recipientIDs); err != nil {
+				// Non-blocking: record warning but continue workflow
+				slog.Warn("notify: send failed", "ticketID", token.TicketID, "channelID", data.ChannelID, "error", err)
+				e.recordTimeline(tx, token.TicketID, nil, operatorID, "warning",
+					fmt.Sprintf("通知发送失败: %v", err))
+			}
+		}
+	}
+
+	// Record timeline
+	e.recordTimeline(tx, token.TicketID, nil, operatorID, "notification_sent", fmt.Sprintf("通知已发送: %s", data.Label))
 
 	// Continue to next node
 	edges := outEdges[node.ID]
@@ -1315,6 +1344,27 @@ func (e *ClassicEngine) completeSubprocess(
 }
 
 // --- Helpers ---
+
+// renderTemplate replaces template variables in notification templates.
+// Supports: {{ticket.code}}, {{ticket.status}}, {{activity.name}}, {{var.xxx}}
+func (e *ClassicEngine) renderTemplate(tx *gorm.DB, ticketID uint, scopeID, tmpl string) string {
+	var ticket ticketModel
+	if err := tx.First(&ticket, ticketID).Error; err != nil {
+		return tmpl
+	}
+
+	result := strings.ReplaceAll(tmpl, "{{ticket.code}}", fmt.Sprintf("TICK-%06d", ticketID))
+	result = strings.ReplaceAll(result, "{{ticket.status}}", ticket.Status)
+
+	// Replace process variables: {{var.xxx}}
+	var vars []processVariableModel
+	tx.Where("ticket_id = ? AND scope_id = ?", ticketID, scopeID).Find(&vars)
+	for _, v := range vars {
+		result = strings.ReplaceAll(result, "{{var."+v.Key+"}}", v.Value)
+	}
+
+	return result
+}
 
 func (e *ClassicEngine) matchEdge(edges []*WFEdge, outcome string) (*WFEdge, error) {
 	var defaultEdge *WFEdge

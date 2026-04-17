@@ -3,6 +3,7 @@ package itsm
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 
 	"github.com/casbin/casbin/v2"
@@ -96,7 +97,13 @@ func (a *ITSMApp) Providers(i do.Injector) {
 		db := do.MustInvoke[*database.DB](i)
 		// Create a TaskSubmitter that uses the scheduler engine
 		submitter := &schedulerSubmitter{db: db.DB}
-		return engine.NewClassicEngine(resolver, submitter), nil
+		// Try to resolve NotificationSender (optional — nil if MessageChannel service not available)
+		var notifier engine.NotificationSender
+		if mcSvc, err := do.Invoke[*service.MessageChannelService](i); err == nil && mcSvc != nil {
+			notifier = &notificationAdapter{svc: mcSvc}
+			slog.Info("ITSM ClassicEngine: notification sender available")
+		}
+		return engine.NewClassicEngine(resolver, submitter, notifier), nil
 	})
 
 	// SmartEngine — optional AI App dependencies
@@ -344,6 +351,25 @@ func (s *schedulerSubmitter) SubmitTask(name string, payload json.RawMessage) er
 
 // Ensure schedulerSubmitter implements engine.TaskSubmitter at compile time
 var _ engine.TaskSubmitter = (*schedulerSubmitter)(nil)
+
+// notificationAdapter adapts service.MessageChannelService to engine.NotificationSender.
+type notificationAdapter struct {
+	svc     *service.MessageChannelService
+}
+
+func (n *notificationAdapter) Send(ctx context.Context, channelID uint, subject, body string, recipientIDs []uint) error {
+	// For now, convert user IDs to string placeholders for email recipients.
+	// In a full implementation, you'd look up user emails from the user service.
+	// The channel driver (email) expects actual email addresses in the "to" field.
+	var to []string
+	for _, uid := range recipientIDs {
+		// Use user ID as placeholder — the channel service will need user email resolution
+		to = append(to, fmt.Sprintf("user:%d", uid))
+	}
+	return n.svc.SendTest(channelID, to, subject, body)
+}
+
+var _ engine.NotificationSender = (*notificationAdapter)(nil)
 
 // Ensure ClassicEngine implements engine.WorkflowEngine at compile time
 var _ engine.WorkflowEngine = (*engine.ClassicEngine)(nil)

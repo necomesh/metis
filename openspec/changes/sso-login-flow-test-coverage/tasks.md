@@ -1,28 +1,28 @@
 ## 1. Refactor SSOHandler for Injection
 
-- [ ] 1.1 Define internal `oidcProvider` interface in `internal/handler/sso.go`
-- [ ] 1.2 Add `getOIDCProvider`, `provisionExternalUser`, `generateTokenPair` fields to `SSOHandler`
-- [ ] 1.3 Add `resolveOIDCProvider`, `resolveProvisionExternalUser`, `resolveGenerateTokenPair` helper methods with nil-fallback to real implementations
-- [ ] 1.4 Update `InitiateSSO` to use `resolveOIDCProvider`
-- [ ] 1.5 Update `SSOCallback` to use `resolveOIDCProvider`, `resolveProvisionExternalUser`, and `resolveGenerateTokenPair`
-- [ ] 1.6 Run `go build -tags dev ./cmd/server/` and fix any compile errors
+- [x] 1.1 Define internal `oidcProvider` interface in `internal/handler/sso.go`
+- [x] 1.2 Add `getOIDCProvider`, `provisionExternalUser`, `generateTokenPair` fields to `SSOHandler`
+- [x] 1.3 Add `resolveOIDCProvider`, `resolveProvisionExternalUser`, `resolveGenerateTokenPair` helper methods with nil-fallback to real implementations
+- [x] 1.4 Update `InitiateSSO` to use `resolveOIDCProvider`
+- [x] 1.5 Update `SSOCallback` to use `resolveOIDCProvider`, `resolveProvisionExternalUser`, and `resolveGenerateTokenPair`
+- [x] 1.6 Run `go build -tags dev ./cmd/server/` and fix any compile errors
 
 ## 2. SSO State Manager Tests
 
-- [ ] 2.1 Create `internal/pkg/identity/sso_state_test.go`
-- [ ] 2.2 Add test: `Generate` returns non-empty state string
-- [ ] 2.3 Add test: `Validate` returns correct `SourceID` and `CodeVerifier`
-- [ ] 2.4 Add test: validating the same state twice returns error
-- [ ] 2.5 Add test: expired state returns error (inject `nowFn` or use short TTL if refactored)
-- [ ] 2.6 Run `go test ./internal/pkg/identity/...` and ensure all pass
+- [x] 2.1 Create `internal/pkg/identity/sso_state_test.go`
+- [x] 2.2 Add test: `Generate` returns non-empty state string
+- [x] 2.3 Add test: `Validate` returns correct `SourceID` and `CodeVerifier`
+- [x] 2.4 Add test: validating the same state twice returns error
+- [x] 2.5 Add test: expired state returns error (inject `nowFn` or use short TTL if refactored)
+- [x] 2.6 Run `go test ./internal/pkg/identity/...` and ensure all pass
 
 ## 3. CheckDomain Endpoint Tests
 
-- [ ] 3.1 Create `internal/handler/sso_test.go` with test DB helper and `newSSOHandlerForTest` constructor
-- [ ] 3.2 Add test: `CheckDomain` returns 200 with source info for a bound domain
-- [ ] 3.3 Add test: `CheckDomain` returns 400 when `email` query param is missing
-- [ ] 3.4 Add test: `CheckDomain` returns 400 for invalid email format
-- [ ] 3.5 Add test: `CheckDomain` returns 404 when domain has no identity source
+- [x] 3.1 Create `internal/handler/sso_test.go` with test DB helper and `newSSOHandlerForTest` constructor
+- [x] 3.2 Add test: `CheckDomain` returns 200 with source info for a bound domain
+- [x] 3.3 Add test: `CheckDomain` returns 400 when `email` query param is missing
+- [x] 3.4 Add test: `CheckDomain` returns 400 for invalid email format
+- [x] 3.5 Add test: `CheckDomain` returns 404 when domain has no identity source
 
 ## 4. InitiateSSO Endpoint Tests
 
