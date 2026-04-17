@@ -7,6 +7,11 @@ registerTranslations("itsm", { "zh-CN": zhCN, en })
 
 registerApp({
   name: "itsm",
+  menuGroups: [
+    { label: "service", items: ["itsm:service:list", "itsm:form:list"] },
+    { label: "ticket", items: ["itsm:ticket:list", "itsm:ticket:mine", "itsm:ticket:todo", "itsm:ticket:history", "itsm:ticket:approvals"] },
+    { label: "config", items: ["itsm:priority:list", "itsm:sla:list", "itsm:engine:config"] },
+  ],
   routes: [
     {
       path: "itsm/forms",
@@ -23,12 +28,10 @@ registerApp({
     },
     {
       path: "itsm/catalogs",
-      children: [
-        {
-          index: true,
-          lazy: () => import("./pages/catalogs/index"),
-        },
-      ],
+      lazy: async () => {
+        const { Navigate } = await import("react-router")
+        return { Component: () => Navigate({ to: "/itsm/services", replace: true }) }
+      },
     },
     {
       path: "itsm/services",
@@ -38,10 +41,6 @@ registerApp({
           lazy: () => import("./pages/services/index"),
         },
       ],
-    },
-    {
-      path: "itsm/services/create",
-      lazy: () => import("./pages/services/create/index"),
     },
     {
       path: "itsm/services/:id",

@@ -14,6 +14,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 
+	"metis/internal/app"
 	"metis/internal/app/ai"
 	"metis/internal/app/itsm/engine"
 	"metis/internal/app/org"
@@ -137,9 +138,59 @@ func (bc *bddContext) reset() {
 // Test doubles for engine dependencies
 // ---------------------------------------------------------------------------
 
-// testOrgService implements engine.OrgService by querying the BDD in-memory DB.
+// testOrgService implements app.OrgResolver by querying the BDD in-memory DB.
+// Only participant resolution methods are exercised in tests; others return zero values.
 type testOrgService struct {
 	db *gorm.DB
+}
+
+func (s *testOrgService) GetUserDeptScope(_ uint, _ bool) ([]uint, error) { return nil, nil }
+func (s *testOrgService) GetUserPositionIDs(_ uint) ([]uint, error)       { return nil, nil }
+func (s *testOrgService) GetUserDepartmentIDs(_ uint) ([]uint, error)     { return nil, nil }
+func (s *testOrgService) GetUserPositions(_ uint) ([]app.OrgPosition, error) {
+	return nil, nil
+}
+func (s *testOrgService) GetUserDepartment(_ uint) (*app.OrgDepartment, error) {
+	return nil, nil
+}
+func (s *testOrgService) QueryContext(_, _, _ string, _ bool) (*app.OrgContextResult, error) {
+	return nil, nil
+}
+
+func (s *testOrgService) FindUsersByPositionCode(posCode string) ([]uint, error) {
+	var pos org.Position
+	if err := s.db.Where("code = ?", posCode).First(&pos).Error; err != nil {
+		return nil, err
+	}
+	return s.FindUsersByPositionID(pos.ID)
+}
+
+func (s *testOrgService) FindUsersByDepartmentCode(deptCode string) ([]uint, error) {
+	var dept org.Department
+	if err := s.db.Where("code = ?", deptCode).First(&dept).Error; err != nil {
+		return nil, err
+	}
+	return s.FindUsersByDepartmentID(dept.ID)
+}
+
+func (s *testOrgService) FindUsersByPositionAndDepartment(posCode, deptCode string) ([]uint, error) {
+	var pos org.Position
+	if err := s.db.Where("code = ?", posCode).First(&pos).Error; err != nil {
+		return nil, fmt.Errorf("position code %q not found: %w", posCode, err)
+	}
+	var dept org.Department
+	if err := s.db.Where("code = ?", deptCode).First(&dept).Error; err != nil {
+		return nil, fmt.Errorf("department code %q not found: %w", deptCode, err)
+	}
+	var ups []org.UserPosition
+	if err := s.db.Where("position_id = ? AND department_id = ?", pos.ID, dept.ID).Find(&ups).Error; err != nil {
+		return nil, err
+	}
+	ids := make([]uint, 0, len(ups))
+	for _, up := range ups {
+		ids = append(ids, up.UserID)
+	}
+	return ids, nil
 }
 
 func (s *testOrgService) FindUsersByPositionID(positionID uint) ([]uint, error) {
@@ -177,28 +228,8 @@ func (s *testOrgService) FindManagerByUserID(userID uint) (uint, error) {
 	return *user.ManagerID, nil
 }
 
-func (s *testOrgService) FindUsersByPositionCodeAndDepartmentCode(positionCode, departmentCode string) ([]uint, error) {
-	var pos org.Position
-	if err := s.db.Where("code = ?", positionCode).First(&pos).Error; err != nil {
-		return nil, fmt.Errorf("position code %q not found: %w", positionCode, err)
-	}
-	var dept org.Department
-	if err := s.db.Where("code = ?", departmentCode).First(&dept).Error; err != nil {
-		return nil, fmt.Errorf("department code %q not found: %w", departmentCode, err)
-	}
-	var ups []org.UserPosition
-	if err := s.db.Where("position_id = ? AND department_id = ?", pos.ID, dept.ID).Find(&ups).Error; err != nil {
-		return nil, err
-	}
-	ids := make([]uint, 0, len(ups))
-	for _, up := range ups {
-		ids = append(ids, up.UserID)
-	}
-	return ids, nil
-}
-
 // Compile-time check.
-var _ engine.OrgService = (*testOrgService)(nil)
+var _ app.OrgResolver = (*testOrgService)(nil)
 
 // noopSubmitter implements engine.TaskSubmitter as a no-op.
 type noopSubmitter struct{}

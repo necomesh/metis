@@ -196,7 +196,7 @@ func (bc *bddContext) whenAssigneeClaimsAndApproves() error {
 				if p.ID == *assignment.PositionID {
 					for deptCode, d := range bc.departments {
 						if d.ID == *assignment.DepartmentID {
-							userIDs, _ := orgSvc.FindUsersByPositionCodeAndDepartmentCode(posCode, deptCode)
+							userIDs, _ := orgSvc.FindUsersByPositionAndDepartment(posCode, deptCode)
 							if len(userIDs) > 0 {
 								operatorID = userIDs[0]
 							}

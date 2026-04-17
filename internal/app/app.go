@@ -45,6 +45,13 @@ type OrgResolver interface {
 	GetUserPositions(userID uint) ([]OrgPosition, error)
 	GetUserDepartment(userID uint) (*OrgDepartment, error)
 	QueryContext(username, deptCode, positionCode string, includeInactive bool) (*OrgContextResult, error)
+	// Participant resolution: find users by org criteria
+	FindUsersByPositionCode(posCode string) ([]uint, error)
+	FindUsersByDepartmentCode(deptCode string) ([]uint, error)
+	FindUsersByPositionAndDepartment(posCode, deptCode string) ([]uint, error)
+	FindUsersByPositionID(positionID uint) ([]uint, error)
+	FindUsersByDepartmentID(departmentID uint) ([]uint, error)
+	FindManagerByUserID(userID uint) (uint, error)
 }
 
 // OrgDepartment represents a department in the organization.

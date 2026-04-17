@@ -1,4 +1,9 @@
 {
+  "menuGroup": {
+    "service": "服务",
+    "ticket": "工单",
+    "config": "配置"
+  },
   "forms": {
     "title": "表单管理",
     "create": "新增表单",
@@ -117,7 +122,7 @@
     "hasServices": "该分类下有服务定义，无法删除"
   },
   "services": {
-    "title": "服务定义",
+    "title": "服务目录",
     "create": "新增服务",
     "edit": "编辑服务",
     "name": "服务名称",
@@ -133,7 +138,6 @@
     "status": "状态",
     "active": "启用",
     "inactive": "停用",
-    "searchPlaceholder": "搜索服务名称或编码",
     "empty": "暂无服务定义",
     "emptyHint": "点击「新增服务」创建第一个服务",
     "createSuccess": "服务创建成功",
@@ -146,19 +150,20 @@
     "codePlaceholder": "例如：vpn-apply",
     "formSchema": "表单 Schema",
     "actions": "动作管理",
-    "allCatalogs": "全部分类",
     "workflow": "流程设计",
     "detail": "服务详情",
     "tabBasicInfo": "基础信息",
     "tabWorkflow": "工作流",
     "tabActions": "动作",
     "backToList": "返回列表",
-    "allEngineTypes": "全部引擎",
-    "allStatuses": "全部状态",
-    "view": "查看",
     "workflowEmpty": "工作流尚未配置",
     "workflowEmptyHint": "工作流数据将在后续生成",
-    "collaborationSpecLabel": "协作规范"
+    "collaborationSpecLabel": "协作规范",
+    "allNav": "全部",
+    "addService": "添加服务",
+    "guideCardHint": "添加服务",
+    "emptyInCatalog": "该分类下暂无服务",
+    "emptyInCatalogHint": "点击「添加服务」创建第一个服务"
   },
   "actions": {
     "title": "动作管理",

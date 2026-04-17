@@ -9,6 +9,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"metis/internal/app"
 	"metis/internal/app/itsm/engine"
 	"metis/internal/app/itsm/form"
 )
@@ -18,12 +19,13 @@ import (
 type Operator struct {
 	db           *gorm.DB
 	resolver     *engine.ParticipantResolver
+	orgResolver  app.OrgResolver // nil when Org App is not installed
 	withdrawFunc func(ticketID uint, reason string, operatorID uint) error
 }
 
 // NewOperator creates a new ServiceDeskOperator.
-func NewOperator(db *gorm.DB, resolver *engine.ParticipantResolver, withdrawFunc func(uint, string, uint) error) *Operator {
-	return &Operator{db: db, resolver: resolver, withdrawFunc: withdrawFunc}
+func NewOperator(db *gorm.DB, resolver *engine.ParticipantResolver, orgResolver app.OrgResolver, withdrawFunc func(uint, string, uint) error) *Operator {
+	return &Operator{db: db, resolver: resolver, orgResolver: orgResolver, withdrawFunc: withdrawFunc}
 }
 
 // MatchServices searches active ServiceDefinitions by keyword scoring.
@@ -332,18 +334,22 @@ func (o *Operator) ValidateParticipants(serviceID uint, formData map[string]any)
 			}
 		}
 		if d.ParticipantType == "position" && d.PositionCode != "" {
-			// Position-based — check if any active user holds the position.
-			var count int64
-			q := o.db.Table("user_positions").
-				Joins("JOIN positions ON positions.id = user_positions.position_id").
-				Joins("JOIN users ON users.id = user_positions.user_id").
-				Where("positions.code = ? AND users.is_active = ?", d.PositionCode, true)
-			if d.DepartmentCode != "" {
-				q = q.Joins("JOIN departments ON departments.id = user_positions.department_id").
-					Where("departments.code = ?", d.DepartmentCode)
+			if o.orgResolver == nil {
+				// Org App not installed — skip position validation.
+				continue
 			}
-			q.Count(&count)
-			if count == 0 {
+			// Position-based — check if any active user holds the position.
+			var userIDs []uint
+			var err error
+			if d.DepartmentCode != "" {
+				userIDs, err = o.orgResolver.FindUsersByPositionAndDepartment(d.PositionCode, d.DepartmentCode)
+			} else {
+				userIDs, err = o.orgResolver.FindUsersByPositionCode(d.PositionCode)
+			}
+			if err != nil {
+				return nil, fmt.Errorf("validate participants: %w", err)
+			}
+			if len(userIDs) == 0 {
 				reason := fmt.Sprintf("岗位[%s]", d.PositionCode)
 				if d.DepartmentCode != "" {
 					reason += fmt.Sprintf("+部门[%s]", d.DepartmentCode)

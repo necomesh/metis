@@ -1,4 +1,9 @@
 {
+  "menuGroup": {
+    "service": "Service",
+    "ticket": "Ticket",
+    "config": "Config"
+  },
   "forms": {
     "title": "Form Management",
     "create": "New Form",
@@ -117,7 +122,7 @@
     "hasServices": "Cannot delete: has services"
   },
   "services": {
-    "title": "Service Definitions",
+    "title": "Service Catalog",
     "create": "New Service",
     "edit": "Edit Service",
     "name": "Name",
@@ -133,7 +138,6 @@
     "status": "Status",
     "active": "Active",
     "inactive": "Inactive",
-    "searchPlaceholder": "Search by name or code",
     "empty": "No services",
     "emptyHint": "Click \"New Service\" to create one",
     "createSuccess": "Service created",
@@ -146,19 +150,20 @@
     "codePlaceholder": "e.g. vpn-request",
     "formSchema": "Form Schema",
     "actions": "Actions",
-    "allCatalogs": "All Categories",
     "workflow": "Workflow",
     "detail": "Service Detail",
     "tabBasicInfo": "Basic Info",
     "tabWorkflow": "Workflow",
     "tabActions": "Actions",
     "backToList": "Back to list",
-    "allEngineTypes": "All Engines",
-    "allStatuses": "All Statuses",
-    "view": "View",
     "workflowEmpty": "Workflow not configured",
     "workflowEmptyHint": "Workflow data will be generated later",
-    "collaborationSpecLabel": "Collaboration Spec"
+    "collaborationSpecLabel": "Collaboration Spec",
+    "allNav": "All",
+    "addService": "Add Service",
+    "guideCardHint": "Add Service",
+    "emptyInCatalog": "No services in this category",
+    "emptyInCatalogHint": "Click \"Add Service\" to create one"
   },
   "actions": {
     "title": "Actions",

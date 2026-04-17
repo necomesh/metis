@@ -49,4 +49,5 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	registerParticipantSteps(sc, bc)
 	registerDeterministicSteps(sc, bc)
 	registerDialogValidationSteps(sc, bc)
+	registerDraftRecoverySteps(sc, bc)
 }

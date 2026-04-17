@@ -174,3 +174,67 @@ func (r *OrgResolverImpl) QueryContext(username, deptCode, positionCode string, 
 
 	return result, nil
 }
+
+// --- Participant resolution ---
+
+func (r *OrgResolverImpl) FindUsersByPositionCode(posCode string) ([]uint, error) {
+	var userIDs []uint
+	err := r.db.Table("user_positions").
+		Joins("JOIN positions ON positions.id = user_positions.position_id").
+		Joins("JOIN users ON users.id = user_positions.user_id").
+		Where("positions.code = ? AND users.is_active = ?", posCode, true).
+		Pluck("DISTINCT users.id", &userIDs).Error
+	return userIDs, err
+}
+
+func (r *OrgResolverImpl) FindUsersByDepartmentCode(deptCode string) ([]uint, error) {
+	var userIDs []uint
+	err := r.db.Table("user_positions").
+		Joins("JOIN departments ON departments.id = user_positions.department_id").
+		Joins("JOIN users ON users.id = user_positions.user_id").
+		Where("departments.code = ? AND users.is_active = ?", deptCode, true).
+		Pluck("DISTINCT users.id", &userIDs).Error
+	return userIDs, err
+}
+
+func (r *OrgResolverImpl) FindUsersByPositionAndDepartment(posCode, deptCode string) ([]uint, error) {
+	var userIDs []uint
+	err := r.db.Table("user_positions").
+		Joins("JOIN positions ON positions.id = user_positions.position_id").
+		Joins("JOIN departments ON departments.id = user_positions.department_id").
+		Joins("JOIN users ON users.id = user_positions.user_id").
+		Where("positions.code = ? AND departments.code = ? AND users.is_active = ?", posCode, deptCode, true).
+		Pluck("DISTINCT users.id", &userIDs).Error
+	return userIDs, err
+}
+
+func (r *OrgResolverImpl) FindUsersByPositionID(positionID uint) ([]uint, error) {
+	var userIDs []uint
+	err := r.db.Table("user_positions").
+		Joins("JOIN users ON users.id = user_positions.user_id").
+		Where("user_positions.position_id = ? AND users.is_active = ?", positionID, true).
+		Pluck("DISTINCT users.id", &userIDs).Error
+	return userIDs, err
+}
+
+func (r *OrgResolverImpl) FindUsersByDepartmentID(departmentID uint) ([]uint, error) {
+	var userIDs []uint
+	err := r.db.Table("user_positions").
+		Joins("JOIN users ON users.id = user_positions.user_id").
+		Where("user_positions.department_id = ? AND users.is_active = ?", departmentID, true).
+		Pluck("DISTINCT users.id", &userIDs).Error
+	return userIDs, err
+}
+
+func (r *OrgResolverImpl) FindManagerByUserID(userID uint) (uint, error) {
+	var user struct {
+		ManagerID *uint
+	}
+	if err := r.db.Table("users").Where("id = ?", userID).Select("manager_id").First(&user).Error; err != nil {
+		return 0, fmt.Errorf("user %d not found: %w", userID, err)
+	}
+	if user.ManagerID == nil {
+		return 0, nil
+	}
+	return *user.ManagerID, nil
+}

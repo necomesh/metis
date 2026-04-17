@@ -232,7 +232,7 @@ func (bc *bddContext) thenCurrentActivityAssignedTo(username, deptCode, posCode 
 
 	// Verify user belongs to the expected position+department.
 	orgSvc := &testOrgService{db: bc.db}
-	userIDs, err := orgSvc.FindUsersByPositionCodeAndDepartmentCode(posCode, deptCode)
+	userIDs, err := orgSvc.FindUsersByPositionAndDepartment(posCode, deptCode)
 	if err != nil {
 		return fmt.Errorf("resolve users for %s/%s: %w", deptCode, posCode, err)
 	}

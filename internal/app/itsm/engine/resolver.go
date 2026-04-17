@@ -6,23 +6,17 @@ import (
 	"strconv"
 
 	"gorm.io/gorm"
-)
 
-// OrgService is an optional interface that the Org App can provide for participant resolution.
-type OrgService interface {
-	FindUsersByPositionID(positionID uint) ([]uint, error)
-	FindUsersByDepartmentID(departmentID uint) ([]uint, error)
-	FindManagerByUserID(userID uint) (uint, error)
-	FindUsersByPositionCodeAndDepartmentCode(positionCode, departmentCode string) ([]uint, error)
-}
+	"metis/internal/app"
+)
 
 // ParticipantResolver resolves participant configurations to user IDs.
 type ParticipantResolver struct {
-	orgService OrgService // nil when Org App is not installed
+	orgResolver app.OrgResolver // nil when Org App is not installed
 }
 
-func NewParticipantResolver(orgService OrgService) *ParticipantResolver {
-	return &ParticipantResolver{orgService: orgService}
+func NewParticipantResolver(orgResolver app.OrgResolver) *ParticipantResolver {
+	return &ParticipantResolver{orgResolver: orgResolver}
 }
 
 // Resolve returns user IDs for a given participant configuration.
@@ -39,33 +33,33 @@ func (r *ParticipantResolver) Resolve(tx *gorm.DB, ticketID uint, p Participant)
 		return r.resolveRequesterManager(tx, ticketID)
 
 	case "position":
-		if r.orgService == nil {
+		if r.orgResolver == nil {
 			return nil, fmt.Errorf("参与人解析失败：position 类型需要安装组织架构模块")
 		}
 		posID, err := strconv.ParseUint(p.Value, 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("invalid position ID %q: %w", p.Value, err)
 		}
-		return r.orgService.FindUsersByPositionID(uint(posID))
+		return r.orgResolver.FindUsersByPositionID(uint(posID))
 
 	case "department":
-		if r.orgService == nil {
+		if r.orgResolver == nil {
 			return nil, fmt.Errorf("参与人解析失败：department 类型需要安装组织架构模块")
 		}
 		deptID, err := strconv.ParseUint(p.Value, 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("invalid department ID %q: %w", p.Value, err)
 		}
-		return r.orgService.FindUsersByDepartmentID(uint(deptID))
+		return r.orgResolver.FindUsersByDepartmentID(uint(deptID))
 
 	case "position_department":
-		if r.orgService == nil {
+		if r.orgResolver == nil {
 			return nil, fmt.Errorf("参与人解析失败：position_department 类型需要安装组织架构模块")
 		}
 		if p.PositionCode == "" || p.DepartmentCode == "" {
 			return nil, fmt.Errorf("position_department 类型需要同时指定 position_code 和 department_code")
 		}
-		return r.orgService.FindUsersByPositionCodeAndDepartmentCode(p.PositionCode, p.DepartmentCode)
+		return r.orgResolver.FindUsersByPositionAndDepartment(p.PositionCode, p.DepartmentCode)
 
 	default:
 		return nil, fmt.Errorf("unsupported participant type: %s", p.Type)
@@ -78,11 +72,11 @@ func (r *ParticipantResolver) resolveRequesterManager(tx *gorm.DB, ticketID uint
 		return nil, fmt.Errorf("ticket not found: %w", err)
 	}
 
-	if r.orgService == nil {
+	if r.orgResolver == nil {
 		return nil, fmt.Errorf("参与人解析失败：requester_manager 类型需要安装组织架构模块")
 	}
 
-	managerID, err := r.orgService.FindManagerByUserID(ticket.RequesterID)
+	managerID, err := r.orgResolver.FindManagerByUserID(ticket.RequesterID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find manager for user %d: %w", ticket.RequesterID, err)
 	}

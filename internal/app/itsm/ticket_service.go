@@ -41,7 +41,7 @@ type TicketService struct {
 	formDefRepo     *FormDefRepo
 	classicEngine   *engine.ClassicEngine
 	smartEngine     *engine.SmartEngine
-	orgUserResolver app.OrgResolver // nil when Org App not installed
+	orgResolver app.OrgResolver // nil when Org App not installed
 }
 
 func NewTicketService(i do.Injector) (*TicketService, error) {
@@ -58,7 +58,7 @@ func NewTicketService(i do.Injector) (*TicketService, error) {
 	// Optional: resolve OrgResolver if Org App is installed
 	resolver, err := do.InvokeAs[app.OrgResolver](i)
 	if err == nil && resolver != nil {
-		svc.orgUserResolver = resolver
+		svc.orgResolver = resolver
 		slog.Info("ITSM TicketService: OrgResolver available for multi-dimensional participant matching")
 	}
 	return svc, nil
@@ -297,11 +297,11 @@ func (s *TicketService) Todo(userID uint, keyword, status string, page, pageSize
 		Page:     page,
 		PageSize: pageSize,
 	}
-	if s.orgUserResolver != nil {
-		if posIDs, err := s.orgUserResolver.GetUserPositionIDs(userID); err == nil {
+	if s.orgResolver != nil {
+		if posIDs, err := s.orgResolver.GetUserPositionIDs(userID); err == nil {
 			params.PositionIDs = posIDs
 		}
-		if deptIDs, err := s.orgUserResolver.GetUserDepartmentIDs(userID); err == nil {
+		if deptIDs, err := s.orgResolver.GetUserDepartmentIDs(userID); err == nil {
 			params.DeptIDs = deptIDs
 		}
 	}
@@ -793,11 +793,11 @@ func (s *TicketService) ApprovalCount(userID uint) (int64, error) {
 
 // resolveUserOrg returns the user's position and department IDs if Org App is available.
 func (s *TicketService) resolveUserOrg(userID uint) (positionIDs []uint, deptIDs []uint) {
-	if s.orgUserResolver != nil {
-		if ids, err := s.orgUserResolver.GetUserPositionIDs(userID); err == nil {
+	if s.orgResolver != nil {
+		if ids, err := s.orgResolver.GetUserPositionIDs(userID); err == nil {
 			positionIDs = ids
 		}
-		if ids, err := s.orgUserResolver.GetUserDepartmentIDs(userID); err == nil {
+		if ids, err := s.orgResolver.GetUserDepartmentIDs(userID); err == nil {
 			deptIDs = ids
 		}
 	}

@@ -1,0 +1,357 @@
+import { useState, useEffect, useMemo } from "react"
+import { useTranslation } from "react-i18next"
+import { useForm } from "react-hook-form"
+import { z } from "zod"
+import { zodResolver } from "@hookform/resolvers/zod"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
+import {
+  Plus, Pencil, Trash2, FolderTree, MoreHorizontal,
+  ShieldCheck, Monitor, Globe, Container, ShieldAlert, Bell,
+  User, Lock, KeyRound, LayoutGrid, Video, Server, Database,
+  Bug, FileSearch, LineChart, BellRing, Clock, ChevronsUpDown,
+  type LucideIcon,
+} from "lucide-react"
+import { cn } from "@/lib/utils"
+import { toast } from "sonner"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import {
+  Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter,
+} from "@/components/ui/sheet"
+import {
+  Popover, PopoverContent, PopoverTrigger,
+} from "@/components/ui/popover"
+import {
+  Form, FormControl, FormField, FormItem, FormLabel, FormMessage,
+} from "@/components/ui/form"
+import {
+  type CatalogItem, type ServiceDefItem,
+  createCatalog, updateCatalog, deleteCatalog,
+} from "../api"
+
+// ─── Icon mapping ──────────────────────────────────────
+
+const iconMap: Record<string, LucideIcon> = {
+  ShieldCheck, Monitor, Globe, Container, ShieldAlert, Bell,
+  User, Lock, KeyRound, LayoutGrid, Video, Server, Database,
+  Bug, FileSearch, LineChart, BellRing, Clock, FolderTree,
+}
+
+function CatalogIcon({ name, className }: { name?: string; className?: string }) {
+  const Icon = (name && iconMap[name]) || FolderTree
+  return <Icon className={className} />
+}
+
+// ─── Schema ────────────────────────────────────────────
+
+function useCatalogSchema() {
+  const { t } = useTranslation("itsm")
+  return z.object({
+    name: z.string().min(1, t("validation.nameRequired")),
+    code: z.string().min(1, t("validation.codeRequired")),
+    parentId: z.number().nullable(),
+    sortOrder: z.number().default(0),
+    icon: z.string().optional(),
+    description: z.string().optional(),
+  })
+}
+
+type FormValues = z.infer<ReturnType<typeof useCatalogSchema>>
+
+// ─── Props ─────────────────────────────────────────────
+
+interface CatalogNavPanelProps {
+  catalogs: CatalogItem[]
+  services: ServiceDefItem[]
+  selectedCatalogId: number | null // null = "全部"
+  onSelect: (catalogId: number | null) => void
+  canCreate: boolean
+  canUpdate: boolean
+  canDelete: boolean
+}
+
+// ─── Component ─────────────────────────────────────────
+
+export function CatalogNavPanel({
+  catalogs, services, selectedCatalogId,
+  onSelect, canCreate, canUpdate, canDelete,
+}: CatalogNavPanelProps) {
+  const { t } = useTranslation(["itsm", "common"])
+  const queryClient = useQueryClient()
+  const [formOpen, setFormOpen] = useState(false)
+  const [editing, setEditing] = useState<CatalogItem | null>(null)
+  const [formParentId, setFormParentId] = useState<number | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<CatalogItem | null>(null)
+  const schema = useCatalogSchema()
+
+  const roots = useMemo(() => catalogs.filter((n) => !n.parentId), [catalogs])
+
+  // Count services per child catalog
+  const serviceCounts = useMemo(() => {
+    const counts = new Map<number, number>()
+    for (const svc of services) {
+      counts.set(svc.catalogId, (counts.get(svc.catalogId) ?? 0) + 1)
+    }
+    return counts
+  }, [services])
+
+  const totalServices = services.length
+
+  const form = useForm<FormValues>({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    resolver: zodResolver(schema as any),
+    defaultValues: { name: "", code: "", parentId: null, sortOrder: 0, icon: "", description: "" },
+  })
+
+  useEffect(() => {
+    if (formOpen) {
+      if (editing) {
+        form.reset({
+          name: editing.name,
+          code: editing.code,
+          parentId: editing.parentId,
+          sortOrder: editing.sortOrder,
+          icon: editing.icon ?? "",
+          description: editing.description,
+        })
+      } else {
+        form.reset({ name: "", code: "", parentId: formParentId, sortOrder: 0, icon: "", description: "" })
+      }
+    }
+  }, [formOpen, editing, formParentId, form])
+
+  const createMut = useMutation({
+    mutationFn: (v: FormValues) => createCatalog({
+      name: v.name, code: v.code, parentId: v.parentId, description: v.description, icon: v.icon, sortOrder: v.sortOrder,
+    }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["itsm-catalogs"] }); setFormOpen(false); toast.success(t("itsm:catalogs.createSuccess")) },
+    onError: (err) => toast.error(err.message),
+  })
+
+  const updateMut = useMutation({
+    mutationFn: (v: FormValues) => updateCatalog(editing!.id, {
+      name: v.name, code: v.code, parentId: v.parentId, description: v.description, icon: v.icon, sortOrder: v.sortOrder,
+    }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["itsm-catalogs"] }); setFormOpen(false); toast.success(t("itsm:catalogs.updateSuccess")) },
+    onError: (err) => toast.error(err.message),
+  })
+
+  const deleteMut = useMutation({
+    mutationFn: (id: number) => deleteCatalog(id),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["itsm-catalogs"] }); toast.success(t("itsm:catalogs.deleteSuccess")) },
+    onError: (err) => toast.error(err.message),
+  })
+
+  function onSubmit(v: FormValues) { if (editing) updateMut.mutate(v); else createMut.mutate(v) }
+  const isPending = createMut.isPending || updateMut.isPending
+
+  function openCreateRoot() { setEditing(null); setFormParentId(null); setFormOpen(true) }
+  function openCreateChild(parentId: number) { setEditing(null); setFormParentId(parentId); setFormOpen(true) }
+  function openEdit(item: CatalogItem) { setEditing(item); setFormOpen(true) }
+
+  return (
+    <>
+      <div className="flex w-64 shrink-0 flex-col rounded-xl border bg-card">
+        <div className="flex-1 overflow-y-auto p-2">
+          {/* "全部" */}
+          <button
+            type="button"
+            onClick={() => onSelect(null)}
+            className={cn(
+              "flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors",
+              "hover:bg-accent",
+              selectedCatalogId === null && "bg-accent font-medium",
+            )}
+          >
+            <FolderTree className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="flex-1">{t("itsm:services.allNav")}</span>
+            <Badge variant="outline" className="ml-auto text-xs tabular-nums border-transparent bg-muted/60">
+              {totalServices}
+            </Badge>
+          </button>
+
+          {/* Group sections */}
+          {roots.map((root) => (
+            <div key={root.id} className="mt-3">
+              {/* Section header */}
+              <div className="group/header flex items-center gap-1 px-3 py-1">
+                <CatalogIcon name={root.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
+                <span className="flex-1 truncate text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  {root.name}
+                </span>
+                {(canUpdate || canDelete || canCreate) && (
+                  <div className="opacity-0 group-hover/header:opacity-100 transition-opacity">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button type="button" className="h-5 w-5 inline-flex items-center justify-center rounded text-muted-foreground/50 hover:text-primary">
+                          <MoreHorizontal className="h-3.5 w-3.5" />
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-40">
+                        {canUpdate && (
+                          <DropdownMenuItem onClick={() => openEdit(root)}>
+                            <Pencil className="mr-2 h-3.5 w-3.5" />{t("itsm:catalogs.edit")}
+                          </DropdownMenuItem>
+                        )}
+                        {canCreate && (
+                          <DropdownMenuItem onClick={() => openCreateChild(root.id)}>
+                            <Plus className="mr-2 h-3.5 w-3.5" />{t("itsm:catalogs.createChild")}
+                          </DropdownMenuItem>
+                        )}
+                        {canDelete && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteTarget(root)}>
+                              <Trash2 className="mr-2 h-3.5 w-3.5" />{t("common:delete")}
+                            </DropdownMenuItem>
+                          </>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                )}
+              </div>
+
+              {/* Child items */}
+              <nav className="flex flex-col gap-0.5">
+                {root.children?.map((child) => (
+                  <button
+                    key={child.id}
+                    type="button"
+                    onClick={() => onSelect(child.id)}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-md px-3 py-1.5 pl-8 text-left text-sm transition-colors",
+                      "hover:bg-accent",
+                      selectedCatalogId === child.id && "border-l-2 border-primary bg-accent font-medium",
+                    )}
+                  >
+                    <span className="flex-1 truncate">{child.name}</span>
+                    <Badge variant="outline" className="text-[10px] tabular-nums border-transparent bg-muted/60">
+                      {serviceCounts.get(child.id) ?? 0}
+                    </Badge>
+                  </button>
+                ))}
+                {(!root.children || root.children.length === 0) && (
+                  <p className="px-3 pl-8 py-1.5 text-xs text-muted-foreground/50">{t("itsm:catalogs.childrenEmpty")}</p>
+                )}
+              </nav>
+            </div>
+          ))}
+        </div>
+
+        {/* Bottom: create root */}
+        {canCreate && (
+          <div className="shrink-0 border-t p-2">
+            <button
+              type="button"
+              onClick={openCreateRoot}
+              className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-muted-foreground/25 px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary"
+            >
+              <Plus className="h-4 w-4" />{t("itsm:catalogs.create")}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Catalog Sheet */}
+      <Sheet open={formOpen} onOpenChange={setFormOpen}>
+        <SheetContent className="sm:max-w-lg">
+          <SheetHeader>
+            <SheetTitle>{editing ? t("itsm:catalogs.edit") : t("itsm:catalogs.create")}</SheetTitle>
+            <SheetDescription className="sr-only">{editing ? t("itsm:catalogs.edit") : t("itsm:catalogs.create")}</SheetDescription>
+          </SheetHeader>
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-1 flex-col gap-5 px-4">
+              <FormField control={form.control} name="name" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t("itsm:catalogs.name")}</FormLabel>
+                  <FormControl><Input placeholder={t("itsm:catalogs.namePlaceholder")} {...field} /></FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="code" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t("itsm:catalogs.code")}</FormLabel>
+                  <FormControl><Input placeholder={t("itsm:catalogs.codePlaceholder")} {...field} /></FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="icon" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t("itsm:catalogs.icon")}</FormLabel>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <FormControl>
+                        <Button variant="outline" role="combobox" className="w-full justify-between">
+                          <span className="inline-flex items-center gap-2">
+                            <CatalogIcon name={field.value} className="h-4 w-4 text-muted-foreground" />
+                            <span className="text-muted-foreground">{field.value || t("itsm:catalogs.iconPlaceholder")}</span>
+                          </span>
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </FormControl>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-72 p-2">
+                      <div className="grid grid-cols-6 gap-1">
+                        {Object.keys(iconMap).map((iconName) => (
+                          <button
+                            key={iconName}
+                            type="button"
+                            onClick={() => field.onChange(iconName)}
+                            className={cn(
+                              "flex h-9 w-9 items-center justify-center rounded-md transition-colors",
+                              field.value === iconName ? "bg-accent text-accent-foreground" : "hover:bg-muted",
+                            )}
+                            title={iconName}
+                          >
+                            <CatalogIcon name={iconName} className="h-4 w-4" />
+                          </button>
+                        ))}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="description" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t("itsm:catalogs.description")}</FormLabel>
+                  <FormControl><Textarea rows={3} {...field} /></FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <SheetFooter>
+                <Button type="submit" size="sm" disabled={isPending}>
+                  {isPending ? t("common:saving") : editing ? t("common:save") : t("common:create")}
+                </Button>
+              </SheetFooter>
+            </form>
+          </Form>
+        </SheetContent>
+      </Sheet>
+
+      {/* Delete confirmation */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("itsm:catalogs.deleteTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("itsm:catalogs.deleteDesc", { name: deleteTarget?.name })}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel size="sm">{t("common:cancel")}</AlertDialogCancel>
+            <AlertDialogAction size="sm" onClick={() => { if (deleteTarget) { deleteMut.mutate(deleteTarget.id); setDeleteTarget(null) } }} disabled={deleteMut.isPending}>{t("itsm:catalogs.confirmDelete")}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  )
+}

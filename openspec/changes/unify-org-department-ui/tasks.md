@@ -22,6 +22,6 @@
 
 ## 4. Cleanup
 
-- [ ] 4.1 Delete `web/src/apps/org/pages/assignments/` directory (index.tsx, department-tree.tsx, member-list.tsx, add-member-sheet.tsx, types.ts)
+- [x] 4.1 Delete `web/src/apps/org/pages/assignments/` directory (index.tsx, department-tree.tsx, member-list.tsx, add-member-sheet.tsx, types.ts)
 - [x] 4.2 Move shared types (TreeNode, MemberWithPositions, etc.) from deleted `types.ts` to a shared location (e.g., `web/src/apps/org/types.ts`) before deleting assignments directory
-- [ ] 4.3 Verify all existing functionality is covered: member search, pagination, add/edit/remove members, edit positions with primary, view org info, position chips with badges — test against the spec scenarios
+- [x] 4.3 Verify all existing functionality is covered: member search, pagination, add/edit/remove members, edit positions with primary, view org info, position chips with badges — test against the spec scenarios
