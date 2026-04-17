@@ -35,3 +35,10 @@ server
 sidecar
 !cmd/server
 !cmd/sidecar
+
+.codex/
+.opencode/
+.cursor/
+.github/
+
+functionlist/
