@@ -35,4 +35,4 @@
 
 - [x] 7.1 创建 `features/vpn_dialog_validation.feature`：Background + 3 个 Scenario（跨路由冲突、同路由多选、必填缺失），标记 `@llm`
 - [x] 7.2 在 `bdd_test.go` 的 `initializeScenario` 中注册 `registerDialogValidationSteps(sc, bc)`
-- [ ] 7.3 运行 `go test ./internal/app/itsm/ -run TestBDD -tags llm -v` 验证所有 scenario green
+- [x] 7.3 运行 `go test ./internal/app/itsm/ -run TestBDD -tags llm -v` 验证所有 scenario green

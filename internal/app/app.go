@@ -27,24 +27,74 @@ type LocaleProvider interface {
 	Locales() embed.FS
 }
 
-// OrgScopeResolver is an optional interface implemented by the Org App.
-// It resolves the set of department IDs visible to a given user based on
-// their organisational assignments. DataScopeMiddleware uses this interface;
-// when the Org App is not installed the resolver is nil and no dept filtering
-// is applied (equivalent to DataScopeAll).
-type OrgScopeResolver interface {
-	// GetUserDeptScope returns the department IDs the user can access.
-	// For DataScopeDept it returns only the user's directly assigned departments.
-	// For DataScopeDeptAndSub it returns those plus all active sub-departments (BFS).
+// OrgResolver is the unified interface implemented by the Org App.
+// It provides all organisation-related queries consumed by:
+//   - DataScopeMiddleware (department scope filtering)
+//   - ITSM (multi-dimensional participant matching)
+//   - AI tools (current_user_profile enrichment, org_context queries)
+//
+// When the Org App is not installed the resolver is nil and consumers
+// handle the nil case gracefully.
+type OrgResolver interface {
+	// DataScope: department visibility
 	GetUserDeptScope(userID uint, includeSubDepts bool) ([]uint, error)
-}
-
-// OrgUserResolver is an optional interface implemented by the Org App.
-// It resolves the user's position and department IDs for multi-dimensional
-// participant matching (e.g. ITSM ticket assignment resolution).
-type OrgUserResolver interface {
+	// ITSM: participant matching by IDs
 	GetUserPositionIDs(userID uint) ([]uint, error)
 	GetUserDepartmentIDs(userID uint) ([]uint, error)
+	// AI tools: rich org info
+	GetUserPositions(userID uint) ([]OrgPosition, error)
+	GetUserDepartment(userID uint) (*OrgDepartment, error)
+	QueryContext(username, deptCode, positionCode string, includeInactive bool) (*OrgContextResult, error)
+}
+
+// OrgDepartment represents a department in the organization.
+type OrgDepartment struct {
+	ID   uint   `json:"id"`
+	Code string `json:"code"`
+	Name string `json:"name"`
+}
+
+// OrgPosition represents a position held by a user.
+type OrgPosition struct {
+	ID        uint   `json:"id"`
+	Code      string `json:"code"`
+	Name      string `json:"name"`
+	IsPrimary bool   `json:"is_primary"`
+}
+
+// OrgContextResult is the full result from an org context query.
+type OrgContextResult struct {
+	Users       []OrgContextUser       `json:"users"`
+	Departments []OrgContextDepartment `json:"departments"`
+	Positions   []OrgContextPosition   `json:"positions"`
+	Summary     string                 `json:"summary"`
+}
+
+// OrgContextUser represents a user in the org context result.
+type OrgContextUser struct {
+	ID         uint           `json:"id"`
+	Username   string         `json:"username"`
+	Email      string         `json:"email"`
+	Department *OrgDepartment `json:"department,omitempty"`
+	Positions  []OrgPosition  `json:"positions,omitempty"`
+	IsActive   bool           `json:"is_active"`
+}
+
+// OrgContextDepartment represents a department in the org context result.
+type OrgContextDepartment struct {
+	ID         uint   `json:"id"`
+	Code       string `json:"code"`
+	Name       string `json:"name"`
+	ParentCode string `json:"parent_code,omitempty"`
+	IsActive   bool   `json:"is_active"`
+}
+
+// OrgContextPosition represents a position in the org context result.
+type OrgContextPosition struct {
+	ID       uint   `json:"id"`
+	Code     string `json:"code"`
+	Name     string `json:"name"`
+	IsActive bool   `json:"is_active"`
 }
 
 var apps []App
@@ -57,8 +107,6 @@ func All() []App     { return apps }
 type AIAgentProvider interface {
 	// GetAgentConfig returns agent configuration by ID (system prompt, model info, etc).
 	GetAgentConfig(agentID uint) (*AIAgentConfig, error)
-	// GetAgentConfigByCode returns agent configuration by code (e.g. "itsm.decision").
-	GetAgentConfigByCode(code string) (*AIAgentConfig, error)
 }
 
 // AIAgentConfig holds agent configuration needed for LLM calls.

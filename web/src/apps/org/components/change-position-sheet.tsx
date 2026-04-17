@@ -18,6 +18,7 @@ import {
   Command,
   CommandEmpty,
   CommandGroup,
+  CommandInput,
   CommandItem,
   CommandList,
 } from "@/components/ui/command"
@@ -160,8 +161,9 @@ export function EditPositionsSheet({
                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
                   <Command>
+                    <CommandInput placeholder={t("org:positions.searchPlaceholder")} />
                     <CommandList>
                       <CommandEmpty>{t("common:noData")}</CommandEmpty>
                       <CommandGroup>
@@ -183,11 +185,14 @@ export function EditPositionsSheet({
                               </span>
                               {isSelected && (
                                 isPrimary ? (
-                                  <span className="text-xs font-medium text-primary">{t("org:assignments.primaryBadge")}</span>
+                                  <Badge variant="default" className="h-5 gap-0.5 px-1.5 text-[10px]">
+                                    <Star className="h-3 w-3 fill-current" />
+                                    {t("org:assignments.primaryBadge")}
+                                  </Badge>
                                 ) : (
                                   <button
                                     type="button"
-                                    className="text-xs text-muted-foreground hover:text-primary"
+                                    className="rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
                                     onClick={(e) => {
                                       e.stopPropagation()
                                       setPrimaryPositionId(pos.id)
@@ -206,18 +211,22 @@ export function EditPositionsSheet({
                 </PopoverContent>
               </Popover>
               {selectedPositionIds.length > 0 && (
-                <div className="flex flex-wrap gap-1 pt-1">
+                <div className="flex flex-wrap gap-1.5 pt-1.5">
                   {selectedPositionIds.map((posId) => {
                     const pos = positions?.find((p) => p.id === posId)
                     if (!pos) return null
                     const isPrimary = primaryPositionId === posId
                     return (
-                      <Badge key={posId} variant={isPrimary ? "default" : "secondary"} className="gap-1">
-                        {isPrimary && <Star className="h-3 w-3" />}
+                      <Badge
+                        key={posId}
+                        variant={isPrimary ? "default" : "secondary"}
+                        className="gap-1 py-0.5 pr-1"
+                      >
+                        {isPrimary && <Star className="h-3 w-3 fill-current" />}
                         {pos.name}
                         <button
                           type="button"
-                          className="ml-0.5 rounded-full hover:bg-muted"
+                          className="ml-0.5 rounded-full p-0.5 transition-colors hover:bg-background/20"
                           onClick={() => togglePosition(posId)}
                         >
                           <X className="h-3 w-3" />

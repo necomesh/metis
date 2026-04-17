@@ -387,15 +387,6 @@ func (gw *AgentGateway) GetAgentConfig(agentID uint) (*app.AIAgentConfig, error)
 	return gw.buildAgentConfig(agent)
 }
 
-// GetAgentConfigByCode returns agent configuration by code for external consumers.
-func (gw *AgentGateway) GetAgentConfigByCode(code string) (*app.AIAgentConfig, error) {
-	agent, err := gw.agentSvc.GetByCode(code)
-	if err != nil {
-		return nil, err
-	}
-	return gw.buildAgentConfig(agent)
-}
-
 func (gw *AgentGateway) buildAgentConfig(agent *Agent) (*app.AIAgentConfig, error) {
 	cfg := &app.AIAgentConfig{
 		Name:         agent.Name,

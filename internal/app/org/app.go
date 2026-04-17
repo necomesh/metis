@@ -7,6 +7,7 @@ import (
 	"gorm.io/gorm"
 
 	"metis/internal/app"
+	"metis/internal/database"
 	"metis/internal/scheduler"
 )
 
@@ -19,6 +20,15 @@ type OrgApp struct {
 }
 
 func (a *OrgApp) Name() string { return "org" }
+
+// GetToolRegistry implements app.ToolRegistryProvider.
+func (a *OrgApp) GetToolRegistry() any {
+	resolver := do.MustInvoke[app.OrgResolver](a.injector)
+	return NewOrgToolRegistry(resolver)
+}
+
+// Ensure OrgApp implements app.ToolRegistryProvider at compile time.
+var _ app.ToolRegistryProvider = (*OrgApp)(nil)
 
 func (a *OrgApp) Models() []any {
 	return []any{&Department{}, &Position{}, &UserPosition{}, &DepartmentPosition{}}
@@ -42,13 +52,11 @@ func (a *OrgApp) Providers(i do.Injector) {
 	do.Provide(i, NewDepartmentHandler)
 	do.Provide(i, NewPositionHandler)
 	do.Provide(i, NewAssignmentHandler)
-	// OrgScopeResolver — satisfies app.OrgScopeResolver interface for DataScopeMiddleware
-	do.ProvideValue[app.OrgScopeResolver](i, &OrgScopeResolverImpl{
-		svc: do.MustInvoke[*AssignmentService](i),
-	})
-	// OrgUserResolver — satisfies app.OrgUserResolver for multi-dimensional participant matching
-	do.ProvideValue[app.OrgUserResolver](i, &OrgUserResolverImpl{
+	// OrgResolver — unified interface for DataScope, ITSM, and AI tools
+	do.ProvideValue[app.OrgResolver](i, &OrgResolverImpl{
+		svc:  do.MustInvoke[*AssignmentService](i),
 		repo: do.MustInvoke[*AssignmentRepo](i),
+		db:   do.MustInvoke[*database.DB](i).DB,
 	})
 }
 

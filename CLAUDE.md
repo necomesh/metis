@@ -3,7 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 @openspec
-
+@DESIGN.md
 ## Project Overview
 
 Metis is a Go 1.26 web application with an embedded React frontend. It compiles to a single binary that serves both API and static assets. Backend uses Gin + GORM + samber/do (IOC). Frontend uses Vite 8 + React 19 + TypeScript 6 + React Compiler.

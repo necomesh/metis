@@ -433,23 +433,6 @@ func (a *aiAgentAdapter) GetAgentConfig(agentID uint) (*engine.SmartAgentConfig,
 	}, nil
 }
 
-func (a *aiAgentAdapter) GetAgentConfigByCode(code string) (*engine.SmartAgentConfig, error) {
-	cfg, err := a.provider.GetAgentConfigByCode(code)
-	if err != nil {
-		return nil, err
-	}
-	return &engine.SmartAgentConfig{
-		Name:         cfg.Name,
-		SystemPrompt: cfg.SystemPrompt,
-		Temperature:  cfg.Temperature,
-		MaxTokens:    cfg.MaxTokens,
-		Model:        cfg.Model,
-		Protocol:     cfg.Protocol,
-		BaseURL:      cfg.BaseURL,
-		APIKey:       cfg.APIKey,
-	}, nil
-}
-
 // aiKnowledgeAdapter adapts app.AIKnowledgeSearcher to engine.KnowledgeSearcher.
 type aiKnowledgeAdapter struct {
 	searcher app.AIKnowledgeSearcher

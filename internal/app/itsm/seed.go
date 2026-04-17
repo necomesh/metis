@@ -520,11 +520,11 @@ func seedServiceDefinitions(db *gorm.DB) error {
 	// Look up the decision agent for smart services
 	var decisionAgentID *uint
 	var agentRow struct{ ID uint }
-	if err := db.Table("ai_agents").Where("name = ?", "ITSM 流程决策").Select("id").First(&agentRow).Error; err == nil {
+	if err := db.Table("ai_agents").Where("code = ?", "itsm.decision").Select("id").First(&agentRow).Error; err == nil {
 		decisionAgentID = &agentRow.ID
 		slog.Info("seed: found decision agent for smart services", "agentId", agentRow.ID)
 	} else {
-		slog.Warn("seed: decision agent 'ITSM 流程决策' not found, smart services will have no agent")
+		slog.Warn("seed: decision agent (code=itsm.decision) not found, smart services will have no agent")
 	}
 
 	type serviceSeed struct {

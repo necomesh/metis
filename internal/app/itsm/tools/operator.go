@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"gorm.io/gorm"
 
@@ -406,17 +407,48 @@ func (o *Operator) nextTicketCode() (string, error) {
 }
 
 func tokenize(s string) []string {
-	var tokens []string
 	for _, sep := range []string{" ", "，", ",", "、", "·", "/", "\\", "（", "）", "(", ")"} {
 		s = strings.ReplaceAll(s, sep, " ")
 	}
+	var tokens []string
 	for _, t := range strings.Fields(s) {
 		t = strings.TrimSpace(t)
-		if len(t) > 0 {
-			tokens = append(tokens, strings.ToLower(t))
+		if len(t) == 0 {
+			continue
+		}
+		lower := strings.ToLower(t)
+		tokens = append(tokens, lower)
+		// Split on CJK/Latin boundaries so "申请VPN开通" → ["申请","vpn","开通"].
+		if subs := splitCJKBoundaries(lower); len(subs) > 1 {
+			tokens = append(tokens, subs...)
 		}
 	}
 	return tokens
+}
+
+// splitCJKBoundaries splits a string at transitions between CJK and non-CJK characters.
+func splitCJKBoundaries(s string) []string {
+	runes := []rune(s)
+	if len(runes) <= 1 {
+		return nil
+	}
+	var parts []string
+	start := 0
+	for i := 1; i < len(runes); i++ {
+		if isCJK(runes[i-1]) != isCJK(runes[i]) {
+			parts = append(parts, string(runes[start:i]))
+			start = i
+		}
+	}
+	parts = append(parts, string(runes[start:]))
+	if len(parts) <= 1 {
+		return nil
+	}
+	return parts
+}
+
+func isCJK(r rune) bool {
+	return unicode.Is(unicode.Han, r)
 }
 
 func computeScore(queryLower string, keywords []string, name, desc string) float64 {

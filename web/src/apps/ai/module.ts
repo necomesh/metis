@@ -15,6 +15,10 @@ registerApp({
           index: true,
           lazy: () => import("./pages/providers/index"),
         },
+        {
+          path: ":id",
+          lazy: () => import("./pages/providers/[id]"),
+        },
       ],
     },
     {

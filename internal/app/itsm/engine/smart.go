@@ -16,8 +16,6 @@ import (
 type AgentProvider interface {
 	// GetAgentConfig returns the agent's configuration (system prompt, model info, temperature).
 	GetAgentConfig(agentID uint) (*SmartAgentConfig, error)
-	// GetAgentConfigByCode returns agent configuration by code (e.g. "itsm.decision").
-	GetAgentConfigByCode(code string) (*SmartAgentConfig, error)
 }
 
 // SmartAgentConfig holds the agent configuration needed for LLM calls.
