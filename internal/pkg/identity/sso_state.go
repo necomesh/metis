@@ -21,12 +21,20 @@ type SSOStateMeta struct {
 type SSOStateManager struct {
 	states sync.Map
 	done   chan struct{}
+	nowFn  func() time.Time
 }
 
 func NewSSOStateManager() *SSOStateManager {
 	sm := &SSOStateManager{done: make(chan struct{})}
 	go sm.cleanup()
 	return sm
+}
+
+func (sm *SSOStateManager) now() time.Time {
+	if sm.nowFn != nil {
+		return sm.nowFn()
+	}
+	return time.Now()
 }
 
 // Generate creates a state token storing source ID and optional PKCE verifier.
@@ -39,7 +47,7 @@ func (sm *SSOStateManager) Generate(sourceID uint, codeVerifier string) (string,
 	sm.states.Store(state, &SSOStateMeta{
 		SourceID:     sourceID,
 		CodeVerifier: codeVerifier,
-		CreatedAt:    time.Now(),
+		CreatedAt:    sm.now(),
 	})
 	return state, nil
 }
@@ -51,7 +59,7 @@ func (sm *SSOStateManager) Validate(state string) (*SSOStateMeta, error) {
 		return nil, fmt.Errorf("invalid or expired state")
 	}
 	meta := val.(*SSOStateMeta)
-	if time.Since(meta.CreatedAt) > ssoStateTTL {
+	if sm.now().Sub(meta.CreatedAt) > ssoStateTTL {
 		return nil, fmt.Errorf("state expired")
 	}
 	return meta, nil
@@ -65,7 +73,7 @@ func (sm *SSOStateManager) cleanup() {
 		case <-sm.done:
 			return
 		case <-ticker.C:
-			now := time.Now()
+			now := sm.now()
 			sm.states.Range(func(key, value any) bool {
 				meta := value.(*SSOStateMeta)
 				if now.Sub(meta.CreatedAt) > ssoStateTTL {

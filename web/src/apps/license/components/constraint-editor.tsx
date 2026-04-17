@@ -131,7 +131,7 @@ export function ConstraintEditor({ productId, schema, canEdit }: ConstraintEdito
 
       {modules.map((mod, moduleIndex) => (
         <ModuleCard
-          key={moduleIndex}
+          key={mod.key}
           module={mod}
           disabled={!canEdit}
           onUpdate={(updated) => handleUpdateModule(moduleIndex, updated)}
@@ -265,7 +265,7 @@ function ModuleCard({
             <div className="space-y-1 pt-3">
               {mod.features.map((feature, featureIndex) => (
                 <FeatureRow
-                  key={featureIndex}
+                  key={feature.key}
                   feature={feature}
                   disabled={disabled}
                   onUpdate={(f) => onUpdateFeature(featureIndex, f)}
@@ -347,7 +347,7 @@ function FeatureRow({
           {t(`constraints.${feature.type}` as const) ?? feature.type}
         </Badge>
         <span className="flex-1 truncate text-xs text-muted-foreground">
-          {featureSummary(feature, t)}
+          {featureSummary(feature, t as (key: string, opts?: object) => string)}
         </span>
         {!disabled && (
           <>

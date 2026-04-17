@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"log/slog"
 	"net/http"
 	"os"
@@ -32,8 +33,13 @@ import (
 )
 
 func main() {
-	// 1. Try to load config.yml
-	cfg, err := config.Load("config.yml")
+	configPath := flag.String("config", "config.yml", "path to config file")
+	host := flag.String("host", "0.0.0.0", "server host")
+	port := flag.String("port", "8000", "server port")
+	flag.Parse()
+
+	// 1. Try to load config
+	cfg, err := config.Load(*configPath)
 	if err != nil && !errors.Is(err, config.ErrConfigNotFound) {
 		slog.Error("failed to load config", "error", err)
 		os.Exit(1)
@@ -41,6 +47,7 @@ func main() {
 
 	// 2. IOC container
 	injector := do.New()
+	do.ProvideNamedValue(injector, "configPath", *configPath)
 
 	// 3. Check installation state and connect database
 	var db *database.DB
@@ -78,7 +85,7 @@ func main() {
 
 		// Also register install status on the same route used by normal mode
 		// so the frontend can always check /api/v1/install/status
-		startServer(r, "8080", injector, func(context.Context) {})
+		startServer(r, *host, *port, injector, func(context.Context) {})
 	} else {
 		// ──────────────────────────────────
 		//  NORMAL MODE
@@ -218,24 +225,29 @@ func main() {
 
 		handler.RegisterStatic(r)
 
-		// Read port from DB
-		port := "8080"
+		// Read port from DB, CLI flag overrides DB config
+		serverPort := *port
 		if portCfg, err := sysConfigRepo.Get("server_port"); err == nil && portCfg.Value != "" {
-			port = portCfg.Value
+			serverPort = portCfg.Value
+		}
+		// CLI port flag overrides DB config if explicitly set
+		if p := flag.Lookup("port"); p != nil && p.Value.String() != "8000" {
+			serverPort = *port
 		}
 
-		startServer(r, port, injector, otelShutdown)
+		startServer(r, *host, serverPort, injector, otelShutdown)
 	}
 }
 
-func startServer(r *gin.Engine, port string, injector do.Injector, otelShutdown func(context.Context)) {
+func startServer(r *gin.Engine, host, port string, injector do.Injector, otelShutdown func(context.Context)) {
+	addr := host + ":" + port
 	srv := &http.Server{
-		Addr:    ":" + port,
+		Addr:    addr,
 		Handler: r,
 	}
 
 	go func() {
-		slog.Info("server starting", "port", port)
+		slog.Info("server starting", "addr", addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("server error", "error", err)
 			os.Exit(1)

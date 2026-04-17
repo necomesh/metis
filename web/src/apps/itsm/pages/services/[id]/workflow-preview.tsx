@@ -10,7 +10,8 @@ import "@xyflow/react/dist/style.css"
 import { X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { nodeTypes } from "../../../components/workflow/custom-nodes"
+import { nodeTypes } from "../../../components/workflow/nodes"
+import { edgeTypes } from "../../../components/workflow/custom-edges"
 import { type WFNodeData, type NodeType, type Participant, NODE_COLORS } from "../../../components/workflow/types"
 
 interface WorkflowPreviewProps {
@@ -20,10 +21,7 @@ interface WorkflowPreviewProps {
 /** Format a participant for display */
 function formatParticipant(p: Participant): string {
   if (p.type === "position_department") {
-    const parts = [
-      (p as Record<string, unknown>).department_code,
-      (p as Record<string, unknown>).position_code,
-    ].filter(Boolean)
+    const parts = [p.department_code, p.position_code].filter(Boolean)
     if (parts.length > 0) return parts.join(" / ")
   }
   if (p.name) return p.name
@@ -42,6 +40,13 @@ function participantTypeLabel(type: string, t: (k: string) => string): string {
     requester_manager: t("workflow.participant.requesterManager"),
   }
   return map[type] ?? type
+}
+
+/** Parse formSchema fields for display */
+function parsePreviewFields(schema: unknown): Array<{ key: string; type: string; label: string; options?: string[] }> {
+  if (!schema || typeof schema !== "object") return []
+  const s = schema as { fields?: Array<{ key: string; type: string; label: string; options?: string[] }> }
+  return Array.isArray(s.fields) ? s.fields : []
 }
 
 export default function WorkflowPreview({ workflowJson }: WorkflowPreviewProps) {
@@ -66,12 +71,11 @@ export default function WorkflowPreview({ workflowJson }: WorkflowPreviewProps) 
     }>
 
     const nodes = rawNodes.map((n) => {
-      // LLM puts node type at top-level `type`, bridge it to `data.nodeType` for our custom node
       const rawData = (n.data ?? {}) as Record<string, unknown>
       const nodeType = (rawData.nodeType ?? n.type ?? "process") as NodeType
       return {
         id: n.id,
-        type: "workflow" as const,
+        type: nodeType,
         position: n.position,
         data: { ...rawData, nodeType } as unknown as WFNodeData,
         selectable: true as const,
@@ -79,20 +83,15 @@ export default function WorkflowPreview({ workflowJson }: WorkflowPreviewProps) 
       }
     }) as unknown as Node[]
 
-    const edges = rawEdges.map((e) => {
-      const edgeColor = e.data?.outcome === "rejected" ? "#ef4444" : "#6b7280"
-      return {
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        type: "smoothstep",
-        markerEnd: { type: MarkerType.ArrowClosed, color: edgeColor },
-        label: e.data?.outcome ? String(e.data.outcome) : undefined,
-        data: e.data,
-        style: { stroke: edgeColor, strokeWidth: 1.5 },
-        labelStyle: { fill: edgeColor, fontSize: 11 },
-      }
-    })
+    const edges = rawEdges.map((e) => ({
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      type: "workflow",
+      markerEnd: { type: MarkerType.ArrowClosed },
+      data: e.data,
+      style: { strokeWidth: 1.5 },
+    }))
 
     return { nodes, edges }
   }, [workflowJson])
@@ -107,7 +106,8 @@ export default function WorkflowPreview({ workflowJson }: WorkflowPreviewProps) 
         <ReactFlow
           nodes={nodes}
           edges={edges}
-          nodeTypes={nodeTypes}
+          nodeTypes={nodeTypes as any}
+          edgeTypes={edgeTypes}
           nodesDraggable={false}
           nodesConnectable={false}
           elementsSelectable={true}
@@ -188,14 +188,29 @@ export default function WorkflowPreview({ workflowJson }: WorkflowPreviewProps) 
               </div>
             )}
 
-            {selectedNode.data.formSchema != null && (
-              <div>
-                <span className="text-muted-foreground">{t("services.formSchema")}:</span>
-                <pre className="mt-1 max-h-40 overflow-auto rounded bg-muted p-2 text-xs">
-                  {JSON.stringify(selectedNode.data.formSchema, null, 2)}
-                </pre>
-              </div>
-            )}
+            {selectedNode.data.formSchema != null && (() => {
+              const fields = parsePreviewFields(selectedNode.data.formSchema)
+              return fields.length > 0 ? (
+                <div>
+                  <span className="text-muted-foreground">{t("workflow.prop.formFields")} ({fields.length}):</span>
+                  <div className="mt-1 rounded border p-1.5 space-y-0.5">
+                    {fields.map((f) => (
+                      <div key={f.key} className="flex items-center justify-between text-xs">
+                        <span>{f.label || f.key}</span>
+                        <span className="text-muted-foreground">{f.type}{f.options ? ` (${f.options.length})` : ""}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <span className="text-muted-foreground">{t("services.formSchema")}:</span>
+                  <pre className="mt-1 max-h-40 overflow-auto rounded bg-muted p-2 text-xs">
+                    {JSON.stringify(selectedNode.data.formSchema, null, 2)}
+                  </pre>
+                </div>
+              )
+            })()}
           </div>
         </div>
       )}

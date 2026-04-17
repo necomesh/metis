@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -70,7 +71,7 @@ func (e *executor) run(exec *model.TaskExecution) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	slog.Info("scheduler: executing task", "task", exec.TaskName, "trigger", exec.Trigger, "execId", exec.ID)
+	slog.Debug("scheduler: executing task", "task", exec.TaskName, "trigger", exec.Trigger, "execId", exec.ID)
 
 	err := taskDef.Handler(ctx, json.RawMessage(exec.Payload))
 
@@ -78,7 +79,13 @@ func (e *executor) run(exec *model.TaskExecution) {
 	exec.FinishedAt = &now
 
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(err, ErrNotReady) {
+			// Task is not ready yet — re-enqueue as pending for the next poll cycle.
+			// Do not count as a failure or increment retry count.
+			exec.Status = ExecPending
+			exec.FinishedAt = nil
+			slog.Debug("scheduler: task not ready, re-enqueuing", "task", exec.TaskName, "execId", exec.ID)
+		} else if ctx.Err() == context.DeadlineExceeded {
 			exec.Status = ExecTimeout
 			exec.Error = "execution timed out"
 		} else {
@@ -100,16 +107,18 @@ func (e *executor) run(exec *model.TaskExecution) {
 				if enqErr := e.store.Enqueue(context.Background(), retry); enqErr != nil {
 					slog.Error("scheduler: failed to enqueue retry", "task", exec.TaskName, "error", enqErr)
 				} else {
-					slog.Info("scheduler: retrying task", "task", exec.TaskName, "retry", retry.RetryCount)
+					slog.Debug("scheduler: retrying task", "task", exec.TaskName, "retry", retry.RetryCount)
 				}
 			}
 			exec.Status = ExecFailed
 			exec.Error = err.Error()
 		}
-		slog.Error("scheduler: task failed", "task", exec.TaskName, "status", exec.Status, "error", exec.Error)
+		if !errors.Is(err, ErrNotReady) {
+			slog.Error("scheduler: task failed", "task", exec.TaskName, "status", exec.Status, "error", exec.Error)
+		}
 	} else {
 		exec.Status = ExecCompleted
-		slog.Info("scheduler: task completed", "task", exec.TaskName, "execId", exec.ID)
+		slog.Debug("scheduler: task completed", "task", exec.TaskName, "execId", exec.ID)
 	}
 
 	if updErr := e.store.UpdateExecution(context.Background(), exec); updErr != nil {

@@ -8,17 +8,58 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	gooidc "github.com/coreos/go-oidc/v3/oidc"
+	"golang.org/x/oauth2"
 
 	"metis/internal/model"
 	"metis/internal/pkg/identity"
 	"metis/internal/service"
 )
 
+// oidcProvider is the subset of identity.OIDCProvider used by SSOHandler.
+type oidcProvider interface {
+	AuthURL(state string, pkce *identity.PKCEParams) string
+	ExchangeCode(ctx context.Context, code string, codeVerifier string) (*oauth2.Token, error)
+	VerifyIDToken(ctx context.Context, token *oauth2.Token) (*gooidc.IDToken, error)
+}
+
 // SSOHandler handles public SSO endpoints (check-domain, initiate, callback).
 type SSOHandler struct {
-	svc      *service.IdentitySourceService
-	authSvc  *service.AuthService
-	stateMgr *identity.SSOStateManager
+	svc                   *service.IdentitySourceService
+	authSvc               *service.AuthService
+	stateMgr              *identity.SSOStateManager
+	getOIDCProvider       func(ctx context.Context, sourceID uint, cfg *model.OIDCConfig) (oidcProvider, error)
+	extractClaims         func(idToken *gooidc.IDToken) (*identity.OIDCClaims, error)
+	provisionExternalUser func(params service.ExternalUserParams) (*model.User, error)
+	generateTokenPair     func(user *model.User, ip, ua string) (*service.TokenPair, error)
+}
+
+func (h *SSOHandler) resolveOIDCProvider(ctx context.Context, sourceID uint, cfg *model.OIDCConfig) (oidcProvider, error) {
+	if h.getOIDCProvider != nil {
+		return h.getOIDCProvider(ctx, sourceID, cfg)
+	}
+	return identity.GetOIDCProvider(ctx, sourceID, cfg)
+}
+
+func (h *SSOHandler) resolveExtractClaims(idToken *gooidc.IDToken) (*identity.OIDCClaims, error) {
+	if h.extractClaims != nil {
+		return h.extractClaims(idToken)
+	}
+	return identity.ExtractClaims(idToken)
+}
+
+func (h *SSOHandler) resolveProvisionExternalUser(params service.ExternalUserParams) (*model.User, error) {
+	if h.provisionExternalUser != nil {
+		return h.provisionExternalUser(params)
+	}
+	return h.authSvc.ProvisionExternalUser(params)
+}
+
+func (h *SSOHandler) resolveGenerateTokenPair(user *model.User, ip, ua string) (*service.TokenPair, error) {
+	if h.generateTokenPair != nil {
+		return h.generateTokenPair(user, ip, ua)
+	}
+	return h.authSvc.GenerateTokenPair(user, ip, ua)
 }
 
 // CheckDomain checks if an email domain is bound to an identity source.
@@ -86,7 +127,7 @@ func (h *SSOHandler) InitiateSSO(c *gin.Context) {
 	}
 
 	ctx := context.Background()
-	provider, err := identity.GetOIDCProvider(ctx, source.ID, oidcCfg)
+	provider, err := h.resolveOIDCProvider(ctx, source.ID, oidcCfg)
 	if err != nil {
 		Fail(c, http.StatusBadGateway, "OIDC discovery failed: "+err.Error())
 		return
@@ -156,7 +197,7 @@ func (h *SSOHandler) SSOCallback(c *gin.Context) {
 
 	ctx := context.Background()
 
-	provider, err := identity.GetOIDCProvider(ctx, source.ID, oidcCfg)
+	provider, err := h.resolveOIDCProvider(ctx, source.ID, oidcCfg)
 	if err != nil {
 		Fail(c, http.StatusBadGateway, "OIDC discovery failed")
 		return
@@ -174,21 +215,21 @@ func (h *SSOHandler) SSOCallback(c *gin.Context) {
 		return
 	}
 
-	claims, err := identity.ExtractClaims(idToken)
+	claims, err := h.resolveExtractClaims(idToken)
 	if err != nil {
 		Fail(c, http.StatusInternalServerError, "failed to extract claims")
 		return
 	}
 
 	providerName := fmt.Sprintf("oidc_%d", source.ID)
-	user, err := h.authSvc.ProvisionExternalUser(service.ExternalUserParams{
-		Provider:         providerName,
-		ExternalID:       claims.Sub,
-		Email:            claims.Email,
-		DisplayName:      claims.Name,
-		AvatarURL:        claims.Picture,
-		DefaultRoleID:    source.DefaultRoleID,
-		ConflictStrategy: source.ConflictStrategy,
+	user, err := h.resolveProvisionExternalUser(service.ExternalUserParams{
+		Provider:          providerName,
+		ExternalID:        claims.Sub,
+		Email:             claims.Email,
+		DisplayName:       claims.Name,
+		AvatarURL:         claims.Picture,
+		DefaultRoleID:     source.DefaultRoleID,
+		ConflictStrategy:  source.ConflictStrategy,
 		PreferredUsername: claims.Name,
 	})
 	if err != nil {
@@ -203,7 +244,7 @@ func (h *SSOHandler) SSOCallback(c *gin.Context) {
 
 	ip := c.ClientIP()
 	ua := c.GetHeader("User-Agent")
-	tokenPair, err := h.authSvc.GenerateTokenPair(user, ip, ua)
+	tokenPair, err := h.resolveGenerateTokenPair(user, ip, ua)
 	if err != nil {
 		Fail(c, http.StatusInternalServerError, "token generation failed")
 		return

@@ -249,6 +249,7 @@
       "basic": "Basic Info",
       "modelConfig": "Model Config",
       "execution": "Execution Config",
+      "prompts": "Prompts",
       "instructions": "Instructions"
     },
     "searchPlaceholder": "Search agent name",
@@ -273,6 +274,8 @@
       "react": "ReAct",
       "plan_and_execute": "Plan & Execute"
     },
+    "provider": "Provider",
+    "selectProvider": "Select provider",
     "model": "Model",
     "selectModel": "Select model",
     "systemPrompt": "System Prompt",
@@ -313,10 +316,12 @@
     "fromScratch": "From Scratch",
     "tabs": {
       "overview": "Overview",
+      "config": "Configuration",
       "bindings": "Capabilities",
       "sessions": "Sessions",
       "settings": "Settings"
     },
+    "noItems": "No items available",
     "empty": "No agents",
     "emptyHint": "Click \"New Agent\" to create your first AI agent",
     "createSuccess": "Agent created successfully",

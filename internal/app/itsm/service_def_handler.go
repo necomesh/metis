@@ -65,6 +65,8 @@ func (h *ServiceDefHandler) Create(c *gin.Context) {
 		switch {
 		case errors.Is(err, ErrServiceCodeExists):
 			handler.Fail(c, http.StatusConflict, err.Error())
+		case errors.Is(err, ErrCatalogNotFound), errors.Is(err, ErrServiceEngineMismatch), errors.Is(err, ErrAgentNotAvailable):
+			handler.Fail(c, http.StatusBadRequest, err.Error())
 		case errors.Is(err, ErrWorkflowValidation):
 			handler.Fail(c, http.StatusBadRequest, err.Error())
 		default:
@@ -91,6 +93,11 @@ func (h *ServiceDefHandler) List(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
 
+	var engineType *string
+	if et := c.Query("engineType"); et != "" {
+		engineType = &et
+	}
+
 	var isActive *bool
 	if v := c.Query("isActive"); v != "" {
 		b := v == "true"
@@ -98,11 +105,12 @@ func (h *ServiceDefHandler) List(c *gin.Context) {
 	}
 
 	items, total, err := h.svc.List(ServiceDefListParams{
-		CatalogID: catalogID,
-		Keyword:   c.Query("keyword"),
-		IsActive:  isActive,
-		Page:      page,
-		PageSize:  pageSize,
+		CatalogID:  catalogID,
+		EngineType: engineType,
+		Keyword:    c.Query("keyword"),
+		IsActive:   isActive,
+		Page:       page,
+		PageSize:   pageSize,
 	})
 	if err != nil {
 		handler.Fail(c, http.StatusInternalServerError, err.Error())
@@ -216,6 +224,8 @@ func (h *ServiceDefHandler) Update(c *gin.Context) {
 			handler.Fail(c, http.StatusNotFound, err.Error())
 		case errors.Is(err, ErrServiceCodeExists):
 			handler.Fail(c, http.StatusConflict, err.Error())
+		case errors.Is(err, ErrCatalogNotFound), errors.Is(err, ErrServiceEngineMismatch), errors.Is(err, ErrAgentNotAvailable):
+			handler.Fail(c, http.StatusBadRequest, err.Error())
 		case errors.Is(err, ErrWorkflowValidation):
 			handler.Fail(c, http.StatusBadRequest, err.Error())
 		default:

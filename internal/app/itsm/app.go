@@ -3,6 +3,7 @@ package itsm
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 
 	"github.com/casbin/casbin/v2"
@@ -12,6 +13,7 @@ import (
 
 	"metis/internal/app"
 	"metis/internal/app/itsm/engine"
+	"metis/internal/app/itsm/tools"
 	"metis/internal/database"
 	"metis/internal/model"
 	"metis/internal/repository"
@@ -28,6 +30,11 @@ type ITSMApp struct {
 }
 
 func (a *ITSMApp) Name() string { return "itsm" }
+
+// GetToolRegistry implements app.ToolRegistryProvider.
+func (a *ITSMApp) GetToolRegistry() any {
+	return do.MustInvoke[*tools.Registry](a.injector)
+}
 
 func (a *ITSMApp) Models() []any {
 	return []any{
@@ -74,6 +81,7 @@ func (a *ITSMApp) Providers(i do.Injector) {
 	do.Provide(i, NewTicketRepo)
 	do.Provide(i, NewTimelineRepo)
 	do.Provide(i, NewVariableRepository)
+	do.Provide(i, NewTokenRepository)
 
 	// Engine components
 	do.Provide(i, func(i do.Injector) (*engine.ParticipantResolver, error) {
@@ -89,7 +97,13 @@ func (a *ITSMApp) Providers(i do.Injector) {
 		db := do.MustInvoke[*database.DB](i)
 		// Create a TaskSubmitter that uses the scheduler engine
 		submitter := &schedulerSubmitter{db: db.DB}
-		return engine.NewClassicEngine(resolver, submitter), nil
+		// Try to resolve NotificationSender (optional — nil if MessageChannel service not available)
+		var notifier engine.NotificationSender
+		if mcSvc, err := do.Invoke[*service.MessageChannelService](i); err == nil && mcSvc != nil {
+			notifier = &notificationAdapter{svc: mcSvc}
+			slog.Info("ITSM ClassicEngine: notification sender available")
+		}
+		return engine.NewClassicEngine(resolver, submitter, notifier), nil
 	})
 
 	// SmartEngine — optional AI App dependencies
@@ -118,7 +132,10 @@ func (a *ITSMApp) Providers(i do.Injector) {
 		userSvc := do.MustInvoke[*service.UserService](i)
 		userProvider := &userProviderAdapter{userSvc: userSvc}
 
-		return engine.NewSmartEngine(agentProvider, knowledgeSearcher, userProvider, submitter), nil
+		// Participant resolver for tool-based participant resolution
+		resolver := do.MustInvoke[*engine.ParticipantResolver](i)
+
+		return engine.NewSmartEngine(agentProvider, knowledgeSearcher, userProvider, resolver, submitter), nil
 	})
 
 	// Services
@@ -151,6 +168,23 @@ func (a *ITSMApp) Providers(i do.Injector) {
 	do.Provide(i, NewEngineConfigHandler)
 	do.Provide(i, NewWorkflowGenerateHandler)
 	do.Provide(i, NewVariableHandler)
+	do.Provide(i, NewTokenHandler)
+
+	// ITSM tool chain (Operator, StateStore, Registry)
+	do.Provide(i, func(i do.Injector) (*tools.Operator, error) {
+		db := do.MustInvoke[*database.DB](i)
+		resolver := do.MustInvoke[*engine.ParticipantResolver](i)
+		return tools.NewOperator(db.DB, resolver), nil
+	})
+	do.Provide(i, func(i do.Injector) (*tools.SessionStateStore, error) {
+		db := do.MustInvoke[*database.DB](i)
+		return tools.NewSessionStateStore(db.DB), nil
+	})
+	do.Provide(i, func(i do.Injector) (*tools.Registry, error) {
+		op := do.MustInvoke[*tools.Operator](i)
+		store := do.MustInvoke[*tools.SessionStateStore](i)
+		return tools.NewRegistry(op, store), nil
+	})
 }
 
 func (a *ITSMApp) Routes(api *gin.RouterGroup) {
@@ -166,6 +200,7 @@ func (a *ITSMApp) Routes(api *gin.RouterGroup) {
 	engineConfigH := do.MustInvoke[*EngineConfigHandler](a.injector)
 	workflowGenH := do.MustInvoke[*WorkflowGenerateHandler](a.injector)
 	variableH := do.MustInvoke[*VariableHandler](a.injector)
+	tokenH := do.MustInvoke[*TokenHandler](a.injector)
 
 	g := api.Group("/itsm")
 	{
@@ -244,6 +279,9 @@ func (a *ITSMApp) Routes(api *gin.RouterGroup) {
 		g.GET("/tickets/:id/activities", ticketH.Activities)
 		// Process variables
 		g.GET("/tickets/:id/variables", variableH.List)
+		g.PUT("/tickets/:id/variables/:key", variableH.Update)
+		// Execution tokens
+		g.GET("/tickets/:id/tokens", tokenH.List)
 		// Phase 3: Smart engine override routes
 		g.POST("/tickets/:id/activities/:aid/confirm", ticketH.ConfirmActivity)
 		g.POST("/tickets/:id/activities/:aid/reject", ticketH.RejectActivity)
@@ -314,11 +352,33 @@ func (s *schedulerSubmitter) SubmitTask(name string, payload json.RawMessage) er
 // Ensure schedulerSubmitter implements engine.TaskSubmitter at compile time
 var _ engine.TaskSubmitter = (*schedulerSubmitter)(nil)
 
+// notificationAdapter adapts service.MessageChannelService to engine.NotificationSender.
+type notificationAdapter struct {
+	svc     *service.MessageChannelService
+}
+
+func (n *notificationAdapter) Send(ctx context.Context, channelID uint, subject, body string, recipientIDs []uint) error {
+	// For now, convert user IDs to string placeholders for email recipients.
+	// In a full implementation, you'd look up user emails from the user service.
+	// The channel driver (email) expects actual email addresses in the "to" field.
+	var to []string
+	for _, uid := range recipientIDs {
+		// Use user ID as placeholder — the channel service will need user email resolution
+		to = append(to, fmt.Sprintf("user:%d", uid))
+	}
+	return n.svc.SendTest(channelID, to, subject, body)
+}
+
+var _ engine.NotificationSender = (*notificationAdapter)(nil)
+
 // Ensure ClassicEngine implements engine.WorkflowEngine at compile time
 var _ engine.WorkflowEngine = (*engine.ClassicEngine)(nil)
 
 // Ensure SmartEngine implements engine.WorkflowEngine at compile time
 var _ engine.WorkflowEngine = (*engine.SmartEngine)(nil)
+
+// Ensure ITSMApp implements app.ToolRegistryProvider at compile time
+var _ app.ToolRegistryProvider = (*ITSMApp)(nil)
 
 // Placeholder for background context usage
 var _ = context.Background

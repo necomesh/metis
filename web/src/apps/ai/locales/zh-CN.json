@@ -249,6 +249,7 @@
       "basic": "基本信息",
       "modelConfig": "模型配置",
       "execution": "执行配置",
+      "prompts": "提示词",
       "instructions": "附加指令"
     },
     "searchPlaceholder": "搜索智能体名称",
@@ -273,6 +274,8 @@
       "react": "ReAct",
       "plan_and_execute": "计划执行"
     },
+    "provider": "供应商",
+    "selectProvider": "选择供应商",
     "model": "模型",
     "selectModel": "选择模型",
     "systemPrompt": "系统提示词",
@@ -313,10 +316,12 @@
     "fromScratch": "从零创建",
     "tabs": {
       "overview": "概览",
+      "config": "配置",
       "bindings": "能力绑定",
       "sessions": "会话记录",
       "settings": "设置"
     },
+    "noItems": "暂无可用项",
     "empty": "暂无智能体",
     "emptyHint": "点击「新建智能体」创建第一个 AI 智能体",
     "createSuccess": "智能体创建成功",
