@@ -66,7 +66,6 @@ func generateVPNWorkflow(cfg llmConfig) (json.RawMessage, error) {
 
 	svc := &WorkflowGenerateService{}
 	maxRetries := 3
-	temp := float32(0.3)
 
 	var lastErrors []engine.ValidationError
 
@@ -80,8 +79,7 @@ func generateVPNWorkflow(cfg llmConfig) (json.RawMessage, error) {
 				{Role: llm.RoleSystem, Content: itsmGeneratorSystemPrompt},
 				{Role: llm.RoleUser, Content: userMsg},
 			},
-			Temperature: &temp,
-			MaxTokens:   4096,
+			MaxTokens: 4096,
 		})
 		cancel()
 

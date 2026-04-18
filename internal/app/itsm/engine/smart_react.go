@@ -69,7 +69,11 @@ func (e *SmartEngine) agenticDecision(ctx context.Context, tx *gorm.DB, ticketID
 		{Role: llm.RoleUser, Content: userMsg},
 	}
 
-	temp := float32(agentCfg.Temperature)
+	var tempPtr *float32
+	if agentCfg.Temperature != 0 {
+		temp := float32(agentCfg.Temperature)
+		tempPtr = &temp
+	}
 	maxTokens := agentCfg.MaxTokens
 	if maxTokens <= 0 {
 		maxTokens = 4096
@@ -82,7 +86,7 @@ func (e *SmartEngine) agenticDecision(ctx context.Context, tx *gorm.DB, ticketID
 			Messages:    messages,
 			Tools:       toolDefs,
 			MaxTokens:   maxTokens,
-			Temperature: &temp,
+			Temperature: tempPtr,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("llm chat (turn %d): %w", turn, err)
@@ -226,7 +230,7 @@ const agenticToolGuidance = `## 工具使用指引
 
 你可以通过以下工具按需查询信息来辅助决策：
 
-- **decision.ticket_context** — 获取工单完整上下文（表单数据、SLA、活动历史、当前指派）
+- **decision.ticket_context** — 获取工单完整上下文（表单数据、SLA、活动历史、当前指派、已执行动作）
 - **decision.knowledge_search** — 搜索服务关联知识库
 - **decision.resolve_participant** — 按类型解析参与人（user/position/department/position_department/requester_manager）
 - **decision.user_workload** — 查询用户当前工单负载
@@ -236,11 +240,17 @@ const agenticToolGuidance = `## 工具使用指引
 
 ### 推荐推理步骤
 
-1. 先用 decision.ticket_context 了解完整上下文
-2. 如需查阅处理规范，使用 decision.knowledge_search
-3. 确定下一步类型后，用 decision.resolve_participant 解析指派人
-4. 可选：用 decision.user_workload 做负载均衡，用 decision.similar_history 参考历史模式
-5. 最终输出决策 JSON（不调用任何工具）`
+1. 先用 decision.ticket_context 了解完整上下文（注意 activity_history 和 executed_actions）
+2. 用 decision.list_actions 查看是否有可用的自动化动作
+3. 如需查阅处理规范，使用 decision.knowledge_search
+4. 如果协作规范要求执行某个动作（如预检、放行等），选择 next_step_type 为 "action" 并填写对应的 action_id
+5. 如果需要人工审批，用 decision.resolve_participant 解析指派人
+6. 可选：用 decision.user_workload 做负载均衡，用 decision.similar_history 参考历史模式
+7. 最终输出决策 JSON（不调用任何工具）
+
+### 完成判断
+
+当 decision.ticket_context 返回的 all_actions_completed 为 true，表示服务配置的所有自动化动作均已成功执行。此时请对照协作规范判断流程是否应当结束——如果规范说"动作完成后结束"，你必须输出 next_step_type 为 "complete"，不要再创建新活动。`
 
 const agenticOutputFormat = "## 输出要求\n\n" +
 	"当你完成信息收集和推理后，直接输出以下 JSON 格式的决策（不要再调用任何工具）：\n\n" +
@@ -250,8 +260,10 @@ const agenticOutputFormat = "## 输出要求\n\n" +
 	"  \"activities\": [\n" +
 	"    {\n" +
 	"      \"type\": \"process|approve|action|notify|form\",\n" +
-	"      \"participant_type\": \"user\",\n" +
+	"      \"participant_type\": \"user|position_department\",\n" +
 	"      \"participant_id\": 42,\n" +
+	"      \"position_code\": \"db_admin\",\n" +
+	"      \"department_code\": \"it\",\n" +
 	"      \"action_id\": null,\n" +
 	"      \"instructions\": \"操作指引\"\n" +
 	"    }\n" +
@@ -263,5 +275,8 @@ const agenticOutputFormat = "## 输出要求\n\n" +
 	"字段说明：\n" +
 	"- next_step_type: 下一步类型。\"complete\" 表示流程可以结束。\n" +
 	"- activities: 需要创建的活动列表。\n" +
+	"- participant_type: \"user\" 需填 participant_id；\"position_department\" 需填 position_code + department_code。\n" +
+	"- position_code / department_code: 当 participant_type 为 position_department 时，填写岗位编码和部门编码。\n" +
+	"- action_id: 当 type 为 \"action\" 时，填写 decision.list_actions 返回的 action id。\n" +
 	"- reasoning: 你的推理过程（会展示给管理员审核）。\n" +
 	"- confidence: 决策信心（0.0-1.0）。越高表示越确信。"

@@ -573,8 +573,8 @@ func (e *ClassicEngine) handleEnd(tx *gorm.DB, token *executionTokenModel, opera
 func (e *ClassicEngine) handleForm(tx *gorm.DB, token *executionTokenModel, operatorID uint, node *WFNode, data *NodeData) error {
 	now := time.Now()
 
-	// Resolve formId to schema snapshot
-	formSchema := resolveFormSchema(tx, data.FormID)
+	// Read inline formSchema from node data
+	formSchema := string(data.FormSchema)
 
 	act := &activityModel{
 		TicketID:      token.TicketID,
@@ -624,8 +624,8 @@ func (e *ClassicEngine) handleApprove(tx *gorm.DB, token *executionTokenModel, o
 func (e *ClassicEngine) handleProcess(tx *gorm.DB, token *executionTokenModel, operatorID uint, node *WFNode, data *NodeData) error {
 	now := time.Now()
 
-	// Resolve formId to schema snapshot
-	formSchema := resolveFormSchema(tx, data.FormID)
+	// Read inline formSchema from node data
+	formSchema := string(data.FormSchema)
 
 	act := &activityModel{
 		TicketID:      token.TicketID,
@@ -1581,30 +1581,6 @@ type executionTokenModel struct {
 }
 
 func (executionTokenModel) TableName() string { return "itsm_execution_tokens" }
-
-// formDefModel is a lightweight read-only model for resolving form schema by code.
-type formDefModel struct {
-	ID     uint   `gorm:"primaryKey"`
-	Code   string `gorm:"column:code"`
-	Schema string `gorm:"column:schema;type:text"`
-}
-
-func (formDefModel) TableName() string { return "itsm_form_definitions" }
-
-// resolveFormSchema looks up a FormDefinition by code and returns its schema JSON.
-// Returns empty string if formID is empty or not found (with a log warning).
-func resolveFormSchema(tx *gorm.DB, formCode string) string {
-	if formCode == "" {
-		return ""
-	}
-	var fd formDefModel
-	if err := tx.Where("code = ?", formCode).First(&fd).Error; err != nil {
-		slog.Warn("form definition not found, activity will have no form schema",
-			"formCode", formCode, "error", err)
-		return ""
-	}
-	return fd.Schema
-}
 
 // resolveWorkflowContext returns the correct WorkflowDef and maps for a token.
 // For subprocess tokens, it navigates to the parent subprocess node and parses

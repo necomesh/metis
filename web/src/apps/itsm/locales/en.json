@@ -36,6 +36,10 @@
     "saveSuccess": "Form saved",
     "preview": "Preview",
     "exitPreview": "Exit Preview",
+    "fieldPalette": "Field Types",
+    "canvas": "Canvas",
+    "properties": "Properties",
+    "selectFieldHint": "Select a field to edit",
     "backToList": "Back to list",
     "addSection": "Add Section",
     "sectionTitle": "Section Title",
@@ -164,6 +168,14 @@
     "guideCardHint": "Add Service",
     "emptyInCatalog": "No services in this category",
     "emptyInCatalogHint": "Click \"Add Service\" to create one"
+  },
+  "intakeForm": {
+    "title": "Intake Form",
+    "save": "Save Form",
+    "saveSuccess": "Intake form saved",
+    "design": "Design Form",
+    "fieldCount": "{{count}} fields configured",
+    "noFields": "No form fields configured"
   },
   "actions": {
     "title": "Actions",
@@ -378,6 +390,10 @@
       "formBinding": "Form Binding",
       "selectForm": "Select Form",
       "formFields": "Form Fields",
+      "formUnbound": "No form bound",
+      "editForm": "Edit Form",
+      "cancel": "Cancel",
+      "confirm": "Confirm",
       "serviceAction": "Service Action",
       "selectAction": "Select Action",
       "channelType": "Notification Channel",

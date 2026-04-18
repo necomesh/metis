@@ -36,6 +36,10 @@
     "saveSuccess": "表单保存成功",
     "preview": "预览",
     "exitPreview": "退出预览",
+    "fieldPalette": "字段类型",
+    "canvas": "表单画布",
+    "properties": "属性配置",
+    "selectFieldHint": "点击左侧字段进行编辑",
     "backToList": "返回列表",
     "addSection": "添加分区",
     "sectionTitle": "分区标题",
@@ -164,6 +168,14 @@
     "guideCardHint": "添加服务",
     "emptyInCatalog": "该分类下暂无服务",
     "emptyInCatalogHint": "点击「添加服务」创建第一个服务"
+  },
+  "intakeForm": {
+    "title": "进件表单",
+    "save": "保存表单",
+    "saveSuccess": "进件表单已保存",
+    "design": "设计表单",
+    "fieldCount": "已配置 {{count}} 个字段",
+    "noFields": "尚未配置表单字段"
   },
   "actions": {
     "title": "动作管理",
@@ -378,6 +390,10 @@
       "formBinding": "绑定表单",
       "selectForm": "选择表单",
       "formFields": "表单字段",
+      "formUnbound": "未绑定表单",
+      "editForm": "编辑表单",
+      "cancel": "取消",
+      "confirm": "确定",
       "serviceAction": "服务动作",
       "selectAction": "选择动作",
       "channelType": "通知通道",

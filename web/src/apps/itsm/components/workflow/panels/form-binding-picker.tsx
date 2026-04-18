@@ -1,92 +1,92 @@
+import { useState } from "react"
 import { useTranslation } from "react-i18next"
-import { useQuery } from "@tanstack/react-query"
+import { Pencil } from "lucide-react"
 import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Button } from "@/components/ui/button"
-import { X, FileText } from "lucide-react"
-import { fetchFormDefs } from "../../../api"
+import {
+  Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter,
+} from "@/components/ui/sheet"
+import { FormDesigner } from "../../form-engine"
+import type { FormSchema } from "../../form-engine"
 
 interface FormBindingPickerProps {
-  formDefinitionId?: number
-  onChange: (formDefId: number | undefined, schema: unknown) => void
+  formSchema?: unknown
+  onChange: (schema: unknown) => void
 }
 
-interface FormField {
-  key: string
-  type: string
-  label: string
+function toFormSchema(raw: unknown): FormSchema {
+  if (raw && typeof raw === "object") {
+    const s = raw as FormSchema
+    if (Array.isArray(s.fields)) return s
+  }
+  return { version: 1, fields: [] }
 }
 
-export function FormBindingPicker({ formDefinitionId, onChange }: FormBindingPickerProps) {
+export function FormBindingPicker({ formSchema, onChange }: FormBindingPickerProps) {
   const { t } = useTranslation("itsm")
+  const [designerOpen, setDesignerOpen] = useState(false)
+  const [draft, setDraft] = useState<FormSchema>(() => toFormSchema(formSchema))
 
-  const { data: forms } = useQuery({
-    queryKey: ["itsm-forms-active"],
-    queryFn: () => fetchFormDefs({ isActive: true, pageSize: 100 }),
-    staleTime: 60_000,
-    select: (d) => d.items,
-  })
+  const fields = toFormSchema(formSchema).fields
+  const fieldCount = fields.length
 
-  const selectedForm = forms?.find((f) => f.id === formDefinitionId)
-  const fields = parseFields(selectedForm?.schema)
+  function handleOpen() {
+    setDraft(toFormSchema(formSchema))
+    setDesignerOpen(true)
+  }
 
-  function handleSelect(val: string) {
-    if (val === "__clear__") {
-      onChange(undefined, undefined)
-      return
-    }
-    const id = Number(val)
-    const form = forms?.find((f) => f.id === id)
-    onChange(id, form?.schema)
+  function handleSave() {
+    onChange(draft.fields.length > 0 ? draft : undefined)
+    setDesignerOpen(false)
   }
 
   return (
-    <div className="space-y-2">
-      <Label className="text-xs">{t("workflow.prop.formBinding")}</Label>
-      <div className="flex items-center gap-1">
-        <Select value={formDefinitionId ? String(formDefinitionId) : ""} onValueChange={handleSelect}>
-          <SelectTrigger className="h-8 text-xs">
-            <SelectValue placeholder={t("workflow.prop.selectForm")} />
-          </SelectTrigger>
-          <SelectContent>
-            {(forms ?? []).map((f) => (
-              <SelectItem key={f.id} value={String(f.id)}>
-                <div className="flex items-center gap-1.5">
-                  <FileText size={12} />
-                  <span>{f.name}</span>
-                </div>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {formDefinitionId && (
-          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => onChange(undefined, undefined)}>
-            <X size={14} />
-          </Button>
-        )}
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <Label className="text-xs">{t("workflow.prop.formBinding")}</Label>
+        <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={handleOpen}>
+          <Pencil className="mr-1 h-3 w-3" />
+          {t("workflow.prop.editForm")}
+        </Button>
       </div>
-      {fields.length > 0 && (
+
+      {fieldCount === 0 ? (
+        <p className="text-xs text-muted-foreground">{t("workflow.prop.formUnbound")}</p>
+      ) : (
         <div className="rounded border p-1.5">
-          <div className="text-[10px] font-medium text-muted-foreground mb-1">{t("workflow.prop.formFields")} ({fields.length})</div>
           <div className="space-y-0.5">
             {fields.slice(0, 6).map((f) => (
               <div key={f.key} className="flex items-center justify-between text-[10px]">
                 <span>{f.label || f.key}</span>
-                <span className="text-muted-foreground">{f.type}</span>
+                <span className="text-muted-foreground">{t(`forms.type.${f.type}`)}</span>
               </div>
             ))}
-            {fields.length > 6 && (
-              <div className="text-[10px] text-muted-foreground">+{fields.length - 6} more</div>
+            {fieldCount > 6 && (
+              <div className="text-[10px] text-muted-foreground">+{fieldCount - 6} more</div>
             )}
           </div>
         </div>
       )}
+
+      <Sheet open={designerOpen} onOpenChange={setDesignerOpen}>
+        <SheetContent className="sm:max-w-4xl p-0 flex flex-col">
+          <SheetHeader className="px-6 pt-6 pb-0">
+            <SheetTitle>{t("workflow.prop.formBinding")}</SheetTitle>
+            <SheetDescription className="sr-only">{t("workflow.prop.formBinding")}</SheetDescription>
+          </SheetHeader>
+          <div className="flex-1 min-h-0 px-6 py-4">
+            <FormDesigner schema={draft} onChange={setDraft} />
+          </div>
+          <SheetFooter className="px-6 pb-6">
+            <Button variant="outline" size="sm" onClick={() => setDesignerOpen(false)}>
+              {t("workflow.prop.cancel", { defaultValue: "Cancel" })}
+            </Button>
+            <Button size="sm" onClick={handleSave}>
+              {t("workflow.prop.confirm", { defaultValue: "Confirm" })}
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
     </div>
   )
-}
-
-function parseFields(schema: unknown): FormField[] {
-  if (!schema || typeof schema !== "object") return []
-  const s = schema as { fields?: FormField[] }
-  return Array.isArray(s.fields) ? s.fields : []
 }

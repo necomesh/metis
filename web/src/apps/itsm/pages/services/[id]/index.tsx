@@ -46,6 +46,8 @@ import {
 } from "../../../api"
 import { SmartServiceConfig } from "../../../components/smart-service-config"
 import { ServiceKnowledgeCard } from "../../../components/service-knowledge-card"
+import { FormDesigner } from "../../../components/form-engine"
+import type { FormSchema } from "../../../components/form-engine"
 
 const WorkflowPreview = lazy(() => import("./workflow-preview"))
 
@@ -482,6 +484,74 @@ function BasicInfoForm({ service, catalogs, slaTemplates }: {
   )
 }
 
+// ─── Intake Form Section ─────────────────────────────
+
+function IntakeFormSection({ serviceId, initialSchema }: { serviceId: number; initialSchema: unknown }) {
+  const { t } = useTranslation(["itsm", "common"])
+  const queryClient = useQueryClient()
+  const canUpdate = usePermission("itsm:service:update")
+  const [designerOpen, setDesignerOpen] = useState(false)
+
+  const [schema, setSchema] = useState<FormSchema>(() => {
+    const raw = initialSchema as FormSchema | null
+    if (raw && Array.isArray(raw.fields)) return raw
+    return { version: 1, fields: [] }
+  })
+
+  const fieldCount = schema.fields.length
+
+  const saveMut = useMutation({
+    mutationFn: () =>
+      updateServiceDef(serviceId, { intakeFormSchema: schema.fields.length > 0 ? schema : null } as Partial<ServiceDefItem>),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["itsm-service", serviceId] })
+      toast.success(t("itsm:intakeForm.saveSuccess"))
+      setDesignerOpen(false)
+    },
+    onError: (err) => toast.error(err.message),
+  })
+
+  return (
+    <section>
+      <h3 className="mb-4 text-sm font-semibold text-muted-foreground">{t("itsm:intakeForm.title")}</h3>
+      <div className="flex items-center gap-3">
+        <p className="text-sm text-muted-foreground">
+          {fieldCount > 0
+            ? t("itsm:intakeForm.fieldCount", { count: fieldCount })
+            : t("itsm:intakeForm.noFields")}
+        </p>
+        {canUpdate && (
+          <Button variant="outline" size="sm" onClick={() => setDesignerOpen(true)}>
+            <Pencil className="mr-1.5 h-3.5 w-3.5" />
+            {t("itsm:intakeForm.design")}
+          </Button>
+        )}
+      </div>
+
+      <Sheet open={designerOpen} onOpenChange={setDesignerOpen}>
+        <SheetContent className="sm:max-w-4xl p-0 flex flex-col">
+          <SheetHeader className="px-6 pt-6 pb-0">
+            <SheetTitle>{t("itsm:intakeForm.title")}</SheetTitle>
+            <SheetDescription className="sr-only">{t("itsm:intakeForm.title")}</SheetDescription>
+          </SheetHeader>
+          <div className="flex-1 min-h-0 px-6 py-4">
+            <FormDesigner schema={schema} onChange={setSchema} />
+          </div>
+          <SheetFooter className="px-6 pb-6">
+            <Button variant="outline" size="sm" onClick={() => setDesignerOpen(false)}>
+              {t("common:cancel")}
+            </Button>
+            <Button size="sm" onClick={() => saveMut.mutate()} disabled={saveMut.isPending}>
+              <Save className="mr-1.5 h-4 w-4" />
+              {saveMut.isPending ? t("common:saving") : t("itsm:intakeForm.save")}
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
+    </section>
+  )
+}
+
 // ─── Main Page Component ───────────────────────────────
 
 export function Component() {
@@ -540,6 +610,11 @@ export function Component() {
         <h3 className="mb-4 text-sm font-semibold text-muted-foreground">{t("itsm:services.tabBasicInfo")}</h3>
         <BasicInfoForm key={service.updatedAt} service={service} catalogs={catalogs ?? []} slaTemplates={slaTemplates ?? []} />
       </section>
+
+      {/* Intake Form Section (classic engine only) */}
+      {service.engineType === "classic" && (
+        <IntakeFormSection serviceId={serviceId} initialSchema={service.intakeFormSchema} />
+      )}
 
       {/* Workflow Section */}
       <section>

@@ -81,7 +81,7 @@ func (o *Operator) LoadService(serviceID uint) (*ServiceDetail, error) {
 		ID                uint
 		Name              string
 		CollaborationSpec string
-		FormID            *uint
+		IntakeFormSchema  string
 		WorkflowJSON      string
 	}
 	var svc svcRow
@@ -97,16 +97,9 @@ func (o *Operator) LoadService(serviceID uint) (*ServiceDetail, error) {
 		CollaborationSpec: svc.CollaborationSpec,
 	}
 
-	// Load form fields.
-	if svc.FormID != nil && *svc.FormID > 0 {
-		var fd struct {
-			Schema string
-		}
-		if err := o.db.Table("itsm_form_definitions").
-			Where("id = ?", *svc.FormID).
-			Select("schema").First(&fd).Error; err == nil && fd.Schema != "" {
-			detail.FormFields = parseFormFields(fd.Schema)
-		}
+	// Load form fields from inline intake form schema.
+	if svc.IntakeFormSchema != "" {
+		detail.FormFields = parseFormFields(svc.IntakeFormSchema)
 	}
 
 	// Load actions.

@@ -109,6 +109,8 @@ type DecisionActivity struct {
 	Type            string `json:"type"`
 	ParticipantType string `json:"participant_type,omitempty"`
 	ParticipantID   *uint  `json:"participant_id,omitempty"`
+	PositionCode    string `json:"position_code,omitempty"`
+	DepartmentCode  string `json:"department_code,omitempty"`
 	ActionID        *uint  `json:"action_id,omitempty"`
 	Instructions    string `json:"instructions,omitempty"`
 }
@@ -433,6 +435,9 @@ func (e *SmartEngine) executeDecisionPlan(tx *gorm.DB, ticketID uint, plan *Deci
 				return err
 			}
 			tx.Model(&ticketModel{}).Where("id = ?", ticketID).Update("assignee_id", *da.ParticipantID)
+		} else if da.ParticipantType == "position_department" && da.PositionCode != "" && da.DepartmentCode != "" {
+			// Position+department based assignment — resolve via ParticipantResolver
+			e.createPositionAssignment(tx, ticketID, act.ID, da.PositionCode, da.DepartmentCode)
 		} else if da.Type == "approve" || da.Type == "process" || da.Type == "form" {
 			// Activity needs a participant but AI didn't specify one — try fallback
 			e.tryFallbackAssignment(tx, ticketID, act.ID)
@@ -495,6 +500,52 @@ func (e *SmartEngine) tryFallbackAssignment(tx *gorm.DB, ticketID uint, activity
 	tx.Model(&ticketModel{}).Where("id = ?", ticketID).Update("assignee_id", fallbackID)
 	e.recordTimeline(tx, ticketID, &activityID, 0, "participant_fallback",
 		fmt.Sprintf("参与者缺失，已转派兜底处理人（%s）", user.Username), "")
+}
+
+// createPositionAssignment resolves position_department participant type to actual
+// users and creates the assignment with position/department IDs.
+func (e *SmartEngine) createPositionAssignment(tx *gorm.DB, ticketID, activityID uint, positionCode, departmentCode string) {
+	if e.resolver == nil || e.resolver.orgResolver == nil {
+		slog.Warn("position assignment skipped: org resolver not available", "ticketID", ticketID)
+		return
+	}
+
+	// Resolve user IDs via org service
+	userIDs, err := e.resolver.orgResolver.FindUsersByPositionAndDepartment(positionCode, departmentCode)
+	if err != nil || len(userIDs) == 0 {
+		slog.Warn("position assignment: no users found", "positionCode", positionCode, "departmentCode", departmentCode)
+	}
+
+	// Look up position and department IDs (best-effort, tables may not exist in tests)
+	var positionID, departmentID uint
+	tx.Table("org_positions").Where("code = ?", positionCode).Select("id").Scan(&positionID)
+	tx.Table("org_departments").Where("code = ?", departmentCode).Select("id").Scan(&departmentID)
+
+	assignment := &assignmentModel{
+		TicketID:        ticketID,
+		ActivityID:      activityID,
+		ParticipantType: "position_department",
+		Status:          "pending",
+		IsCurrent:       true,
+	}
+	if positionID > 0 {
+		assignment.PositionID = &positionID
+	}
+	if departmentID > 0 {
+		assignment.DepartmentID = &departmentID
+	}
+	if len(userIDs) > 0 {
+		assignment.UserID = &userIDs[0]
+	}
+
+	if err := tx.Create(assignment).Error; err != nil {
+		slog.Error("failed to create position assignment", "error", err, "ticketID", ticketID)
+		return
+	}
+
+	if len(userIDs) > 0 {
+		tx.Model(&ticketModel{}).Where("id = ?", ticketID).Update("assignee_id", userIDs[0])
+	}
 }
 
 // pendApprovalDecisionPlan creates a pending_approval activity for low-confidence decision.

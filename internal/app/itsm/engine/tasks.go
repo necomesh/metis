@@ -29,6 +29,8 @@ type WaitTimerPayload struct {
 
 // HandleActionExecute is the scheduler task handler for itsm-action-execute.
 // It executes the HTTP webhook and then calls Progress on the engine.
+// For classic engine tickets, it uses classicEngine.Progress() (with token-based workflow).
+// For smart engine tickets, it directly marks the activity as completed (no execution tokens).
 // If the action fails and a b_error boundary event is attached, it triggers
 // the boundary error path instead of calling Progress with "failed".
 func HandleActionExecute(db *gorm.DB, classicEngine *ClassicEngine) func(ctx context.Context, payload json.RawMessage) error {
@@ -50,7 +52,21 @@ func HandleActionExecute(db *gorm.DB, classicEngine *ClassicEngine) func(ctx con
 			slog.Error("action execution failed", "error", err, "ticketID", p.TicketID, "actionID", p.ActionID)
 		}
 
-		// On failure, check for b_error boundary event before calling Progress
+		// Smart engine tickets: directly mark activity completed (no execution tokens).
+		var ticket ticketModel
+		if err := db.First(&ticket, p.TicketID).Error; err != nil {
+			return fmt.Errorf("ticket %d not found: %w", p.TicketID, err)
+		}
+		if ticket.EngineType == "smart" {
+			now := time.Now()
+			return db.Model(&activityModel{}).Where("id = ?", p.ActivityID).Updates(map[string]any{
+				"status":             ActivityCompleted,
+				"transition_outcome": outcome,
+				"finished_at":        now,
+			}).Error
+		}
+
+		// Classic engine: on failure, check for b_error boundary event before calling Progress
 		if outcome == "failed" {
 			if handled, bErr := tryHandleBoundaryError(ctx, db, classicEngine, p.TicketID, p.ActivityID); handled {
 				if bErr != nil {

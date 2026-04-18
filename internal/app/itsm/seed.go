@@ -36,9 +36,6 @@ func seedITSM(db *gorm.DB, enforcer *casbin.Enforcer) error {
 	if err := seedEngineConfig(db); err != nil {
 		return err
 	}
-	if err := seedFormDefinitions(db); err != nil {
-		return err
-	}
 	return seedServiceDefinitions(db)
 }
 
@@ -253,13 +250,13 @@ func seedMenus(db *gorm.DB) error {
 	// 引擎配置
 	seedMenu(db, &itsmDir.ID, "引擎配置", model.MenuTypeMenu, "/itsm/engine-config", "Settings", "itsm:engine:config", 9)
 
-	// 表单管理
-	formMenu := seedMenu(db, &itsmDir.ID, "表单管理", model.MenuTypeMenu, "/itsm/forms", "FileText", "itsm:form:list", 10)
-	seedButtons(db, formMenu, []model.Menu{
-		{Name: "新增表单", Type: model.MenuTypeButton, Permission: "itsm:form:create", Sort: 0},
-		{Name: "编辑表单", Type: model.MenuTypeButton, Permission: "itsm:form:update", Sort: 1},
-		{Name: "删除表单", Type: model.MenuTypeButton, Permission: "itsm:form:delete", Sort: 2},
-	})
+	// 表单管理 - migrated away: remove menu and buttons
+	var formMenu model.Menu
+	if err := db.Where("permission = ?", "itsm:form:list").First(&formMenu).Error; err == nil {
+		db.Where("parent_id = ?", formMenu.ID).Delete(&model.Menu{})
+		db.Delete(&formMenu)
+		slog.Info("seed: removed form management menu")
+	}
 
 	return nil
 }
@@ -332,12 +329,6 @@ func seedPolicies(enforcer *casbin.Enforcer) error {
 		{"admin", "/api/v1/itsm/engine/config", "PUT"},
 		// Workflow Generate
 		{"admin", "/api/v1/itsm/workflows/generate", "POST"},
-		// Form Definitions
-		{"admin", "/api/v1/itsm/forms", "POST"},
-		{"admin", "/api/v1/itsm/forms", "GET"},
-		{"admin", "/api/v1/itsm/forms/:id", "GET"},
-		{"admin", "/api/v1/itsm/forms/:id", "PUT"},
-		{"admin", "/api/v1/itsm/forms/:id", "DELETE"},
 		// Priorities
 		{"admin", "/api/v1/itsm/priorities", "POST"},
 		{"admin", "/api/v1/itsm/priorities", "GET"},
@@ -411,10 +402,6 @@ func seedPolicies(enforcer *casbin.Enforcer) error {
 		{"admin", "itsm:sla:update", "read"},
 		{"admin", "itsm:sla:delete", "read"},
 		{"admin", "itsm:engine:config", "read"},
-		{"admin", "itsm:form:list", "read"},
-		{"admin", "itsm:form:create", "read"},
-		{"admin", "itsm:form:update", "read"},
-		{"admin", "itsm:form:delete", "read"},
 	}
 
 	allPolicies := append(policies, menuPerms...)
@@ -475,59 +462,6 @@ func seedSLATemplates(db *gorm.DB) error {
 	return nil
 }
 
-func seedFormDefinitions(db *gorm.DB) error {
-	type formSeed struct {
-		Name        string
-		Code        string
-		Description string
-		Schema      string
-	}
-
-	seeds := []formSeed{
-		{
-			Name:        "通用事件表单",
-			Code:        "form_general_incident",
-			Description: "适用于一般事件上报的通用表单",
-			Schema:      `{"version":1,"fields":[{"key":"title","type":"text","label":"标题","required":true,"validation":[{"rule":"required","message":"请输入标题"},{"rule":"maxLength","value":200,"message":"标题不能超过200字"}],"width":"full"},{"key":"description","type":"textarea","label":"描述","required":true,"validation":[{"rule":"required","message":"请输入描述"}],"width":"full","props":{"rows":4}},{"key":"urgency","type":"select","label":"紧急程度","required":true,"validation":[{"rule":"required","message":"请选择紧急程度"}],"options":[{"label":"低","value":"low"},{"label":"中","value":"medium"},{"label":"高","value":"high"},{"label":"紧急","value":"critical"}],"defaultValue":"medium","width":"half"},{"key":"impact","type":"select","label":"影响范围","required":true,"validation":[{"rule":"required","message":"请选择影响范围"}],"options":[{"label":"个人","value":"individual"},{"label":"部门","value":"department"},{"label":"全公司","value":"company"}],"defaultValue":"individual","width":"half"},{"key":"contact","type":"text","label":"联系方式","placeholder":"手机号或邮箱","width":"full"}],"layout":{"columns":2,"sections":[{"title":"基本信息","fields":["title","description"]},{"title":"分类与影响","fields":["urgency","impact","contact"]}]}}`,
-		},
-		{
-			Name:        "变更申请表单",
-			Code:        "form_change_request",
-			Description: "适用于变更申请流程的表单",
-			Schema:      `{"version":1,"fields":[{"key":"title","type":"text","label":"变更标题","required":true,"validation":[{"rule":"required","message":"请输入变更标题"}],"width":"full"},{"key":"description","type":"textarea","label":"变更描述","required":true,"validation":[{"rule":"required","message":"请输入变更描述"}],"width":"full","props":{"rows":4}},{"key":"reason","type":"textarea","label":"变更原因","required":true,"validation":[{"rule":"required","message":"请输入变更原因"}],"width":"full","props":{"rows":3}},{"key":"planned_time","type":"datetime","label":"计划执行时间","required":true,"validation":[{"rule":"required","message":"请选择计划执行时间"}],"width":"half"},{"key":"impact_assessment","type":"textarea","label":"影响评估","required":true,"validation":[{"rule":"required","message":"请填写影响评估"}],"width":"full","props":{"rows":3}},{"key":"rollback_plan","type":"textarea","label":"回滚方案","required":true,"validation":[{"rule":"required","message":"请填写回滚方案"}],"width":"full","props":{"rows":3}}],"layout":{"columns":2,"sections":[{"title":"变更信息","fields":["title","description","reason"]},{"title":"执行计划","fields":["planned_time","impact_assessment","rollback_plan"]}]}}`,
-		},
-		{
-			Name:        "服务请求表单",
-			Code:        "form_service_request",
-			Description: "适用于一般服务请求的通用表单",
-			Schema:      `{"version":1,"fields":[{"key":"title","type":"text","label":"请求标题","required":true,"validation":[{"rule":"required","message":"请输入请求标题"}],"width":"full"},{"key":"description","type":"textarea","label":"请求描述","required":true,"validation":[{"rule":"required","message":"请输入请求描述"}],"width":"full","props":{"rows":4}},{"key":"expected_date","type":"date","label":"期望完成日期","width":"half"},{"key":"remarks","type":"textarea","label":"备注","width":"full","props":{"rows":3}}],"layout":{"columns":2,"sections":[{"title":"请求信息","fields":["title","description"]},{"title":"补充信息","fields":["expected_date","remarks"]}]}}`,
-		},
-	}
-
-	for _, s := range seeds {
-		var existing FormDefinition
-		if err := db.Where("code = ?", s.Code).First(&existing).Error; err == nil {
-			continue
-		}
-		fd := FormDefinition{
-			Name:        s.Name,
-			Code:        s.Code,
-			Description: s.Description,
-			Schema:      s.Schema,
-			Version:     1,
-			Scope:       "global",
-			IsActive:    true,
-		}
-		if err := db.Create(&fd).Error; err != nil {
-			slog.Error("seed: failed to create form definition", "code", s.Code, "error", err)
-			continue
-		}
-		slog.Info("seed: created form definition", "code", s.Code, "name", s.Name)
-	}
-
-	return nil
-}
-
 func seedServiceDefinitions(db *gorm.DB) error {
 	// Look up the decision agent for smart services
 	var decisionAgentID *uint
@@ -545,10 +479,12 @@ func seedServiceDefinitions(db *gorm.DB) error {
 		Description       string
 		CatalogCode       string
 		SLACode           string
-		FormCode          string
+		IntakeFormSchema  string
 		CollaborationSpec string
 		Actions           []ServiceAction
 	}
+
+	serviceRequestFormSchema := `{"version":1,"fields":[{"key":"title","type":"text","label":"请求标题","required":true,"validation":[{"rule":"required","message":"请输入请求标题"}],"width":"full"},{"key":"description","type":"textarea","label":"请求描述","required":true,"validation":[{"rule":"required","message":"请输入请求描述"}],"width":"full","props":{"rows":4}},{"key":"expected_date","type":"date","label":"期望完成日期","width":"half"},{"key":"remarks","type":"textarea","label":"备注","width":"full","props":{"rows":3}}],"layout":{"columns":2,"sections":[{"title":"请求信息","fields":["title","description"]},{"title":"补充信息","fields":["expected_date","remarks"]}]}}`
 
 	seeds := []serviceSeed{
 		{
@@ -557,7 +493,7 @@ func seedServiceDefinitions(db *gorm.DB) error {
 			Description:       "用于验证服务申请与审批闭环的内置服务。",
 			CatalogCode:       "account-access:provisioning",
 			SLACode:           "rapid-workplace",
-			FormCode:          "form_service_request",
+			IntakeFormSchema:  serviceRequestFormSchema,
 			CollaborationSpec: "收集提单用户的Github账号信息和申请理由（可选），交给信息部的IT管理员审批，审批通过后结束流程。",
 		},
 		{
@@ -628,14 +564,9 @@ func seedServiceDefinitions(db *gorm.DB) error {
 			slog.Warn("seed: SLA not found for service, setting to nil", "serviceCode", s.Code, "slaCode", s.SLACode)
 		}
 
-		var formID *uint
-		if s.FormCode != "" {
-			var fd FormDefinition
-			if err := db.Where("code = ?", s.FormCode).First(&fd).Error; err == nil {
-				formID = &fd.ID
-			} else {
-				slog.Warn("seed: form not found for service, setting to nil", "serviceCode", s.Code, "formCode", s.FormCode)
-			}
+		var intakeFormSchema JSONField
+		if s.IntakeFormSchema != "" {
+			intakeFormSchema = JSONField(s.IntakeFormSchema)
 		}
 
 		svc := ServiceDefinition{
@@ -645,7 +576,7 @@ func seedServiceDefinitions(db *gorm.DB) error {
 			CatalogID:         catalog.ID,
 			EngineType:        "smart",
 			SLAID:             slaID,
-			FormID:            formID,
+			IntakeFormSchema:  intakeFormSchema,
 			AgentID:           decisionAgentID,
 			CollaborationSpec: s.CollaborationSpec,
 			IsActive:          true,

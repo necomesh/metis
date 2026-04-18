@@ -38,7 +38,6 @@ type TicketService struct {
 	serviceRepo     *ServiceDefRepo
 	slaRepo         *SLATemplateRepo
 	priorityRepo    *PriorityRepo
-	formDefRepo     *FormDefRepo
 	classicEngine   *engine.ClassicEngine
 	smartEngine     *engine.SmartEngine
 	orgResolver app.OrgResolver // nil when Org App not installed
@@ -51,7 +50,6 @@ func NewTicketService(i do.Injector) (*TicketService, error) {
 		serviceRepo:   do.MustInvoke[*ServiceDefRepo](i),
 		slaRepo:       do.MustInvoke[*SLATemplateRepo](i),
 		priorityRepo:  do.MustInvoke[*PriorityRepo](i),
-		formDefRepo:   do.MustInvoke[*FormDefRepo](i),
 		classicEngine: do.MustInvoke[*engine.ClassicEngine](i),
 		smartEngine:   do.MustInvoke[*engine.SmartEngine](i),
 	}
@@ -164,12 +162,10 @@ func (s *TicketService) Create(input CreateTicketInput, requesterID uint) (*Tick
 				WorkflowJSON: json.RawMessage(ticket.WorkflowJSON),
 				RequesterID:  requesterID,
 			}
-			// Load start form schema for variable binding
-			if svc.FormID != nil {
-				if fd, err := s.formDefRepo.FindByID(*svc.FormID); err == nil {
-					startParams.StartFormSchema = fd.Schema
-					startParams.StartFormData = string(ticket.FormData)
-				}
+			// Load start form schema from inline IntakeFormSchema for variable binding
+			if len(svc.IntakeFormSchema) > 0 {
+				startParams.StartFormSchema = string(svc.IntakeFormSchema)
+				startParams.StartFormData = string(ticket.FormData)
 			}
 			return s.classicEngine.Start(context.Background(), tx, startParams)
 		case "smart":

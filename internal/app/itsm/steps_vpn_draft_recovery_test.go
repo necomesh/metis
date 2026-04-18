@@ -72,8 +72,8 @@ var vpnFormSchemaV2 = `{
 // mutatingStateStore — wraps memStateStore, triggers DB form mutation
 // ---------------------------------------------------------------------------
 
-// mutatingStateStore wraps a memStateStore and modifies the FormDefinition
-// schema in DB when state.Stage transitions to "awaiting_confirmation".
+// mutatingStateStore wraps a memStateStore and modifies the ServiceDefinition
+// IntakeFormSchema when state.Stage transitions to "awaiting_confirmation".
 // This simulates an admin changing the form mid-conversation.
 type mutatingStateStore struct {
 	inner *memStateStore
@@ -102,15 +102,15 @@ func (m *mutatingStateStore) SaveState(sessionID uint, state *tools.ServiceDeskS
 	// Trigger mutation once when stage becomes "awaiting_confirmation"
 	// (i.e., draft_prepare just succeeded).
 	if m.armed && !m.fired && state.Stage == "awaiting_confirmation" {
-		log.Printf("[BDD-MUTATION] draft_prepare completed, mutating FormDefinition schema")
-		if err := m.db.Model(&FormDefinition{}).
-			Where("code = ?", "vpn-dialog-form").
-			Update("schema", vpnFormSchemaV2).Error; err != nil {
+		log.Printf("[BDD-MUTATION] draft_prepare completed, mutating ServiceDefinition IntakeFormSchema")
+		if err := m.db.Model(&ServiceDefinition{}).
+			Where("code = ?", "vpn-activation-dialog").
+			Update("intake_form_schema", vpnFormSchemaV2).Error; err != nil {
 			log.Printf("[BDD-MUTATION] failed to mutate schema: %v", err)
 			return err
 		}
 		m.fired = true
-		log.Printf("[BDD-MUTATION] FormDefinition schema mutated to v2")
+		log.Printf("[BDD-MUTATION] ServiceDefinition IntakeFormSchema mutated to v2")
 	}
 
 	return nil

@@ -329,23 +329,13 @@ func publishVPNDialogService(bc *bddContext) error {
 	}
 	bc.priority = priority
 
-	// FormDefinition
-	fd := &FormDefinition{
-		Name:   "VPN对话测试表单",
-		Code:   "vpn-dialog-form",
-		Schema: vpnFormSchema,
-	}
-	if err := bc.db.Create(fd).Error; err != nil {
-		return fmt.Errorf("create form: %w", err)
-	}
-
-	// ServiceDefinition with form + static workflow
+	// ServiceDefinition with inline form schema + static workflow
 	svc := &ServiceDefinition{
 		Name:              "VPN开通申请",
 		Code:              "vpn-activation-dialog",
 		CatalogID:         catalog.ID,
 		EngineType:        "smart",
-		FormID:            &fd.ID,
+		IntakeFormSchema:  JSONField(vpnFormSchema),
 		WorkflowJSON:      JSONField(vpnDialogWorkflowJSON),
 		CollaborationSpec: vpnCollaborationSpec,
 		IsActive:          true,

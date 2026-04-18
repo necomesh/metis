@@ -66,7 +66,7 @@ function buildSummary(data: WFNodeData, t: (key: string) => string): string {
   const parts: string[] = []
 
   if (data.nodeType === "form") {
-    if (data.formDefinitionId) {
+    if (data.formSchema) {
       parts.push(t("workflow.summary.formBound"))
     } else {
       parts.push(t("workflow.summary.formUnbound"))

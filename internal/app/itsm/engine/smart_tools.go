@@ -127,6 +127,36 @@ func toolTicketContext() decisionToolDef {
 			}
 			result["activity_history"] = history
 
+			// Executed actions — shows which service actions have been successfully run
+			type execRow struct {
+				ActionName string
+				ActionCode string
+				Status     string
+			}
+			var execs []execRow
+			ctx.tx.Table("itsm_ticket_action_executions").
+				Joins("JOIN itsm_service_actions ON itsm_service_actions.id = itsm_ticket_action_executions.service_action_id").
+				Where("itsm_ticket_action_executions.ticket_id = ? AND itsm_ticket_action_executions.status = ?", ctx.ticketID, "success").
+				Select("itsm_service_actions.name AS action_name, itsm_service_actions.code AS action_code, itsm_ticket_action_executions.status").
+				Find(&execs)
+
+			if len(execs) > 0 {
+				var execNames []string
+				for _, e := range execs {
+					execNames = append(execNames, e.ActionName)
+				}
+				result["executed_actions"] = execNames
+
+				// Check if all service actions have been executed
+				var totalActions int64
+				ctx.tx.Table("itsm_service_actions").
+					Where("service_id = ? AND is_active = ? AND deleted_at IS NULL", ctx.serviceID, true).
+					Count(&totalActions)
+				if totalActions > 0 && int64(len(execs)) >= totalActions {
+					result["all_actions_completed"] = true
+				}
+			}
+
 			// Current assignment
 			var assignment struct {
 				AssigneeID *uint

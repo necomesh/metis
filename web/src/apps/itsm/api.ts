@@ -1,73 +1,5 @@
 import { api } from "@/lib/api"
 
-// ─── Form Definition ────────────────────────────────────
-
-export interface FormDefItem {
-  id: number
-  name: string
-  code: string
-  description: string
-  schema: unknown
-  version: number
-  scope: string
-  serviceId: number | null
-  isActive: boolean
-  createdAt: string
-  updatedAt: string
-}
-
-export interface FormDefListParams {
-  keyword?: string
-  isActive?: boolean
-  page?: number
-  pageSize?: number
-}
-
-export function fetchFormDefs(params: FormDefListParams) {
-  const p = new URLSearchParams()
-  if (params.keyword) p.set("keyword", params.keyword)
-  if (params.isActive !== undefined) p.set("isActive", String(params.isActive))
-  p.set("page", String(params.page ?? 1))
-  p.set("pageSize", String(params.pageSize ?? 20))
-  return api.get<{ items: FormDefItem[]; total: number }>(
-    `/api/v1/itsm/forms?${p}`,
-  )
-}
-
-export function fetchFormDef(id: number) {
-  return api.get<FormDefItem>(`/api/v1/itsm/forms/${id}`)
-}
-
-export function createFormDef(data: {
-  name: string
-  code: string
-  description?: string
-  schema: string
-  scope?: string
-  serviceId?: number | null
-}) {
-  return api.post<FormDefItem>("/api/v1/itsm/forms", data)
-}
-
-export function updateFormDef(
-  id: number,
-  data: Partial<{
-    name: string
-    code: string
-    description: string
-    schema: string
-    scope: string
-    serviceId: number | null
-    isActive: boolean
-  }>,
-) {
-  return api.put<FormDefItem>(`/api/v1/itsm/forms/${id}`, data)
-}
-
-export function deleteFormDef(id: number) {
-  return api.delete(`/api/v1/itsm/forms/${id}`)
-}
-
 // ─── Catalog ────────────────────────────────────────────
 
 export interface CatalogItem {
@@ -128,7 +60,7 @@ export interface ServiceDefItem {
   catalogId: number
   engineType: string
   slaId: number | null
-  formSchema: unknown
+  intakeFormSchema: unknown
   workflowJson: unknown
   collaborationSpec: string
   agentId: number | null
@@ -176,7 +108,7 @@ export function createServiceDef(data: {
   engineType?: string
   description?: string
   slaId?: number | null
-  formSchema?: unknown
+  intakeFormSchema?: unknown
   sortOrder?: number
 }) {
   return api.post<ServiceDefItem>("/api/v1/itsm/services", data)

@@ -6,9 +6,16 @@ package itsm
 // Each scenario gets a fresh context via reset().
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"sync"
+	"time"
 
 	"github.com/cucumber/godog"
 	"github.com/glebarez/sqlite"
@@ -45,6 +52,8 @@ type bddContext struct {
 	tickets           map[string]*Ticket // multi-ticket scenarios, key = alias
 	fallbackUserID    uint               // fallback assignee for participant validation scenarios
 	dialogState       dialogTestState    // dialog validation test state
+	actionReceiver    *LocalActionReceiver // action HTTP test receiver (nil if not needed)
+	serviceActions    map[string]*ServiceAction // key = action code
 }
 
 func newBDDContext() *bddContext {
@@ -76,6 +85,10 @@ func (bc *bddContext) reset() {
 	bc.tickets = make(map[string]*Ticket)
 	bc.fallbackUserID = 0
 	bc.dialogState = dialogTestState{}
+	bc.serviceActions = make(map[string]*ServiceAction)
+	if bc.actionReceiver != nil {
+		bc.actionReceiver.Clear()
+	}
 
 	// Fresh in-memory database per scenario.
 	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:bdd_%p?mode=memory&cache=shared", bc)), &gorm.Config{})
@@ -99,7 +112,6 @@ func (bc *bddContext) reset() {
 		&ServiceCatalog{},
 		&ServiceDefinition{},
 		&ServiceAction{},
-		&FormDefinition{},
 		&Priority{},
 		&SLATemplate{},
 		&EscalationRule{},
@@ -126,12 +138,19 @@ func (bc *bddContext) reset() {
 	// Build ClassicEngine with test dependencies.
 	orgSvc := &testOrgService{db: db}
 	resolver := engine.NewParticipantResolver(orgSvc)
-	bc.engine = engine.NewClassicEngine(resolver, &noopSubmitter{}, nil)
+
+	// Choose submitter: syncActionSubmitter when actionReceiver is active, noopSubmitter otherwise.
+	var submitter engine.TaskSubmitter = &noopSubmitter{}
+	bc.engine = engine.NewClassicEngine(resolver, submitter, nil)
+
+	if bc.actionReceiver != nil {
+		submitter = &syncActionSubmitter{db: db, classicEngine: bc.engine}
+	}
 
 	// Build SmartEngine with test dependencies.
 	agentProvider := &testAgentProvider{db: db, llmCfg: bc.llmCfg}
 	userProvider := &testUserProvider{db: db}
-	bc.smartEngine = engine.NewSmartEngine(agentProvider, nil, userProvider, resolver, &noopSubmitter{}, nil)
+	bc.smartEngine = engine.NewSmartEngine(agentProvider, nil, userProvider, resolver, submitter, &bddConfigProvider{bc: bc})
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +257,131 @@ func (n *noopSubmitter) SubmitTask(_ string, _ json.RawMessage) error { return n
 
 var _ engine.TaskSubmitter = (*noopSubmitter)(nil)
 
+// ---------------------------------------------------------------------------
+// LocalActionReceiver — in-process HTTP server for testing action webhooks
+// ---------------------------------------------------------------------------
+
+// ActionRecord captures a single HTTP request received by LocalActionReceiver.
+type ActionRecord struct {
+	Path   string
+	Method string
+	Body   string
+}
+
+// LocalActionReceiver is an in-process HTTP server that records incoming requests.
+type LocalActionReceiver struct {
+	server  *httptest.Server
+	mu      sync.Mutex
+	records []ActionRecord
+}
+
+// NewLocalActionReceiver creates and starts a new LocalActionReceiver.
+func NewLocalActionReceiver() *LocalActionReceiver {
+	r := &LocalActionReceiver{}
+	r.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		body, _ := io.ReadAll(io.LimitReader(req.Body, 64*1024))
+		r.mu.Lock()
+		r.records = append(r.records, ActionRecord{
+			Path:   req.URL.Path,
+			Method: req.Method,
+			Body:   string(body),
+		})
+		r.mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"ok"}`))
+	}))
+	return r
+}
+
+func (r *LocalActionReceiver) Records() []ActionRecord {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]ActionRecord, len(r.records))
+	copy(out, r.records)
+	return out
+}
+
+func (r *LocalActionReceiver) RecordsByPath(path string) []ActionRecord {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []ActionRecord
+	for _, rec := range r.records {
+		if rec.Path == path {
+			out = append(out, rec)
+		}
+	}
+	return out
+}
+
+func (r *LocalActionReceiver) Clear() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.records = nil
+}
+
+func (r *LocalActionReceiver) URL(path string) string {
+	return r.server.URL + path
+}
+
+func (r *LocalActionReceiver) Close() {
+	r.server.Close()
+}
+
+// ---------------------------------------------------------------------------
+// syncActionSubmitter — synchronous action execution for BDD tests
+// ---------------------------------------------------------------------------
+
+// syncActionSubmitter implements engine.TaskSubmitter. On "itsm-action-execute",
+// it synchronously runs ActionExecutor.Execute() + classicEngine.Progress(),
+// matching production HandleActionExecute behavior. Other tasks are no-op.
+type syncActionSubmitter struct {
+	db            *gorm.DB
+	classicEngine *engine.ClassicEngine
+}
+
+func (s *syncActionSubmitter) SubmitTask(taskName string, payload json.RawMessage) error {
+	if taskName != "itsm-action-execute" {
+		return nil // no-op for other tasks
+	}
+
+	var p engine.ActionExecutePayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return fmt.Errorf("syncActionSubmitter: invalid payload: %w", err)
+	}
+
+	executor := engine.NewActionExecutor(s.db)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	err := executor.Execute(ctx, p.TicketID, p.ActivityID, p.ActionID)
+
+	outcome := "success"
+	if err != nil {
+		outcome = "failed"
+	}
+
+	// Smart engine tickets have no execution tokens — directly mark activity completed.
+	var ticket struct{ EngineType string }
+	s.db.Table("itsm_tickets").Select("engine_type").Where("id = ?", p.TicketID).First(&ticket)
+	if ticket.EngineType == "smart" {
+		now := time.Now()
+		return s.db.Table("itsm_ticket_activities").Where("id = ?", p.ActivityID).Updates(map[string]any{
+			"status":             "completed",
+			"transition_outcome": outcome,
+			"finished_at":        now,
+		}).Error
+	}
+
+	return s.classicEngine.Progress(ctx, s.db, engine.ProgressParams{
+		TicketID:   p.TicketID,
+		ActivityID: p.ActivityID,
+		Outcome:    outcome,
+		OperatorID: 0,
+	})
+}
+
+var _ engine.TaskSubmitter = (*syncActionSubmitter)(nil)
+
 // testAgentProvider implements engine.AgentProvider for BDD tests.
 // Reads Agent record from DB, combines with LLM config from env.
 type testAgentProvider struct {
@@ -300,6 +444,29 @@ func (p *testUserProvider) ListActiveUsers() ([]engine.ParticipantCandidate, err
 }
 
 var _ engine.UserProvider = (*testUserProvider)(nil)
+
+// bddConfigProvider implements engine.EngineConfigProvider for BDD tests.
+// Dynamically reads the agent ID from bddContext.service (set after service publish).
+type bddConfigProvider struct {
+	bc *bddContext
+}
+
+func (p *bddConfigProvider) FallbackAssigneeID() uint {
+	return p.bc.fallbackUserID
+}
+
+func (p *bddConfigProvider) DecisionMode() string {
+	return "" // default
+}
+
+func (p *bddConfigProvider) DecisionAgentID() uint {
+	if p.bc.service != nil && p.bc.service.AgentID != nil {
+		return *p.bc.service.AgentID
+	}
+	return 0
+}
+
+var _ engine.EngineConfigProvider = (*bddConfigProvider)(nil)
 
 // ---------------------------------------------------------------------------
 // Common step definitions
@@ -427,4 +594,275 @@ func registerCommonSteps(sc *godog.ScenarioContext, bc *bddContext) {
 	sc.Given(`^已定义 VPN 开通申请协作规范$`, bc.givenVPNCollaborationSpec)
 	sc.Then(`^工单状态为 "([^"]*)"$`, bc.thenTicketStatusIs)
 	sc.Then(`^工单状态不为 "([^"]*)"$`, bc.thenTicketStatusIsNot)
+	sc.Then(`^当前审批分配到岗位 "([^"]*)"$`, bc.thenCurrentApprovalAssignedToPosition)
+	sc.Then(`^当前审批仅对 "([^"]*)" 可见$`, bc.thenCurrentApprovalOnlyVisibleTo)
+	sc.Then(`^"([^"]*)" 认领当前工单应失败$`, bc.thenClaimShouldFail)
+	sc.Then(`^"([^"]*)" 审批当前工单应失败$`, bc.thenApproveShouldFail)
+
+	sc.When(`^智能引擎执行决策循环直到工单完成$`, bc.whenSmartEngineDecisionCycleUntilComplete)
+}
+
+// ---------------------------------------------------------------------------
+// Responsibility boundary step definitions
+// ---------------------------------------------------------------------------
+
+// thenCurrentApprovalAssignedToPosition asserts the current activity's assignment
+// targets the expected position — either via PositionID on the assignment,
+// or via the assigned user belonging to that position+department.
+func (bc *bddContext) thenCurrentApprovalAssignedToPosition(positionCode string) error {
+	activity, err := bc.getCurrentActivity()
+	if err != nil {
+		return err
+	}
+
+	var assignments []TicketAssignment
+	if err := bc.db.Where("activity_id = ?", activity.ID).Find(&assignments).Error; err != nil {
+		return fmt.Errorf("query assignments for activity %d: %w", activity.ID, err)
+	}
+	if len(assignments) == 0 {
+		return fmt.Errorf("no assignments found for activity %d", activity.ID)
+	}
+
+	orgSvc := &testOrgService{db: bc.db}
+
+	for _, assignment := range assignments {
+		// Check 1: direct PositionID match.
+		if assignment.PositionID != nil {
+			for code, pos := range bc.positions {
+				if pos.ID == *assignment.PositionID && code == positionCode {
+					return nil
+				}
+			}
+		}
+
+		// Check 2: assigned user belongs to the expected position (for smart engine).
+		var userID uint
+		if assignment.AssigneeID != nil {
+			userID = *assignment.AssigneeID
+		} else if assignment.UserID != nil {
+			userID = *assignment.UserID
+		}
+		if userID > 0 {
+			// Find what department code is associated with this position code.
+			for deptCode := range bc.departments {
+				eligibleIDs, err := orgSvc.FindUsersByPositionAndDepartment(positionCode, deptCode)
+				if err != nil {
+					continue
+				}
+				for _, uid := range eligibleIDs {
+					if uid == userID {
+						return nil
+					}
+				}
+			}
+		}
+	}
+
+	return fmt.Errorf("no assignment for activity %d targets position %q", activity.ID, positionCode)
+}
+
+// thenCurrentApprovalOnlyVisibleTo asserts that only the specified user is the assignee
+// or is eligible for the current activity's assignment.
+func (bc *bddContext) thenCurrentApprovalOnlyVisibleTo(username string) error {
+	expectedUser, ok := bc.usersByName[username]
+	if !ok {
+		return fmt.Errorf("user %q not found in context", username)
+	}
+
+	activity, err := bc.getCurrentActivity()
+	if err != nil {
+		return err
+	}
+
+	var assignments []TicketAssignment
+	if err := bc.db.Where("activity_id = ?", activity.ID).Find(&assignments).Error; err != nil {
+		return fmt.Errorf("query assignments for activity %d: %w", activity.ID, err)
+	}
+	if len(assignments) == 0 {
+		return fmt.Errorf("no assignments found for activity %d", activity.ID)
+	}
+
+	orgSvc := &testOrgService{db: bc.db}
+
+	for _, assignment := range assignments {
+		// Case 1: assignment has PositionID+DepartmentID — check via org resolution.
+		if assignment.PositionID != nil && assignment.DepartmentID != nil {
+			var posCode, deptCode string
+			for code, pos := range bc.positions {
+				if pos.ID == *assignment.PositionID {
+					posCode = code
+					break
+				}
+			}
+			for code, dept := range bc.departments {
+				if dept.ID == *assignment.DepartmentID {
+					deptCode = code
+					break
+				}
+			}
+
+			eligibleIDs, err := orgSvc.FindUsersByPositionAndDepartment(posCode, deptCode)
+			if err != nil {
+				return fmt.Errorf("resolve eligible users for %s/%s: %w", deptCode, posCode, err)
+			}
+
+			found := false
+			for _, uid := range eligibleIDs {
+				if uid == expectedUser.ID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("expected user %q is NOT eligible for %s/%s", username, deptCode, posCode)
+			}
+
+			for otherName, otherUser := range bc.usersByName {
+				if otherName == username {
+					continue
+				}
+				for _, uid := range eligibleIDs {
+					if uid == otherUser.ID {
+						return fmt.Errorf("user %q should NOT be eligible for %s/%s, but is", otherName, deptCode, posCode)
+					}
+				}
+			}
+			return nil
+		}
+
+		// Case 2: assignment has direct UserID or AssigneeID — check it matches expected user.
+		var assignedUserID uint
+		if assignment.AssigneeID != nil {
+			assignedUserID = *assignment.AssigneeID
+		} else if assignment.UserID != nil {
+			assignedUserID = *assignment.UserID
+		}
+		if assignedUserID > 0 {
+			if assignedUserID != expectedUser.ID {
+				return fmt.Errorf("assignment is for user ID %d, not %q (ID %d)", assignedUserID, username, expectedUser.ID)
+			}
+			return nil
+		}
+	}
+
+	return fmt.Errorf("could not determine visibility for assignments on activity %d", activity.ID)
+}
+
+// thenClaimShouldFail asserts that the specified user cannot claim the current activity's assignment
+// because they are not the assigned user or not in the assignment's position+department.
+func (bc *bddContext) thenClaimShouldFail(username string) error {
+	user, ok := bc.usersByName[username]
+	if !ok {
+		return fmt.Errorf("user %q not found in context", username)
+	}
+
+	activity, err := bc.getCurrentActivity()
+	if err != nil {
+		return err
+	}
+
+	var assignments []TicketAssignment
+	if err := bc.db.Where("activity_id = ?", activity.ID).Find(&assignments).Error; err != nil {
+		return fmt.Errorf("query assignments for activity %d: %w", activity.ID, err)
+	}
+
+	orgSvc := &testOrgService{db: bc.db}
+
+	for _, assignment := range assignments {
+		// Check position+department eligibility.
+		if assignment.PositionID != nil && assignment.DepartmentID != nil {
+			var posCode, deptCode string
+			for code, pos := range bc.positions {
+				if pos.ID == *assignment.PositionID {
+					posCode = code
+					break
+				}
+			}
+			for code, dept := range bc.departments {
+				if dept.ID == *assignment.DepartmentID {
+					deptCode = code
+					break
+				}
+			}
+
+			eligibleIDs, _ := orgSvc.FindUsersByPositionAndDepartment(posCode, deptCode)
+			for _, uid := range eligibleIDs {
+				if uid == user.ID {
+					return fmt.Errorf("user %q IS eligible for %s/%s — claim should not fail", username, deptCode, posCode)
+				}
+			}
+			continue
+		}
+
+		// Check direct user assignment.
+		var assignedUserID uint
+		if assignment.AssigneeID != nil {
+			assignedUserID = *assignment.AssigneeID
+		} else if assignment.UserID != nil {
+			assignedUserID = *assignment.UserID
+		}
+		if assignedUserID > 0 && assignedUserID == user.ID {
+			return fmt.Errorf("user %q IS directly assigned — claim should not fail", username)
+		}
+	}
+
+	// User is not eligible — assertion passes.
+	return nil
+}
+
+// thenApproveShouldFail asserts that the specified user cannot directly approve the current activity
+// because they are not in the assignment's position+department.
+func (bc *bddContext) thenApproveShouldFail(username string) error {
+	// Same eligibility check — if user can't claim, they can't approve either.
+	return bc.thenClaimShouldFail(username)
+}
+
+// ---------------------------------------------------------------------------
+// Shared smart engine retry step
+// ---------------------------------------------------------------------------
+
+// whenSmartEngineDecisionCycleUntilComplete runs the decision cycle up to 3 times,
+// stopping early once the ticket reaches a terminal state ("completed", "cancelled", "failed").
+// This accounts for AI model non-determinism where the LLM may not output "complete" on the first try.
+func (bc *bddContext) whenSmartEngineDecisionCycleUntilComplete() error {
+	if bc.ticket == nil {
+		return fmt.Errorf("no ticket in context")
+	}
+
+	const maxAttempts = 3
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		// Refresh ticket status
+		bc.db.First(bc.ticket, bc.ticket.ID)
+		if bc.ticket.Status == "completed" || bc.ticket.Status == "cancelled" || bc.ticket.Status == "failed" {
+			return nil
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		var completedID *uint
+		var lastCompleted TicketActivity
+		if err := bc.db.Where("ticket_id = ? AND status = ?", bc.ticket.ID, "completed").
+			Order("id DESC").First(&lastCompleted).Error; err == nil {
+			completedID = &lastCompleted.ID
+		}
+
+		err := bc.smartEngine.RunDecisionCycleForTicket(ctx, bc.db, bc.ticket.ID, completedID)
+		cancel()
+
+		if err != nil {
+			if err == engine.ErrAIDecisionFailed || err == engine.ErrAIDisabled {
+				log.Printf("decision cycle attempt %d/%d: %v", attempt, maxAttempts, err)
+				continue
+			}
+			log.Printf("decision cycle attempt %d/%d failed: %v", attempt, maxAttempts, err)
+		}
+
+		bc.db.First(bc.ticket, bc.ticket.ID)
+		if bc.ticket.Status == "completed" || bc.ticket.Status == "cancelled" || bc.ticket.Status == "failed" {
+			return nil
+		}
+	}
+
+	bc.db.First(bc.ticket, bc.ticket.ID)
+	return nil // let the Then step assert the final status
 }

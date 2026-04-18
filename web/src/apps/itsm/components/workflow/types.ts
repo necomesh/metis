@@ -49,7 +49,6 @@ export interface WFNodeData {
   // form / approve / process
   participants?: Participant[]
   formSchema?: unknown
-  formDefinitionId?: number
   // approve
   executionMode?: "single" | "parallel" | "sequential"
   // action
