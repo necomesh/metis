@@ -92,12 +92,15 @@ func (bc *bddContext) whenCountersignRoleApproves(positionCode string) error {
 	// Find the activity with an assignment matching the position code.
 	var targetActivity *TicketActivity
 	var targetAssignment TicketAssignment
+	orgSvc := &testOrgService{db: bc.db}
+
 	for i := range activities {
 		var assignment TicketAssignment
 		if err := bc.db.Where("activity_id = ?", activities[i].ID).First(&assignment).Error; err != nil {
 			continue
 		}
-		// Resolve position code from position ID.
+
+		// Match 1: direct PositionID match.
 		if assignment.PositionID != nil {
 			for code, pos := range bc.positions {
 				if pos.ID == *assignment.PositionID && code == positionCode {
@@ -107,12 +110,49 @@ func (bc *bddContext) whenCountersignRoleApproves(positionCode string) error {
 				}
 			}
 		}
+
+		// Match 2: assigned user belongs to the expected position (LLM sometimes
+		// uses participant_id directly instead of position_department).
+		if targetActivity == nil {
+			var userID uint
+			if assignment.AssigneeID != nil {
+				userID = *assignment.AssigneeID
+			} else if assignment.UserID != nil {
+				userID = *assignment.UserID
+			}
+			if userID > 0 {
+				for _, dept := range bc.departments {
+					userIDs, _ := orgSvc.FindUsersByPositionAndDepartment(positionCode, dept.Code)
+					for _, uid := range userIDs {
+						if uid == userID {
+							targetActivity = &activities[i]
+							targetAssignment = assignment
+							break
+						}
+					}
+					if targetActivity != nil {
+						break
+					}
+				}
+			}
+		}
+
 		if targetActivity != nil {
 			break
 		}
 	}
 
 	if targetActivity == nil {
+		// Diagnostic: log what assignments look like.
+		for i := range activities {
+			var assignment TicketAssignment
+			if err := bc.db.Where("activity_id = ?", activities[i].ID).First(&assignment).Error; err != nil {
+				log.Printf("[countersign-diag] activity %d (group=%s): no assignment: %v", activities[i].ID, activities[i].ActivityGroupID, err)
+				continue
+			}
+			log.Printf("[countersign-diag] activity %d: participantType=%s userID=%v positionID=%v deptID=%v assigneeID=%v",
+				activities[i].ID, assignment.ParticipantType, assignment.UserID, assignment.PositionID, assignment.DepartmentID, assignment.AssigneeID)
+		}
 		return fmt.Errorf("no parallel activity found for position %q", positionCode)
 	}
 

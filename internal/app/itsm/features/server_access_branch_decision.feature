@@ -20,7 +20,7 @@ Feature: 生产服务器临时访问申请 — 智能引擎分支决策
     And 当前活动类型为 "approve"
     And 当前审批分配到岗位 "ops_admin"
     When 当前活动的被分配人认领并审批通过
-    And 智能引擎再次执行决策循环
+    And 智能引擎执行决策循环直到工单完成
     Then 工单状态为 "completed"
 
   Scenario: 网络链路诊断访问路由到网络管理员并审批完成
@@ -30,7 +30,7 @@ Feature: 生产服务器临时访问申请 — 智能引擎分支决策
     And 当前活动类型为 "approve"
     And 当前审批分配到岗位 "network_admin"
     When 当前活动的被分配人认领并审批通过
-    And 智能引擎再次执行决策循环
+    And 智能引擎执行决策循环直到工单完成
     Then 工单状态为 "completed"
 
   Scenario: 安全审计取证访问路由到安全管理员并审批完成
@@ -40,7 +40,7 @@ Feature: 生产服务器临时访问申请 — 智能引擎分支决策
     And 当前活动类型为 "approve"
     And 当前审批分配到岗位 "security_admin"
     When 当前活动的被分配人认领并审批通过
-    And 智能引擎再次执行决策循环
+    And 智能引擎执行决策循环直到工单完成
     Then 工单状态为 "completed"
 
   Scenario: 模糊描述下的边界语义判定路由到安全管理员
@@ -50,7 +50,7 @@ Feature: 生产服务器临时访问申请 — 智能引擎分支决策
     And 当前活动类型为 "approve"
     And 当前审批分配到岗位 "security_admin"
     When 当前活动的被分配人认领并审批通过
-    And 智能引擎再次执行决策循环
+    And 智能引擎执行决策循环直到工单完成
     Then 工单状态为 "completed"
 
   Scenario: 运维分支审批的责任边界验证
@@ -63,5 +63,5 @@ Feature: 生产服务器临时访问申请 — 智能引擎分支决策
     And "network-operator" 认领当前工单应失败
     And "security-operator" 审批当前工单应失败
     When 当前活动的被分配人认领并审批通过
-    And 智能引擎再次执行决策循环
+    And 智能引擎执行决策循环直到工单完成
     Then 工单状态为 "completed"

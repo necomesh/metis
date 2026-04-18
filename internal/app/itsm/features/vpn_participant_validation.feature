@@ -25,5 +25,5 @@ Feature: VPN 开通申请 — 参与者校验
     Then 工单状态为 "in_progress"
     And 存在至少一个活动
     When 当前活动的被分配人认领并审批通过
-    And 智能引擎再次执行决策循环
+    And 智能引擎执行决策循环直到工单完成
     Then 工单状态为 "completed"

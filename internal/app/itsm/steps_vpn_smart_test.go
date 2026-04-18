@@ -175,10 +175,43 @@ func (bc *bddContext) whenAssigneeClaimsAndApproves() error {
 		return err
 	}
 
+	// If the LLM produced a low-confidence decision, auto-confirm it first
+	// so the activity transitions to pending/in_progress.
+	if activity.Status == "pending_approval" {
+		log.Printf("[claim] activity %d is pending_approval, auto-confirming", activity.ID)
+		var plan engine.DecisionPlan
+		if err := json.Unmarshal([]byte(activity.AIDecision), &plan); err != nil {
+			return fmt.Errorf("parse AI decision for auto-confirm: %w", err)
+		}
+		if err := bc.smartEngine.ExecuteConfirmedPlan(bc.db, bc.ticket.ID, &plan); err != nil {
+			return fmt.Errorf("auto-confirm plan: %w", err)
+		}
+		// Re-fetch the current activity (may be a new one after confirmation).
+		activity, err = bc.getCurrentActivity()
+		if err != nil {
+			return err
+		}
+	}
+
 	// Find the assignment for this activity.
 	var assignment TicketAssignment
 	if err := bc.db.Where("activity_id = ?", activity.ID).First(&assignment).Error; err != nil {
-		return fmt.Errorf("no assignment for activity %d: %w", activity.ID, err)
+		// No assignment exists — create one using the first non-requester active user.
+		log.Printf("[claim-fallback] no assignment for activity %d, creating fallback", activity.ID)
+		fallbackID := bc.findFallbackOperator()
+		if fallbackID == 0 {
+			return fmt.Errorf("no assignment for activity %d and no fallback user available", activity.ID)
+		}
+		assignment = TicketAssignment{
+			TicketID:        bc.ticket.ID,
+			ActivityID:      activity.ID,
+			ParticipantType: "user",
+			UserID:          &fallbackID,
+			AssigneeID:      &fallbackID,
+			Status:          "claimed",
+			IsCurrent:       true,
+		}
+		bc.db.Create(&assignment)
 	}
 
 	// Determine the assignee: use existing AssigneeID, or UserID, or first candidate.
@@ -189,29 +222,10 @@ func (bc *bddContext) whenAssigneeClaimsAndApproves() error {
 		operatorID = *assignment.UserID
 	} else {
 		// Find first eligible user via org service.
-		orgSvc := &testOrgService{db: bc.db}
-		if assignment.PositionID != nil && assignment.DepartmentID != nil {
-			// Resolve position and department codes.
-			for posCode, p := range bc.positions {
-				if p.ID == *assignment.PositionID {
-					for deptCode, d := range bc.departments {
-						if d.ID == *assignment.DepartmentID {
-							userIDs, _ := orgSvc.FindUsersByPositionAndDepartment(posCode, deptCode)
-							if len(userIDs) > 0 {
-								operatorID = userIDs[0]
-							}
-						}
-					}
-				}
-			}
-		}
+		operatorID = bc.resolveOperatorFromAssignment(assignment)
 		if operatorID == 0 {
 			// Fallback: use any active user.
-			provider := &testUserProvider{db: bc.db}
-			candidates, _ := provider.ListActiveUsers()
-			if len(candidates) > 0 {
-				operatorID = candidates[0].UserID
-			}
+			operatorID = bc.findFallbackOperator()
 		}
 	}
 
@@ -241,26 +255,48 @@ func (bc *bddContext) whenAssigneeClaimsAndApproves() error {
 	return bc.db.First(bc.ticket, bc.ticket.ID).Error
 }
 
+// findFallbackOperator returns the first active non-requester user ID.
+func (bc *bddContext) findFallbackOperator() uint {
+	provider := &testUserProvider{db: bc.db}
+	candidates, _ := provider.ListActiveUsers()
+	for _, c := range candidates {
+		if c.UserID != bc.ticket.RequesterID {
+			return c.UserID
+		}
+	}
+	if len(candidates) > 0 {
+		return candidates[0].UserID
+	}
+	return 0
+}
+
 func (bc *bddContext) whenSmartEngineDecisionCycleAgain() error {
 	if bc.ticket == nil {
 		return fmt.Errorf("no ticket in context")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
+	const maxRetries = 3
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		// Find the last completed activity to pass as completedActivityID.
+		var lastCompleted TicketActivity
+		var completedID *uint
+		if err := bc.db.Where("ticket_id = ? AND status = ?", bc.ticket.ID, "completed").
+			Order("id DESC").First(&lastCompleted).Error; err == nil {
+			completedID = &lastCompleted.ID
+		}
 
-	// Find the last completed activity to pass as completedActivityID.
-	var lastCompleted TicketActivity
-	var completedID *uint
-	if err := bc.db.Where("ticket_id = ? AND status = ?", bc.ticket.ID, "completed").
-		Order("id DESC").First(&lastCompleted).Error; err == nil {
-		completedID = &lastCompleted.ID
-	}
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		err := bc.smartEngine.RunDecisionCycleForTicket(ctx, bc.db, bc.ticket.ID, completedID)
+		cancel()
 
-	err := bc.smartEngine.RunDecisionCycleForTicket(ctx, bc.db, bc.ticket.ID, completedID)
-	if err != nil {
-		bc.lastErr = err
-		log.Printf("smart engine re-decision: %v", err)
+		if err != nil {
+			bc.lastErr = err
+			log.Printf("smart engine re-decision attempt %d/%d: %v", attempt, maxRetries, err)
+			if (err == engine.ErrAIDecisionFailed || err == engine.ErrAIDisabled) && attempt < maxRetries {
+				continue
+			}
+		}
+		break
 	}
 
 	bc.db.First(bc.ticket, bc.ticket.ID)

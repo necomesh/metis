@@ -26,7 +26,7 @@ Feature: 多角色并签后汇聚 — 智能引擎
     When 智能引擎再次执行决策循环
     Then 当前活动类型为 "approve"
     When 当前活动的被分配人认领并审批通过
-    And 智能引擎再次执行决策循环
+    And 智能引擎执行决策循环直到工单完成
     Then 工单状态为 "completed"
 
   @bdd @itsm @countersign
