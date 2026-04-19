@@ -108,15 +108,15 @@ func (a *ITSMApp) Providers(i do.Injector) {
 		submitter := &schedulerSubmitter{db: db.DB}
 
 		// Try to resolve AI App services (optional)
-		var agentProvider engine.AgentProvider
+		var decisionExecutor app.AIDecisionExecutor
 		var knowledgeSearcher engine.KnowledgeSearcher
 
-		aiAgent, err := do.InvokeAs[app.AIAgentProvider](i)
-		if err == nil && aiAgent != nil {
-			agentProvider = &aiAgentAdapter{provider: aiAgent}
-			slog.Info("ITSM SmartEngine: AI Agent provider available")
+		de, err := do.InvokeAs[app.AIDecisionExecutor](i)
+		if err == nil && de != nil {
+			decisionExecutor = de
+			slog.Info("ITSM SmartEngine: AI DecisionExecutor available")
 		} else {
-			slog.Info("ITSM SmartEngine: AI Agent provider not available, smart engine disabled")
+			slog.Info("ITSM SmartEngine: AI DecisionExecutor not available, smart engine disabled")
 		}
 
 		aiKnowledge, err := do.InvokeAs[app.AIKnowledgeSearcher](i)
@@ -134,7 +134,7 @@ func (a *ITSMApp) Providers(i do.Injector) {
 		// Engine config provider for fallback assignee
 		configProvider := do.MustInvoke[*EngineConfigService](i)
 
-		se := engine.NewSmartEngine(agentProvider, knowledgeSearcher, userProvider, resolver, submitter, configProvider)
+		se := engine.NewSmartEngine(decisionExecutor, knowledgeSearcher, userProvider, resolver, submitter, configProvider)
 		se.SetActionExecutor(engine.NewActionExecutor(db.DB))
 		return se, nil
 	})
@@ -182,7 +182,10 @@ func (a *ITSMApp) Providers(i do.Injector) {
 			_, err := ticketSvc.Withdraw(ticketID, reason, operatorID)
 			return err
 		}
-		return tools.NewOperator(db.DB, resolver, orgResolver, withdrawFunc), nil
+		// TicketCreator is resolved lazily (same pattern as withdrawFunc) to break circular dep.
+		var ticketCreator tools.TicketCreator
+		ticketCreator = &lazyTicketCreator{injector: i}
+		return tools.NewOperator(db.DB, resolver, orgResolver, withdrawFunc, ticketCreator), nil
 	})
 	do.Provide(i, func(i do.Injector) (*tools.SessionStateStore, error) {
 		db := do.MustInvoke[*database.DB](i)
@@ -401,32 +404,22 @@ var _ engine.WorkflowEngine = (*engine.SmartEngine)(nil)
 // Ensure ITSMApp implements app.ToolRegistryProvider at compile time
 var _ app.ToolRegistryProvider = (*ITSMApp)(nil)
 
+// lazyTicketCreator defers resolution of TicketService to break circular dependency.
+type lazyTicketCreator struct {
+	injector do.Injector
+}
+
+func (l *lazyTicketCreator) CreateFromAgent(ctx context.Context, req tools.AgentTicketRequest) (*tools.AgentTicketResult, error) {
+	ticketSvc := do.MustInvoke[*TicketService](l.injector)
+	return ticketSvc.CreateFromAgent(ctx, req)
+}
+
+var _ tools.TicketCreator = (*lazyTicketCreator)(nil)
+
 // Placeholder for background context usage
 var _ = context.Background
 
 // --- AI App adapters (bridge app.AI* interfaces to engine.* interfaces) ---
-
-// aiAgentAdapter adapts app.AIAgentProvider to engine.AgentProvider.
-type aiAgentAdapter struct {
-	provider app.AIAgentProvider
-}
-
-func (a *aiAgentAdapter) GetAgentConfig(agentID uint) (*engine.SmartAgentConfig, error) {
-	cfg, err := a.provider.GetAgentConfig(agentID)
-	if err != nil {
-		return nil, err
-	}
-	return &engine.SmartAgentConfig{
-		Name:         cfg.Name,
-		SystemPrompt: cfg.SystemPrompt,
-		Temperature:  cfg.Temperature,
-		MaxTokens:    cfg.MaxTokens,
-		Model:        cfg.Model,
-		Protocol:     cfg.Protocol,
-		BaseURL:      cfg.BaseURL,
-		APIKey:       cfg.APIKey,
-	}, nil
-}
 
 // aiKnowledgeAdapter adapts app.AIKnowledgeSearcher to engine.KnowledgeSearcher.
 type aiKnowledgeAdapter struct {

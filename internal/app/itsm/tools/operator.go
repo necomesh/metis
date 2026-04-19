@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -17,15 +18,16 @@ import (
 // Operator is the concrete ServiceDeskOperator implementation.
 // It bridges the ITSM tool handlers to the actual ITSM business services.
 type Operator struct {
-	db           *gorm.DB
-	resolver     *engine.ParticipantResolver
-	orgResolver  app.OrgResolver // nil when Org App is not installed
-	withdrawFunc func(ticketID uint, reason string, operatorID uint) error
+	db             *gorm.DB
+	resolver       *engine.ParticipantResolver
+	orgResolver    app.OrgResolver // nil when Org App is not installed
+	withdrawFunc   func(ticketID uint, reason string, operatorID uint) error
+	ticketCreator  TicketCreator // nil-safe: falls back to error if not set
 }
 
 // NewOperator creates a new ServiceDeskOperator.
-func NewOperator(db *gorm.DB, resolver *engine.ParticipantResolver, orgResolver app.OrgResolver, withdrawFunc func(uint, string, uint) error) *Operator {
-	return &Operator{db: db, resolver: resolver, orgResolver: orgResolver, withdrawFunc: withdrawFunc}
+func NewOperator(db *gorm.DB, resolver *engine.ParticipantResolver, orgResolver app.OrgResolver, withdrawFunc func(uint, string, uint) error, ticketCreator TicketCreator) *Operator {
+	return &Operator{db: db, resolver: resolver, orgResolver: orgResolver, withdrawFunc: withdrawFunc, ticketCreator: ticketCreator}
 }
 
 // MatchServices searches active ServiceDefinitions by keyword scoring.
@@ -129,61 +131,28 @@ func (o *Operator) LoadService(serviceID uint) (*ServiceDetail, error) {
 	return detail, nil
 }
 
-// CreateTicket creates an ITSM ticket via the database.
+// CreateTicket creates an ITSM ticket via the TicketService, ensuring full lifecycle
+// processing (SLA, engine start, timeline) identical to UI-created tickets.
 func (o *Operator) CreateTicket(userID uint, serviceID uint, summary string, formData map[string]any, sessionID uint) (*TicketResult, error) {
-	// Get next ticket code.
-	code, err := o.nextTicketCode()
+	if o.ticketCreator == nil {
+		return nil, fmt.Errorf("ticket creation is not available")
+	}
+
+	result, err := o.ticketCreator.CreateFromAgent(context.Background(), AgentTicketRequest{
+		UserID:    userID,
+		ServiceID: serviceID,
+		Summary:   summary,
+		FormData:  formData,
+		SessionID: sessionID,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("generate ticket code: %w", err)
+		return nil, fmt.Errorf("create ticket: %w", err)
 	}
-
-	formJSON, _ := json.Marshal(formData)
-
-	// Look up default priority.
-	var priorityID uint
-	o.db.Table("itsm_priorities").Where("is_active = ? AND deleted_at IS NULL", true).
-		Order("value ASC").Select("id").Limit(1).Row().Scan(&priorityID)
-	if priorityID == 0 {
-		priorityID = 1
-	}
-
-	// Copy engine type and workflow from service.
-	var svc struct {
-		EngineType   string
-		WorkflowJSON string
-	}
-	o.db.Table("itsm_service_definitions").Where("id = ?", serviceID).
-		Select("engine_type, workflow_json").First(&svc)
-
-	ticket := map[string]any{
-		"code":             code,
-		"title":            summary,
-		"description":      summary,
-		"service_id":       serviceID,
-		"engine_type":      svc.EngineType,
-		"status":           "pending",
-		"priority_id":      priorityID,
-		"requester_id":     userID,
-		"source":           "agent",
-		"agent_session_id": sessionID,
-		"form_data":        string(formJSON),
-		"workflow_json":    svc.WorkflowJSON,
-		"sla_status":       "on_track",
-	}
-
-	result := o.db.Table("itsm_tickets").Create(ticket)
-	if result.Error != nil {
-		return nil, fmt.Errorf("create ticket: %w", result.Error)
-	}
-
-	// Read back the created ticket ID.
-	var created struct{ ID uint }
-	o.db.Table("itsm_tickets").Where("code = ?", code).Select("id").First(&created)
 
 	return &TicketResult{
-		TicketID:   created.ID,
-		TicketCode: code,
-		Status:     "pending",
+		TicketID:   result.TicketID,
+		TicketCode: result.TicketCode,
+		Status:     result.Status,
 	}, nil
 }
 
@@ -384,25 +353,6 @@ func (o *Operator) buildCatalogPath(catalogID uint) string {
 		currentID = *c.ParentID
 	}
 	return strings.Join(parts, "/")
-}
-
-func (o *Operator) nextTicketCode() (string, error) {
-	// Use a simple counter approach: find max code and increment.
-	var maxCode string
-	o.db.Table("itsm_tickets").Select("code").Order("id DESC").Limit(1).Row().Scan(&maxCode)
-
-	if maxCode == "" {
-		return "ITSM-000001", nil
-	}
-
-	// Parse numeric part.
-	parts := strings.Split(maxCode, "-")
-	if len(parts) < 2 {
-		return "ITSM-000001", nil
-	}
-	var num int
-	fmt.Sscanf(parts[len(parts)-1], "%d", &num)
-	return fmt.Sprintf("ITSM-%06d", num+1), nil
 }
 
 func tokenize(s string) []string {

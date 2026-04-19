@@ -13,6 +13,7 @@ import (
 
 	"metis/internal/app"
 	"metis/internal/app/itsm/engine"
+	"metis/internal/app/itsm/tools"
 )
 
 var (
@@ -180,6 +181,46 @@ func (s *TicketService) Create(input CreateTicketInput, requesterID uint) (*Tick
 	}
 
 	return s.ticketRepo.FindByID(ticket.ID)
+}
+
+// CreateFromAgent creates a ticket from an AI agent session, using full TicketService processing
+// (validation, SLA, engine start, timeline). This ensures agent-created tickets are identical to
+// UI-created tickets in terms of lifecycle processing.
+func (s *TicketService) CreateFromAgent(ctx context.Context, req tools.AgentTicketRequest) (*tools.AgentTicketResult, error) {
+	// Resolve default priority (lowest value = highest priority)
+	defaultPriority, err := s.priorityRepo.FindDefaultActive()
+	if err != nil {
+		return nil, fmt.Errorf("no active priority found: %w", err)
+	}
+
+	formJSON, _ := json.Marshal(req.FormData)
+	input := CreateTicketInput{
+		Title:       req.Summary,
+		Description: req.Summary,
+		ServiceID:   req.ServiceID,
+		PriorityID:  defaultPriority.ID,
+		FormData:    JSONField(formJSON),
+	}
+
+	ticket, err := s.Create(input, req.UserID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Update source and agent session binding
+	updates := map[string]any{
+		"source":           TicketSourceAgent,
+		"agent_session_id": req.SessionID,
+	}
+	if err := s.ticketRepo.DB().Model(&Ticket{}).Where("id = ?", ticket.ID).Updates(updates).Error; err != nil {
+		return nil, fmt.Errorf("update ticket source: %w", err)
+	}
+
+	return &tools.AgentTicketResult{
+		TicketID:   ticket.ID,
+		TicketCode: ticket.Code,
+		Status:     ticket.Status,
+	}, nil
 }
 
 // Progress advances a workflow ticket. The operator must be the assignee or have admin privileges.

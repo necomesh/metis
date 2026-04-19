@@ -53,12 +53,12 @@ func (bc *bddContext) givenFallbackAssignee(username string) error {
 	bc.fallbackUserID = user.ID
 	configProvider := &testConfigProvider{fallbackAssigneeID: user.ID}
 
-	agentProvider := &testAgentProvider{db: bc.db, llmCfg: bc.llmCfg}
+	executor := &testDecisionExecutor{db: bc.db, llmCfg: bc.llmCfg}
 	userProvider := &testUserProvider{db: bc.db}
 	orgSvc := &testOrgService{db: bc.db}
 	resolver := engine.NewParticipantResolver(orgSvc)
 
-	bc.smartEngine = engine.NewSmartEngine(agentProvider, nil, userProvider, resolver, &noopSubmitter{}, configProvider)
+	bc.smartEngine = engine.NewSmartEngine(executor, nil, userProvider, resolver, &noopSubmitter{}, configProvider)
 	return nil
 }
 

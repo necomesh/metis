@@ -357,17 +357,39 @@ func SeedAgents(db *gorm.DB) error {
 	}
 
 	for _, agent := range agents {
-		// Check if agent already exists
+		// Match by code field for preset agents (upsert mode)
 		var existing struct {
 			ID   uint
 			Code string
 		}
-		if err := db.Table("ai_agents").Where("name = ?", agent.Name).Select("id", "code").First(&existing).Error; err == nil {
-			// Agent exists — ensure code is set
-			if existing.Code == "" && agent.Code != "" {
-				db.Table("ai_agents").Where("id = ?", existing.ID).Update("code", agent.Code)
-				slog.Info("ITSM agent seed: updated agent code", "name", agent.Name, "code", agent.Code)
+		if agent.Code != "" {
+			if err := db.Table("ai_agents").Where("code = ?", agent.Code).Select("id", "code").First(&existing).Error; err == nil {
+				// Preset agent exists — update system_prompt and behavior params on every sync
+				db.Table("ai_agents").Where("id = ?", existing.ID).Updates(map[string]any{
+					"system_prompt": agent.SystemPrompt,
+					"temperature":   agent.Temperature,
+					"max_tokens":    agent.MaxTokens,
+					"max_turns":     agent.MaxTurns,
+				})
+				slog.Info("ITSM agent seed: synced preset agent", "name", agent.Name, "code", agent.Code)
+				continue
 			}
+		}
+
+		// Fallback: check by name for backward compatibility
+		if err := db.Table("ai_agents").Where("name = ?", agent.Name).Select("id", "code").First(&existing).Error; err == nil {
+			// Agent exists by name — set code if missing, then update
+			updates := map[string]any{
+				"system_prompt": agent.SystemPrompt,
+				"temperature":   agent.Temperature,
+				"max_tokens":    agent.MaxTokens,
+				"max_turns":     agent.MaxTurns,
+			}
+			if existing.Code == "" && agent.Code != "" {
+				updates["code"] = agent.Code
+			}
+			db.Table("ai_agents").Where("id = ?", existing.ID).Updates(updates)
+			slog.Info("ITSM agent seed: synced agent by name", "name", agent.Name, "code", agent.Code)
 			continue
 		}
 

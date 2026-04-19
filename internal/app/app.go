@@ -1,7 +1,9 @@
 package app
 
 import (
+	"context"
 	"embed"
+	"encoding/json"
 
 	"github.com/casbin/casbin/v2"
 	"github.com/gin-gonic/gin"
@@ -153,4 +155,35 @@ type AIToolRegistry interface {
 // The returned value must satisfy ai.ToolHandlerRegistry.
 type ToolRegistryProvider interface {
 	GetToolRegistry() any
+}
+
+// AIDecisionExecutor runs AI decision cycles (ReAct tool-calling loops) for smart
+// workflow engines. Implemented by the AI App; the engine provides domain context
+// and tool handlers.
+type AIDecisionExecutor interface {
+	Execute(ctx context.Context, agentID uint, req AIDecisionRequest) (*AIDecisionResponse, error)
+}
+
+// AIToolDef defines a tool available during AI decision.
+type AIToolDef struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Parameters  any    `json:"parameters"`
+}
+
+// AIDecisionRequest contains everything needed to run an AI decision cycle.
+type AIDecisionRequest struct {
+	SystemPrompt string
+	UserMessage  string
+	Tools        []AIToolDef
+	ToolHandler  func(name string, args json.RawMessage) (json.RawMessage, error)
+	MaxTurns     int // 0 = use default
+}
+
+// AIDecisionResponse contains the result of an AI decision cycle.
+type AIDecisionResponse struct {
+	Content      string
+	InputTokens  int
+	OutputTokens int
+	Turns        int
 }

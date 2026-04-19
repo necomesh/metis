@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+
+	"metis/internal/app"
 )
 
 // memStateStore is an in-memory StateStore for testing.
@@ -80,7 +82,7 @@ func TestDraftPrepare_MultivalueRoutingField_ResolvedValues(t *testing.T) {
 		FieldsHash:      "abc123",
 	}
 
-	ctx := context.WithValue(context.Background(), SessionIDKey, uint(1))
+	ctx := context.WithValue(context.Background(), app.SessionIDKey, uint(1))
 
 	// Case 1: Routing field with cross-route multi-values → resolved_values present.
 	args, _ := json.Marshal(map[string]any{
@@ -152,7 +154,7 @@ func TestDraftPrepare_MultivalueNonRoutingField_NoResolvedValues(t *testing.T) {
 		FieldsHash:      "abc123",
 	}
 
-	ctx := context.WithValue(context.Background(), SessionIDKey, uint(1))
+	ctx := context.WithValue(context.Background(), app.SessionIDKey, uint(1))
 
 	// Multi-value on non-routing field → no resolved_values.
 	args, _ := json.Marshal(map[string]any{
@@ -187,4 +189,70 @@ func TestDraftPrepare_MultivalueNonRoutingField_NoResolvedValues(t *testing.T) {
 		}
 	}
 	t.Fatal("expected multivalue_on_single_field warning for vpn_type")
+}
+
+// --- State Machine Transition Tests ---
+
+func TestTransitionTo_ValidTransitions(t *testing.T) {
+	tests := []struct {
+		from string
+		to   string
+	}{
+		{"idle", "candidates_ready"},
+		{"candidates_ready", "service_selected"},
+		{"candidates_ready", "service_loaded"},
+		{"service_selected", "service_loaded"},
+		{"service_loaded", "awaiting_confirmation"},
+		{"awaiting_confirmation", "confirmed"},
+		{"awaiting_confirmation", "awaiting_confirmation"}, // re-draft
+		{"confirmed", "candidates_ready"},                  // restart
+		// "candidates_ready" is universally allowed
+		{"service_loaded", "candidates_ready"},
+		{"awaiting_confirmation", "candidates_ready"},
+	}
+	for _, tt := range tests {
+		s := &ServiceDeskState{Stage: tt.from}
+		if err := s.TransitionTo(tt.to); err != nil {
+			t.Errorf("TransitionTo(%q → %q) returned error: %v", tt.from, tt.to, err)
+		}
+		if s.Stage != tt.to {
+			t.Errorf("after TransitionTo(%q → %q), Stage = %q", tt.from, tt.to, s.Stage)
+		}
+	}
+}
+
+func TestTransitionTo_InvalidTransitions(t *testing.T) {
+	tests := []struct {
+		from string
+		to   string
+	}{
+		{"idle", "confirmed"},
+		{"idle", "service_loaded"},
+		{"idle", "awaiting_confirmation"},
+		{"candidates_ready", "confirmed"},
+		{"service_selected", "confirmed"},
+		{"confirmed", "confirmed"},
+	}
+	for _, tt := range tests {
+		s := &ServiceDeskState{Stage: tt.from}
+		if err := s.TransitionTo(tt.to); err == nil {
+			t.Errorf("TransitionTo(%q → %q) expected error, got nil", tt.from, tt.to)
+		}
+		if s.Stage != tt.from {
+			t.Errorf("after failed TransitionTo(%q → %q), Stage changed to %q", tt.from, tt.to, s.Stage)
+		}
+	}
+}
+
+func TestTransitionTo_IdleAlwaysAllowed(t *testing.T) {
+	stages := []string{"idle", "candidates_ready", "service_selected", "service_loaded", "awaiting_confirmation", "confirmed"}
+	for _, from := range stages {
+		s := &ServiceDeskState{Stage: from}
+		if err := s.TransitionTo("idle"); err != nil {
+			t.Errorf("TransitionTo(%q → idle) returned error: %v", from, err)
+		}
+		if s.Stage != "idle" {
+			t.Errorf("after TransitionTo(%q → idle), Stage = %q", from, s.Stage)
+		}
+	}
 }

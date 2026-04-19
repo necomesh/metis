@@ -43,6 +43,14 @@ func (r *PriorityRepo) Delete(id uint) error {
 	return r.db.Delete(&Priority{}, id).Error
 }
 
+func (r *PriorityRepo) FindDefaultActive() (*Priority, error) {
+	var p Priority
+	if err := r.db.Where("is_active = ?", true).Order("value ASC").First(&p).Error; err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
 func (r *PriorityRepo) ListAll() ([]Priority, error) {
 	var items []Priority
 	if err := r.db.Order("value ASC, id ASC").Find(&items).Error; err != nil {

@@ -25,6 +25,7 @@ import (
 	"metis/internal/app/ai"
 	"metis/internal/app/itsm/engine"
 	"metis/internal/app/org"
+	"metis/internal/llm"
 	"metis/internal/model"
 )
 
@@ -148,9 +149,9 @@ func (bc *bddContext) reset() {
 	}
 
 	// Build SmartEngine with test dependencies.
-	agentProvider := &testAgentProvider{db: db, llmCfg: bc.llmCfg}
+	executor := &testDecisionExecutor{db: db, llmCfg: bc.llmCfg}
 	userProvider := &testUserProvider{db: db}
-	bc.smartEngine = engine.NewSmartEngine(agentProvider, nil, userProvider, resolver, submitter, &bddConfigProvider{bc: bc})
+	bc.smartEngine = engine.NewSmartEngine(executor, nil, userProvider, resolver, submitter, &bddConfigProvider{bc: bc})
 }
 
 // ---------------------------------------------------------------------------
@@ -382,31 +383,121 @@ func (s *syncActionSubmitter) SubmitTask(taskName string, payload json.RawMessag
 
 var _ engine.TaskSubmitter = (*syncActionSubmitter)(nil)
 
-// testAgentProvider implements engine.AgentProvider for BDD tests.
-// Reads Agent record from DB, combines with LLM config from env.
-type testAgentProvider struct {
+// testDecisionExecutor implements app.AIDecisionExecutor for BDD tests.
+// Reads Agent record from DB, combines with LLM config from env, and runs the ReAct loop.
+type testDecisionExecutor struct {
 	db     *gorm.DB
 	llmCfg llmConfig
 }
 
-func (p *testAgentProvider) GetAgentConfig(agentID uint) (*engine.SmartAgentConfig, error) {
+func (e *testDecisionExecutor) Execute(ctx context.Context, agentID uint, req app.AIDecisionRequest) (*app.AIDecisionResponse, error) {
+	// 1. Read agent from DB for system prompt / temperature / max_tokens.
 	var agent ai.Agent
-	if err := p.db.First(&agent, agentID).Error; err != nil {
+	if err := e.db.First(&agent, agentID).Error; err != nil {
 		return nil, fmt.Errorf("agent %d not found: %w", agentID, err)
 	}
-	return &engine.SmartAgentConfig{
-		Name:         agent.Name,
-		SystemPrompt: agent.SystemPrompt,
-		Temperature:  agent.Temperature,
-		MaxTokens:    agent.MaxTokens,
-		Protocol:     "openai",
-		BaseURL:      p.llmCfg.baseURL,
-		APIKey:       p.llmCfg.apiKey,
-		Model:        p.llmCfg.model,
-	}, nil
+
+	// 2. Create LLM client.
+	client, err := llm.NewClient(llm.ProtocolOpenAI, e.llmCfg.baseURL, e.llmCfg.apiKey)
+	if err != nil {
+		return nil, fmt.Errorf("create llm client: %w", err)
+	}
+
+	// 3. Compose system prompt: agent's own + domain prompt from request.
+	systemPrompt := ""
+	if agent.SystemPrompt != "" {
+		systemPrompt = "## 角色定义\n\n" + agent.SystemPrompt + "\n\n---\n\n"
+	}
+	systemPrompt += req.SystemPrompt
+
+	// 4. Convert tool defs.
+	toolDefs := make([]llm.ToolDef, len(req.Tools))
+	for i, t := range req.Tools {
+		toolDefs[i] = llm.ToolDef{
+			Name:        t.Name,
+			Description: t.Description,
+			Parameters:  t.Parameters,
+		}
+	}
+
+	// 5. Build messages.
+	messages := []llm.Message{
+		{Role: llm.RoleSystem, Content: systemPrompt},
+		{Role: llm.RoleUser, Content: req.UserMessage},
+	}
+
+	var tempPtr *float32
+	if agent.Temperature != 0 {
+		temp := float32(agent.Temperature)
+		tempPtr = &temp
+	}
+	maxTokens := agent.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 4096
+	}
+
+	maxTurns := req.MaxTurns
+	if maxTurns <= 0 {
+		maxTurns = 8
+	}
+
+	// 6. ReAct loop: chat → tool calls → tool results → repeat.
+	var totalInputTokens, totalOutputTokens int
+	for turn := 0; turn < maxTurns; turn++ {
+		chatReq := llm.ChatRequest{
+			Model:       e.llmCfg.model,
+			Messages:    messages,
+			Tools:       toolDefs,
+			MaxTokens:   maxTokens,
+			Temperature: tempPtr,
+		}
+
+		resp, err := client.Chat(ctx, chatReq)
+		if err != nil {
+			return nil, fmt.Errorf("llm chat (turn %d): %w", turn, err)
+		}
+
+		totalInputTokens += resp.Usage.InputTokens
+		totalOutputTokens += resp.Usage.OutputTokens
+
+		// No tool calls → final answer.
+		if len(resp.ToolCalls) == 0 {
+			return &app.AIDecisionResponse{
+				Content:      resp.Content,
+				InputTokens:  totalInputTokens,
+				OutputTokens: totalOutputTokens,
+				Turns:        turn + 1,
+			}, nil
+		}
+
+		// Append assistant message with tool calls.
+		messages = append(messages, llm.Message{
+			Role:      llm.RoleAssistant,
+			Content:   resp.Content,
+			ToolCalls: resp.ToolCalls,
+		})
+
+		// Execute tool calls via the provided handler.
+		for _, tc := range resp.ToolCalls {
+			result, err := req.ToolHandler(tc.Name, json.RawMessage(tc.Arguments))
+			var content string
+			if err != nil {
+				content = fmt.Sprintf(`{"error": "%s"}`, err.Error())
+			} else {
+				content = string(result)
+			}
+			messages = append(messages, llm.Message{
+				Role:       llm.RoleTool,
+				Content:    content,
+				ToolCallID: tc.ID,
+			})
+		}
+	}
+
+	return nil, fmt.Errorf("决策循环超过最大轮数 (%d)，未产生最终决策", maxTurns)
 }
 
-var _ engine.AgentProvider = (*testAgentProvider)(nil)
+var _ app.AIDecisionExecutor = (*testDecisionExecutor)(nil)
 
 // testUserProvider implements engine.UserProvider for BDD tests.
 // Queries all active users with their position/department info from the BDD in-memory DB.

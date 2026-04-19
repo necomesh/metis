@@ -111,7 +111,7 @@ func setupDialogTest(bc *bddContext) (func(ctx context.Context, userMsg string) 
 	}
 
 	// Build ITSM tool registry backed by real operator + memStateStore.
-	op := tools.NewOperator(bc.db, nil, nil, nil)
+	op := tools.NewOperator(bc.db, nil, nil, nil, nil)
 	store := newMemStateStore()
 	registry := tools.NewRegistry(op, store)
 

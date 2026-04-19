@@ -92,6 +92,12 @@ func (a *AIApp) Providers(i do.Injector) {
 	do.Provide(i, NewMemoryHandler)
 	do.Provide(i, NewAgentGateway)
 
+	// DecisionExecutor for smart workflow engine decision cycles
+	do.Provide(i, func(i do.Injector) (app.AIDecisionExecutor, error) {
+		gw := do.MustInvoke[*AgentGateway](i)
+		return NewDecisionExecutor(gw), nil
+	})
+
 	// General tool registry (used by CompositeToolExecutor in gateway)
 	do.Provide(i, func(i do.Injector) (*GeneralToolRegistry, error) {
 		userSvc := do.MustInvoke[*service.UserService](i)
