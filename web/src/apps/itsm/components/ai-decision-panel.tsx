@@ -36,6 +36,7 @@ export function AIDecisionPanel({ ticketId, activity }: AIDecisionPanelProps) {
 
   const confidencePercent = (activity.confidence ?? 0) * 100
   const isPendingApproval = activity.status === "pending_approval"
+  const canAct = activity.canAct
 
   let plan: DecisionPlan | null = null
   if (activity.aiDecision) {
@@ -127,7 +128,7 @@ export function AIDecisionPanel({ ticketId, activity }: AIDecisionPanelProps) {
         )}
 
         {/* Confirm / Reject buttons */}
-        {isPendingApproval && (
+        {isPendingApproval && canAct && (
           <div className="flex gap-2 pt-1">
             <Button
               size="sm"
@@ -155,6 +156,11 @@ export function AIDecisionPanel({ ticketId, activity }: AIDecisionPanelProps) {
               {t("smart.reject")}
             </Button>
           </div>
+        )}
+        {isPendingApproval && !canAct && (
+          <p className="text-sm text-muted-foreground">
+            {t("smart.pendingApprovalReadonly", { defaultValue: "当前 AI 决策正在等待有权限的处理人确认。" })}
+          </p>
         )}
       </CardContent>
 

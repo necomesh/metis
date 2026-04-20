@@ -97,7 +97,7 @@ func toolTicketContext() decisionToolDef {
 			}
 
 			// Activity history
-			activities, _ := ctx.data.GetCompletedActivities(ctx.ticketID)
+			activities, _ := ctx.data.GetDecisionHistory(ctx.ticketID)
 
 			var history []map[string]any
 			for _, a := range activities {
@@ -111,6 +111,9 @@ func toolTicketContext() decisionToolDef {
 				}
 				if a.AIReasoning != "" {
 					entry["ai_reasoning"] = a.AIReasoning
+				}
+				if a.DecisionReasoning != "" {
+					entry["decision_reasoning"] = a.DecisionReasoning
 				}
 				history = append(history, entry)
 			}

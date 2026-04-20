@@ -281,6 +281,10 @@ func (h *InstallHandler) Execute(c *gin.Context) {
 		Fail(c, http.StatusInternalServerError, "failed to create admin: "+err.Error())
 		return
 	}
+	if err := assignInstallAdminOrgIdentity(db.DB, req.AdminUsername); err != nil {
+		Fail(c, http.StatusInternalServerError, "failed to assign admin org identity: "+err.Error())
+		return
+	}
 
 	// 9. Mark installed
 	if err := seed.SetInstalled(db.DB); err != nil {
@@ -306,6 +310,38 @@ func (h *InstallHandler) Execute(c *gin.Context) {
 	}
 
 	OK(c, nil)
+}
+
+func assignInstallAdminOrgIdentity(db *gorm.DB, username string) error {
+	var user struct{ ID uint }
+	if err := db.Table("users").Where("username = ?", username).Select("id").First(&user).Error; err != nil {
+		return err
+	}
+
+	type departmentRow struct{ ID uint }
+	var dept departmentRow
+	if err := db.Table("departments").Where("code = ?", "it").Select("id").First(&dept).Error; err != nil {
+		return err
+	}
+
+	type positionRow struct{ ID uint }
+	var pos positionRow
+	if err := db.Table("positions").Where("code = ?", "it_admin").Select("id").First(&pos).Error; err != nil {
+		return err
+	}
+
+	type userPositionRow struct{ ID uint }
+	var existing userPositionRow
+	if err := db.Table("user_positions").Where("user_id = ? AND department_id = ? AND position_id = ?", user.ID, dept.ID, pos.ID).Select("id").First(&existing).Error; err == nil {
+		return nil
+	}
+
+	return db.Table("user_positions").Create(map[string]any{
+		"user_id":       user.ID,
+		"department_id": dept.ID,
+		"position_id":   pos.ID,
+		"is_primary":    true,
+	}).Error
 }
 
 func (h *InstallHandler) hotSwitch(cfg *config.MetisConfig, db *database.DB, enforcer *casbin.Enforcer) error {

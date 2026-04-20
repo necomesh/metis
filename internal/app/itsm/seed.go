@@ -512,7 +512,7 @@ func seedServiceDefinitions(db *gorm.DB) error {
 			Description:       "用于验证请求节点预检动作、审批后自动放行动作与工单闭环。",
 			CatalogCode:       "application-platform:database",
 			SLACode:           "infra-change",
-			CollaborationSpec: `用户提交生产数据库备份白名单临时放行申请。系统先进入申请人请求节点，并在进入节点时自动执行预检动作，校验目标数据库、运维来源 IP 和放行时间窗信息是否齐备。申请人提交后，交给信息部的数据库管理员岗位审批，审批参与者类型必须使用 position_department，部门编码使用 it，岗位编码使用 dba_admin。审批通过后，在离开审批节点时自动执行白名单放行动作，并在动作成功后直接结束流程。`,
+			CollaborationSpec: `用户提交生产数据库备份白名单临时放行申请。系统先进入申请人请求节点，并在进入节点时自动执行预检动作，校验目标数据库、运维来源 IP 和放行时间窗信息是否齐备。申请人提交后，交给信息部的数据库管理员岗位审批，审批参与者类型必须使用 position_department，部门编码使用 it，岗位编码使用 db_admin。审批通过后，在离开审批节点时自动执行白名单放行动作，并在动作成功后直接结束流程。`,
 			Actions: []ServiceAction{
 				{
 					Name: "备份白名单预检", Code: "backup_whitelist_precheck",

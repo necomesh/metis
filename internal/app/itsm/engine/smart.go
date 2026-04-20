@@ -271,7 +271,7 @@ func (e *SmartEngine) Cancel(ctx context.Context, tx *gorm.DB, params CancelPara
 func (e *SmartEngine) runDecisionCycle(ctx context.Context, tx *gorm.DB, ticketID uint, completedActivityID *uint, svcInfo *serviceModel) error {
 	// Check if AI is disabled for this ticket
 	var ticket ticketModel
-	if err := tx.First(&ticket, ticketID).Error; err != nil {
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&ticket, ticketID).Error; err != nil {
 		return fmt.Errorf("ticket not found: %w", err)
 	}
 
@@ -286,6 +286,18 @@ func (e *SmartEngine) runDecisionCycle(ctx context.Context, tx *gorm.DB, ticketI
 	// Check terminal state
 	switch ticket.Status {
 	case "completed", "cancelled", "failed":
+		return nil
+	}
+
+	var activeCount int64
+	if err := tx.Model(&activityModel{}).
+		Where("ticket_id = ? AND status IN ?", ticketID, []string{ActivityPending, ActivityInProgress, ActivityPendingApproval}).
+		Count(&activeCount).Error; err != nil {
+		return err
+	}
+	if activeCount > 0 {
+		slog.Info("smart-progress: active activities already exist, skipping duplicate continuation",
+			"ticketID", ticketID, "activeCount", activeCount, "completedActivityID", completedActivityID)
 		return nil
 	}
 
@@ -380,7 +392,7 @@ func (e *SmartEngine) executeDecisionPlan(tx *gorm.DB, ticketID uint, plan *Deci
 	if plan.ExecutionMode == "parallel" {
 		return e.executeParallelPlan(tx, ticketID, plan)
 	}
-	return e.executeSequentialPlan(tx, ticketID, plan)
+	return e.executeSinglePlan(tx, ticketID, plan)
 }
 
 // executeParallelPlan creates a group of parallel activities sharing the same activity_group_id.
@@ -450,76 +462,71 @@ func (e *SmartEngine) executeParallelPlan(tx *gorm.DB, ticketID uint, plan *Deci
 	return nil
 }
 
-// executeSequentialPlan creates all activities from the plan but sets
-// current_activity_id to the first one (not the last).
-func (e *SmartEngine) executeSequentialPlan(tx *gorm.DB, ticketID uint, plan *DecisionPlan) error {
+// executeSinglePlan creates only the current activity for single-mode plans.
+func (e *SmartEngine) executeSinglePlan(tx *gorm.DB, ticketID uint, plan *DecisionPlan) error {
+	if len(plan.Activities) == 0 {
+		return fmt.Errorf("decision plan has no activities")
+	}
+
 	now := time.Now()
 	planJSON := mustJSON(plan)
-	var firstActID uint
+	da := plan.Activities[0]
+	status := ActivityInProgress
+	if da.Type == "approve" || da.Type == "form" || da.Type == "process" {
+		status = ActivityPending
+	}
 
-	for i, da := range plan.Activities {
-		status := ActivityInProgress
-		if da.Type == "approve" || da.Type == "form" || da.Type == "process" {
-			status = ActivityPending
-		}
+	act := &activityModel{
+		TicketID:     ticketID,
+		Name:         decisionActivityName(da),
+		ActivityType: da.Type,
+		Status:       status,
+		AIDecision:   planJSON,
+		AIReasoning:  plan.Reasoning,
+		AIConfidence: plan.Confidence,
+		StartedAt:    &now,
+	}
+	if err := tx.Create(act).Error; err != nil {
+		return err
+	}
+	if err := tx.Model(&ticketModel{}).Where("id = ?", ticketID).Update("current_activity_id", act.ID).Error; err != nil {
+		return err
+	}
 
-		act := &activityModel{
-			TicketID:     ticketID,
-			Name:         decisionActivityName(da),
-			ActivityType: da.Type,
-			Status:       status,
-			AIDecision:   planJSON,
-			AIReasoning:  plan.Reasoning,
-			AIConfidence: plan.Confidence,
-			StartedAt:    &now,
+	if da.ParticipantID != nil && *da.ParticipantID > 0 {
+		assignment := &assignmentModel{
+			TicketID:        ticketID,
+			ActivityID:      act.ID,
+			ParticipantType: "user",
+			UserID:          da.ParticipantID,
+			AssigneeID:      da.ParticipantID,
+			Status:          "pending",
+			IsCurrent:       true,
 		}
-		if err := tx.Create(act).Error; err != nil {
+		if err := tx.Create(assignment).Error; err != nil {
 			return err
 		}
-
-		// Set current_activity_id to the first activity only
-		if i == 0 {
-			firstActID = act.ID
-			tx.Model(&ticketModel{}).Where("id = ?", ticketID).Update("current_activity_id", firstActID)
+		if err := tx.Model(&ticketModel{}).Where("id = ?", ticketID).Update("assignee_id", *da.ParticipantID).Error; err != nil {
+			return err
 		}
-
-		// Create assignment if participant specified
-		if da.ParticipantID != nil && *da.ParticipantID > 0 {
-			assignment := &assignmentModel{
-				TicketID:        ticketID,
-				ActivityID:      act.ID,
-				ParticipantType: "user",
-				UserID:          da.ParticipantID,
-				AssigneeID:      da.ParticipantID,
-				Status:          "pending",
-				IsCurrent:       true,
-			}
-			if err := tx.Create(assignment).Error; err != nil {
-				return err
-			}
-			tx.Model(&ticketModel{}).Where("id = ?", ticketID).Update("assignee_id", *da.ParticipantID)
-		} else if da.ParticipantType == "position_department" && da.PositionCode != "" && da.DepartmentCode != "" {
-			// Position+department based assignment — resolve via ParticipantResolver
-			e.createPositionAssignment(tx, ticketID, act.ID, da.PositionCode, da.DepartmentCode)
-		} else if da.Type == "approve" || da.Type == "process" || da.Type == "form" {
-			// Activity needs a participant but AI didn't specify one — try fallback
-			e.tryFallbackAssignment(tx, ticketID, act.ID)
-		}
-
-		// Submit action task if applicable
-		if da.Type == "action" && da.ActionID != nil && e.scheduler != nil {
-			payload, _ := json.Marshal(map[string]any{
-				"ticket_id":   ticketID,
-				"activity_id": act.ID,
-				"action_id":   *da.ActionID,
-			})
-			e.scheduler.SubmitTask("itsm-action-execute", payload)
-		}
-
-		e.recordTimeline(tx, ticketID, &act.ID, 0, "ai_decision_executed",
-			fmt.Sprintf("AI 自动执行：%s（信心 %.0f%%）", decisionActivityName(da), plan.Confidence*100),
-			plan.Reasoning)
+	} else if da.ParticipantType == "position_department" && da.PositionCode != "" && da.DepartmentCode != "" {
+		e.createPositionAssignment(tx, ticketID, act.ID, da.PositionCode, da.DepartmentCode)
+	} else if da.Type == "approve" || da.Type == "process" || da.Type == "form" {
+		e.tryFallbackAssignment(tx, ticketID, act.ID)
 	}
+
+	if da.Type == "action" && da.ActionID != nil && e.scheduler != nil {
+		payload, _ := json.Marshal(map[string]any{
+			"ticket_id":   ticketID,
+			"activity_id": act.ID,
+			"action_id":   *da.ActionID,
+		})
+		e.scheduler.SubmitTask("itsm-action-execute", payload)
+	}
+
+	e.recordTimeline(tx, ticketID, &act.ID, 0, "ai_decision_executed",
+		fmt.Sprintf("AI 自动执行：%s（信心 %.0f%%）", decisionActivityName(da), plan.Confidence*100),
+		plan.Reasoning)
 
 	return nil
 }
@@ -636,7 +643,38 @@ func (e *SmartEngine) pendApprovalDecisionPlan(tx *gorm.DB, ticketID uint, plan 
 		return err
 	}
 
-	tx.Model(&ticketModel{}).Where("id = ?", ticketID).Update("current_activity_id", act.ID)
+	if err := tx.Model(&ticketModel{}).Where("id = ?", ticketID).Updates(map[string]any{
+		"current_activity_id": act.ID,
+		"assignee_id":         nil,
+	}).Error; err != nil {
+		return err
+	}
+
+	if len(plan.Activities) > 0 {
+		da := plan.Activities[0]
+		switch {
+		case da.ParticipantID != nil && *da.ParticipantID > 0:
+			assignment := &assignmentModel{
+				TicketID:        ticketID,
+				ActivityID:      act.ID,
+				ParticipantType: "user",
+				UserID:          da.ParticipantID,
+				AssigneeID:      da.ParticipantID,
+				Status:          "pending",
+				IsCurrent:       true,
+			}
+			if err := tx.Create(assignment).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&ticketModel{}).Where("id = ?", ticketID).Update("assignee_id", *da.ParticipantID).Error; err != nil {
+				return err
+			}
+		case da.ParticipantType == "position_department" && da.PositionCode != "" && da.DepartmentCode != "":
+			e.createPositionAssignment(tx, ticketID, act.ID, da.PositionCode, da.DepartmentCode)
+		default:
+			e.tryFallbackAssignment(tx, ticketID, act.ID)
+		}
+	}
 
 	e.recordTimeline(tx, ticketID, &act.ID, 0, "ai_decision_pending",
 		fmt.Sprintf("AI 决策信心不足（%.0f%%），等待人工确认", plan.Confidence*100),

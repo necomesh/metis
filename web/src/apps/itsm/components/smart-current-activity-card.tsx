@@ -35,7 +35,7 @@ function determineState(ticket: TicketItem, activities: ActivityItem[]): SmartSt
     (a) => a.id === ticket.currentActivityId,
   )
 
-  if (currentActivity?.status === "pending_approval") return "pending_approval"
+  if (currentActivity?.status === "pending_approval" && currentActivity.canAct) return "pending_approval"
 
   const activeActivity = activities.find(
     (a) =>
@@ -182,6 +182,27 @@ export function SmartCurrentActivityCard({ ticket, activities, currentUserId }: 
   // --- State: Pending Approval ---
   if (state === "pending_approval" && currentActivity) {
     return <AIDecisionPanel ticketId={ticket.id} activity={currentActivity} />
+  }
+
+  if (currentActivity?.status === "pending_approval") {
+	return (
+	  <Card>
+	    <CardHeader className="pb-3">
+	      <CardTitle className="flex items-center gap-2 text-base">
+	        <Bot className="h-4 w-4" />
+	        {t("smart.aiDecision")}
+	        <Badge variant="outline" className="ml-auto text-yellow-600 border-yellow-300">
+	          {t("smart.pendingApproval")}
+	        </Badge>
+	      </CardTitle>
+	    </CardHeader>
+	    <CardContent>
+	      <p className="text-sm text-muted-foreground">
+	        {t("smart.pendingApprovalReadonly", { defaultValue: "当前 AI 决策正在等待有权限的处理人确认。" })}
+	      </p>
+	    </CardContent>
+	  </Card>
+	)
   }
 
   // --- State: Human Activity ---
