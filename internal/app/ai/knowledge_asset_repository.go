@@ -1,6 +1,8 @@
 package ai
 
 import (
+	"fmt"
+
 	"github.com/samber/do/v2"
 	"gorm.io/gorm"
 
@@ -40,8 +42,12 @@ func (r *KnowledgeAssetRepo) FindByID(id uint) (*KnowledgeAsset, error) {
 }
 
 func (r *KnowledgeAssetRepo) List(params AssetListParams) ([]KnowledgeAsset, int64, error) {
-	var assets []KnowledgeAsset
-	var total int64
+	if params.Page < 1 {
+		params.Page = 1
+	}
+	if params.PageSize < 1 {
+		params.PageSize = 20
+	}
 
 	q := r.db.Model(&KnowledgeAsset{})
 
@@ -59,20 +65,14 @@ func (r *KnowledgeAssetRepo) List(params AssetListParams) ([]KnowledgeAsset, int
 		q = q.Where("name LIKE ? OR description LIKE ?", like, like)
 	}
 
+	var total int64
 	if err := q.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	page := params.Page
-	if page < 1 {
-		page = 1
-	}
-	pageSize := params.PageSize
-	if pageSize < 1 {
-		pageSize = 20
-	}
-
-	if err := q.Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&assets).Error; err != nil {
+	var assets []KnowledgeAsset
+	offset := (params.Page - 1) * params.PageSize
+	if err := q.Order("id DESC").Offset(offset).Limit(params.PageSize).Find(&assets).Error; err != nil {
 		return nil, 0, err
 	}
 
@@ -88,9 +88,11 @@ func (r *KnowledgeAssetRepo) Delete(id uint) error {
 }
 
 func (r *KnowledgeAssetRepo) UpdateSourceCount(id uint) error {
-	subQuery := r.db.Model(&KnowledgeAssetSource{}).Where("asset_id = ?", id).Select("COUNT(*)")
-	return r.db.Model(&KnowledgeAsset{}).Where("id = ?", id).
-		Update("source_count", subQuery).Error
+	return r.db.Exec(`
+		UPDATE ai_knowledge_assets SET
+			source_count = (SELECT COUNT(*) FROM ai_knowledge_asset_sources WHERE asset_id = ?)
+		WHERE id = ?
+	`, id, id).Error
 }
 
 func (r *KnowledgeAssetRepo) UpdateStatus(id uint, status string) error {
@@ -109,27 +111,37 @@ func (r *KnowledgeAssetRepo) FindByIDs(ids []uint) ([]KnowledgeAsset, error) {
 	return assets, nil
 }
 
-func (r *KnowledgeAssetRepo) DB() *gorm.DB {
+func (r *KnowledgeAssetRepo) GormDB() *gorm.DB {
 	return r.db.DB
 }
 
 // ----- Asset-Source association -----
 
-// AddSources associates sources with an asset.
+// AddSources associates sources with an asset. Duplicates are silently ignored.
 func (r *KnowledgeAssetRepo) AddSources(assetID uint, sourceIDs []uint) error {
 	if len(sourceIDs) == 0 {
 		return nil
 	}
-	assocs := make([]KnowledgeAssetSource, len(sourceIDs))
-	for i, sid := range sourceIDs {
-		assocs[i] = KnowledgeAssetSource{AssetID: assetID, SourceID: sid}
+	for _, sid := range sourceIDs {
+		assoc := KnowledgeAssetSource{AssetID: assetID, SourceID: sid}
+		result := r.db.Where("asset_id = ? AND source_id = ?", assetID, sid).
+			FirstOrCreate(&assoc)
+		if result.Error != nil {
+			return fmt.Errorf("add source %d to asset %d: %w", sid, assetID, result.Error)
+		}
 	}
-	return r.db.Create(&assocs).Error
+	return nil
 }
 
 // RemoveSource removes a source association from an asset.
 func (r *KnowledgeAssetRepo) RemoveSource(assetID, sourceID uint) error {
 	return r.db.Where("asset_id = ? AND source_id = ?", assetID, sourceID).
+		Delete(&KnowledgeAssetSource{}).Error
+}
+
+// RemoveAllSources removes all source associations for an asset.
+func (r *KnowledgeAssetRepo) RemoveAllSources(assetID uint) error {
+	return r.db.Where("asset_id = ?", assetID).
 		Delete(&KnowledgeAssetSource{}).Error
 }
 

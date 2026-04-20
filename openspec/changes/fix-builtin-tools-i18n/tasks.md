@@ -10,5 +10,5 @@
 
 ## 3. 验证
 
-- [ ] 3.1 运行 `cd web && bun run lint` 确认 JSON 格式无误
-- [ ] 3.2 运行 `cd web && bun run build` 确认构建通过
+- [x] 3.1 运行 `cd web && bun run lint` 确认 JSON 格式无误
+- [x] 3.2 运行 `cd web && bun run build` 确认构建通过

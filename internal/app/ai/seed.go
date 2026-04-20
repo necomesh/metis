@@ -288,6 +288,7 @@ func seedAI(db *gorm.DB, enforcer *casbin.Enforcer) error {
 
 	// 7. Agent templates seed
 	agentTemplates := []AgentTemplate{
+		// Assistant templates
 		{
 			Name:        "通用助手",
 			Description: "通用 AI 助手，可回答问题、调用工具完成任务",
@@ -328,12 +329,69 @@ func seedAI(db *gorm.DB, enforcer *casbin.Enforcer) error {
 			}`),
 		},
 		{
-			Name:        "编程助手",
-			Description: "编程 AI 助手，在代码仓库中读写文件、执行命令",
+			Name:        "探索助手",
+			Description: "思维伙伴，帮助探索创意、梳理需求、头脑风暴",
+			Icon:        "Compass",
+			Type:        AgentTypeAssistant,
+			Config: model.JSONText(`{
+				"strategy": "react",
+				"systemPrompt": "你是一个探索型助手，擅长帮助用户梳理想法、发散思维、整理需求。用提问引导用户深入思考，而不是直接给出答案。",
+				"temperature": 0.9,
+				"maxTokens": 4096,
+				"maxTurns": 20
+			}`),
+		},
+		{
+			Name:        "支持助手",
+			Description: "内部技术支持助手，帮助团队成员解决技术问题",
+			Icon:        "LifeBuoy",
+			Type:        AgentTypeAssistant,
+			Config: model.JSONText(`{
+				"strategy": "react",
+				"systemPrompt": "你是一个内部技术支持助手，帮助团队成员解决日常技术问题。优先参考知识库中的内部文档，给出具体可操作的解决方案。",
+				"temperature": 0.5,
+				"maxTokens": 4096,
+				"maxTurns": 10
+			}`),
+		},
+		// Coding templates
+		{
+			Name:        "Claude Code",
+			Description: "基于 Claude Code 的编码智能体，适合复杂代码生成与重构",
 			Icon:        "Code",
 			Type:        AgentTypeCoding,
 			Config: model.JSONText(`{
 				"runtime": "claude-code",
+				"execMode": "local"
+			}`),
+		},
+		{
+			Name:        "OpenCode",
+			Description: "基于 OpenCode 的编码智能体，轻量级终端编程助手",
+			Icon:        "Terminal",
+			Type:        AgentTypeCoding,
+			Config: model.JSONText(`{
+				"runtime": "opencode",
+				"execMode": "local"
+			}`),
+		},
+		{
+			Name:        "Codex",
+			Description: "基于 OpenAI Codex 的编码智能体，擅长代码补全与生成",
+			Icon:        "Cpu",
+			Type:        AgentTypeCoding,
+			Config: model.JSONText(`{
+				"runtime": "codex",
+				"execMode": "local"
+			}`),
+		},
+		{
+			Name:        "Aider",
+			Description: "基于 Aider 的编码智能体，适合 Git 仓库内的增量编码",
+			Icon:        "GitBranch",
+			Type:        AgentTypeCoding,
+			Config: model.JSONText(`{
+				"runtime": "aider",
 				"execMode": "local"
 			}`),
 		},
@@ -509,7 +567,7 @@ func seedAI(db *gorm.DB, enforcer *casbin.Enforcer) error {
 		{"admin", "/api/v1/ai/skills/:id", "PUT"},
 		{"admin", "/api/v1/ai/skills/:id/active", "PATCH"},
 		{"admin", "/api/v1/ai/skills/:id", "DELETE"},
-		// Agents
+		// Agents (legacy — kept for internal use)
 		{"admin", "/api/v1/ai/agents", "GET"},
 		{"admin", "/api/v1/ai/agents", "POST"},
 		{"admin", "/api/v1/ai/agents/templates", "GET"},
@@ -519,6 +577,20 @@ func seedAI(db *gorm.DB, enforcer *casbin.Enforcer) error {
 		{"admin", "/api/v1/ai/agents/:id/memories", "GET"},
 		{"admin", "/api/v1/ai/agents/:id/memories", "POST"},
 		{"admin", "/api/v1/ai/agents/:id/memories/:mid", "DELETE"},
+		// Assistant agents (typed)
+		{"admin", "/api/v1/ai/assistant-agents", "GET"},
+		{"admin", "/api/v1/ai/assistant-agents", "POST"},
+		{"admin", "/api/v1/ai/assistant-agents/templates", "GET"},
+		{"admin", "/api/v1/ai/assistant-agents/:id", "GET"},
+		{"admin", "/api/v1/ai/assistant-agents/:id", "PUT"},
+		{"admin", "/api/v1/ai/assistant-agents/:id", "DELETE"},
+		// Coding agents (typed)
+		{"admin", "/api/v1/ai/coding-agents", "GET"},
+		{"admin", "/api/v1/ai/coding-agents", "POST"},
+		{"admin", "/api/v1/ai/coding-agents/templates", "GET"},
+		{"admin", "/api/v1/ai/coding-agents/:id", "GET"},
+		{"admin", "/api/v1/ai/coding-agents/:id", "PUT"},
+		{"admin", "/api/v1/ai/coding-agents/:id", "DELETE"},
 		// Sessions
 		{"admin", "/api/v1/ai/sessions", "GET"},
 		{"admin", "/api/v1/ai/sessions", "POST"},
@@ -565,11 +637,21 @@ func seedAI(db *gorm.DB, enforcer *casbin.Enforcer) error {
 		{"admin", "ai:skill:create", "read"},
 		{"admin", "ai:skill:update", "read"},
 		{"admin", "ai:skill:delete", "read"},
-		// Agent
+		// Agent (legacy — kept for internal use)
 		{"admin", "ai:agent:list", "read"},
 		{"admin", "ai:agent:create", "read"},
 		{"admin", "ai:agent:update", "read"},
 		{"admin", "ai:agent:delete", "read"},
+		// Assistant agent
+		{"admin", "ai:assistant-agent:list", "read"},
+		{"admin", "ai:assistant-agent:create", "read"},
+		{"admin", "ai:assistant-agent:update", "read"},
+		{"admin", "ai:assistant-agent:delete", "read"},
+		// Coding agent
+		{"admin", "ai:coding-agent:list", "read"},
+		{"admin", "ai:coding-agent:create", "read"},
+		{"admin", "ai:coding-agent:update", "read"},
+		{"admin", "ai:coding-agent:delete", "read"},
 	}
 
 	allPolicies := append(policies, menuPerms...)
@@ -577,6 +659,39 @@ func seedAI(db *gorm.DB, enforcer *casbin.Enforcer) error {
 		if has, _ := enforcer.HasPolicy(p); !has {
 			if _, err := enforcer.AddPolicy(p); err != nil {
 				slog.Error("seed: failed to add policy", "policy", p, "error", err)
+			}
+		}
+	}
+
+	// Permission migration: detect non-admin roles with old ai:agent:* perms,
+	// grant equivalent new ai:assistant-agent:* + ai:coding-agent:* perms, then remove old perms.
+	oldAgentPerms := []string{"ai:agent:list", "ai:agent:create", "ai:agent:update", "ai:agent:delete"}
+	for _, oldPerm := range oldAgentPerms {
+		// Find all roles that have this old permission
+		existingPolicies, _ := enforcer.GetFilteredPolicy(1, oldPerm, "read")
+		for _, ep := range existingPolicies {
+			role := ep[0]
+			if role == "admin" {
+				continue // admin already has new perms from the seed above
+			}
+			suffix := oldPerm[len("ai:agent:"):]
+			// Grant new typed perms
+			newPerms := []string{
+				"ai:assistant-agent:" + suffix,
+				"ai:coding-agent:" + suffix,
+			}
+			for _, np := range newPerms {
+				if has, _ := enforcer.HasPolicy([]string{role, np, "read"}); !has {
+					if _, err := enforcer.AddPolicy([]string{role, np, "read"}); err != nil {
+						slog.Error("seed: failed to migrate agent permission", "role", role, "perm", np, "error", err)
+					} else {
+						slog.Info("seed: migrated agent permission", "role", role, "old", oldPerm, "new", np)
+					}
+				}
+			}
+			// Remove old permission
+			if _, err := enforcer.RemovePolicy([]string{role, oldPerm, "read"}); err != nil {
+				slog.Warn("seed: failed to remove old agent permission", "role", role, "perm", oldPerm, "error", err)
 			}
 		}
 	}

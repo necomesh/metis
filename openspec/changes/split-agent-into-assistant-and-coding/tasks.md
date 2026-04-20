@@ -19,13 +19,13 @@
 
 ## 4. Backend Seed Rewrite
 
-- [ ] 4.1 Rewrite menu seed: replace single `Agent` menu with `助手智能体` (path `/ai/assistant-agents`, permission `ai:assistant-agent:list`) and `编码智能体` (path `/ai/coding-agents`, permission `ai:coding-agent:list`) under the `智能体` group
-- [ ] 4.2 Seed button permissions for both new menus: `ai:assistant-agent:create/update/delete` and `ai:coding-agent:create/update/delete`
-- [ ] 4.3 Seed Casbin API policies for `/api/v1/ai/assistant-agents` and `/api/v1/ai/coding-agents` routes
-- [ ] 4.4 Seed Casbin menu permissions for new permission keys
-- [ ] 4.5 Add permission migration logic: detect roles with old `ai:agent:*` permissions, grant equivalent new permissions, then remove old permissions
-- [ ] 4.6 Soft-delete old `ai:agent:list` menu entry
-- [ ] 4.7 Expand agent templates: add per-runtime coding templates (Claude Code, OpenCode, Codex, Aider) and additional assistant templates (Explore, Ops, Support)
+- [x] 4.1 Rewrite menu seed: replace single `Agent` menu with `助手智能体` (path `/ai/assistant-agents`, permission `ai:assistant-agent:list`) and `编码智能体` (path `/ai/coding-agents`, permission `ai:coding-agent:list`) under the `智能体` group
+- [x] 4.2 Seed button permissions for both new menus: `ai:assistant-agent:create/update/delete` and `ai:coding-agent:create/update/delete`
+- [x] 4.3 Seed Casbin API policies for `/api/v1/ai/assistant-agents` and `/api/v1/ai/coding-agents` routes
+- [x] 4.4 Seed Casbin menu permissions for new permission keys
+- [x] 4.5 Add permission migration logic: detect roles with old `ai:agent:*` permissions, grant equivalent new permissions, then remove old permissions
+- [x] 4.6 Soft-delete old `ai:agent:list` menu entry
+- [x] 4.7 Expand agent templates: add per-runtime coding templates (Claude Code, OpenCode, Codex, Aider) and additional assistant templates (Explore, Ops, Support)
 
 ## 5. Frontend API Layer
 

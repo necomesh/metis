@@ -9,10 +9,10 @@
 
 ## 2. 后端核心抽象层
 
-- [ ] 2.1 定义 `KnowledgeEngine` 接口（Build, Rebuild, Search, ContentStats）和 `RecallResult`、`KnowledgeUnit`、`KnowledgeRelation` 统一协议结构体
-- [ ] 2.2 实现引擎注册表：按 `category:type` 键注册和查找引擎，启动时自动注册所有可用引擎
-- [ ] 2.3 定义 `KnowledgeAsset` model 和 repository（GORM），支持按 category 过滤查询
-- [ ] 2.4 实现类型元数据注册表：每种 type 注册 display_name、description、default_config_schema、icon，提供 `GET /api/v1/ai/knowledge/types` 接口
+- [x] 2.1 定义 `KnowledgeEngine` 接口（Build, Rebuild, Search, ContentStats）和 `RecallResult`、`KnowledgeUnit`、`KnowledgeRelation` 统一协议结构体
+- [x] 2.2 实现引擎注册表：按 `category:type` 键注册和查找引擎，启动时自动注册所有可用引擎
+- [x] 2.3 定义 `KnowledgeAsset` model 和 repository（GORM），支持按 category 过滤查询
+- [x] 2.4 实现类型元数据注册表：每种 type 注册 display_name、description、default_config_schema、icon，提供 `GET /api/v1/ai/knowledge/types` 接口
 
 ## 3. 素材管理模块
 
