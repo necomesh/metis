@@ -45,7 +45,7 @@ func (r *ModelRepo) List(params ModelListParams) ([]AIModel, int64, error) {
 
 	query := r.db.Model(&AIModel{})
 	if params.Keyword != "" {
-		like := "%" + params.Keyword + "%"
+		like := "%" + escapeLike(params.Keyword) + "%"
 		query = query.Where("display_name LIKE ? OR model_id LIKE ?", like, like)
 	}
 	if params.Type != "" {
@@ -83,6 +83,23 @@ func (r *ModelRepo) ClearDefaultByType(modelType string) error {
 	return r.db.Model(&AIModel{}).
 		Where("type = ? AND is_default = ?", modelType, true).
 		Update("is_default", false).Error
+}
+
+// ClearDefaultByProviderAndType clears is_default for all models of the given
+// provider and type. When tx is non-nil it runs inside that transaction.
+func (r *ModelRepo) ClearDefaultByProviderAndType(tx *gorm.DB, providerID uint, modelType string) error {
+	db := r.db.DB
+	if tx != nil {
+		db = tx
+	}
+	return db.Model(&AIModel{}).
+		Where("provider_id = ? AND type = ? AND is_default = ?", providerID, modelType, true).
+		Update("is_default", false).Error
+}
+
+// SetDefaultInTx sets is_default=true for the given model inside a transaction.
+func (r *ModelRepo) SetDefaultInTx(tx *gorm.DB, id uint) error {
+	return tx.Model(&AIModel{}).Where("id = ?", id).Update("is_default", true).Error
 }
 
 func (r *ModelRepo) FindByModelIDAndProvider(modelID string, providerID uint) (*AIModel, error) {

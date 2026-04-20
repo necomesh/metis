@@ -2,8 +2,10 @@ import { useState, useEffect, useCallback } from "react"
 import { useTranslation } from "react-i18next"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate, Navigate, Link } from "react-router"
+import { Sparkles } from "lucide-react"
 
 import { AuthShell } from "@/components/auth/auth-shell"
+import { AuthBrandLockup } from "@/components/auth/brand-lockup"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -31,7 +33,7 @@ function ProviderIcon({ provider }: { provider: string }) {
   const path = providerIcons[provider]
   if (!path) return null
   return (
-    <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+    <svg aria-hidden="true" className="mr-2 h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
       <path d={path} />
     </svg>
   )
@@ -69,11 +71,27 @@ export default function LoginPage() {
   }, [])
 
   useEffect(() => {
-    api.get<AuthProviderInfo[]>("/api/v1/auth/providers").then(setProviders).catch(() => {})
-    api.get<{ registrationOpen: boolean }>("/api/v1/auth/registration-status")
-      .then((data) => setRegistrationOpen(data.registrationOpen))
-      .catch(() => {})
+    let cancelled = false
+
+    Promise.allSettled([
+      api.get<AuthProviderInfo[]>("/api/v1/auth/providers"),
+      api.get<{ registrationOpen: boolean }>("/api/v1/auth/registration-status"),
+    ]).then(([providersResult, registrationResult]) => {
+      if (cancelled) return
+
+      if (providersResult.status === "fulfilled") {
+        setProviders(providersResult.value)
+      }
+      if (registrationResult.status === "fulfilled") {
+        setRegistrationOpen(registrationResult.value.registrationOpen)
+      }
+    })
+
     loadCaptcha()
+
+    return () => {
+      cancelled = true
+    }
   }, [loadCaptcha])
 
   async function handleSubmit(e: React.FormEvent) {
@@ -112,35 +130,82 @@ export default function LoginPage() {
   }
 
   const appName = siteInfo?.appName ?? "Metis"
+  const heroSignals = [
+    t("login.heroSignalAuth"),
+    t("login.heroSignalPolicy"),
+    t("login.heroSignalLocale"),
+  ]
 
   if (user) {
     return <Navigate to="/" replace />
   }
 
   return (
-    <AuthShell>
-      <div className="w-full max-w-[25rem]">
-        <div className="auth-panel-glass rounded-3xl px-8 py-8 sm:px-10 sm:py-9">
-          {/* Heading */}
-          <div className="mb-6 text-center">
-            <h2 className="text-lg font-semibold tracking-[-0.02em] text-slate-900">
-              {t("login.title", { appName })}
-            </h2>
-            <p className="mt-1 text-[13px] text-slate-400">
-              {t("login.subtitle")}
-            </p>
+    <AuthShell
+      aside={
+        <div className="flex h-full w-full items-center">
+          <div className="ml-8 flex w-full max-w-[36rem] flex-col gap-8 py-4 pr-4 lg:ml-12 xl:ml-16 xl:max-w-[38rem] xl:pr-10">
+            <div className="space-y-8">
+              <AuthBrandLockup appName={appName} hasLogo={siteInfo?.hasLogo} />
+
+              <div className="max-w-[36rem] space-y-5">
+                <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/70 px-3 py-1 text-[11px] font-semibold tracking-[0.18em] text-muted-foreground uppercase shadow-[0_10px_30px_-24px_rgba(15,23,42,0.35)]">
+                  <Sparkles aria-hidden="true" className="h-3.5 w-3.5 text-primary" />
+                  {t("login.heroEyebrow")}
+                </div>
+                <div className="space-y-4">
+                  <h1 className="max-w-none text-[2.75rem] font-semibold tracking-[-0.05em] text-foreground sm:text-[3.15rem] xl:text-[3.35rem]">
+                    {t("login.heroTitle")}
+                  </h1>
+                  <p className="max-w-[32rem] text-base leading-7 text-muted-foreground sm:text-[1.0625rem]">
+                    {t("login.heroDescription")}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2.5 text-sm text-muted-foreground">
+              {heroSignals.map((signal) => (
+                <span key={signal} className="rounded-full border border-border/60 bg-background/60 px-3 py-1.5 text-xs font-medium">
+                  {signal}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      }
+    >
+      <div className="w-full max-w-[32rem] lg:max-w-[28rem]">
+        <div className="auth-panel-glass rounded-[1.5rem] px-5 py-5 sm:rounded-[1.75rem] sm:px-6 sm:py-6 lg:px-8 lg:py-8">
+          <div className="mb-8 space-y-5">
+            <div className="lg:hidden">
+              <AuthBrandLockup appName={appName} hasLogo={siteInfo?.hasLogo} compact />
+            </div>
+            <div className="space-y-2">
+              <p className="text-[11px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">
+                {t("login.welcome")}
+              </p>
+              <h2 className="text-[1.625rem] font-semibold tracking-[-0.04em] text-foreground text-balance sm:text-[1.875rem] lg:text-[2rem]">
+                {t("login.title", { appName })}
+              </h2>
+              <p className="text-sm leading-6 text-muted-foreground">
+                {t("login.subtitle")}
+              </p>
+            </div>
           </div>
 
-          {/* Form — flat, no wrapper card */}
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-3">
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <div className="space-y-4">
               <div>
-                <Label htmlFor="username" className="mb-1.5 block text-[13px] font-medium text-slate-500">
+                <Label htmlFor="username" className="mb-2 block text-[13px] font-medium text-foreground/78">
                   {t("login.username")}
                 </Label>
                 <Input
                   id="username"
-                  placeholder="username"
+                  name="username"
+                  autoComplete="username"
+                  spellCheck={false}
+                  placeholder={t("login.usernamePlaceholder")}
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   required
@@ -150,13 +215,15 @@ export default function LoginPage() {
               </div>
 
               <div>
-                <Label htmlFor="password" className="mb-1.5 block text-[13px] font-medium text-slate-500">
+                <Label htmlFor="password" className="mb-2 block text-[13px] font-medium text-foreground/78">
                   {t("login.password")}
                 </Label>
                 <Input
                   id="password"
+                  name="password"
                   type="password"
-                  placeholder="••••••••"
+                  autoComplete="current-password"
+                  placeholder={t("login.passwordPlaceholder")}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
@@ -164,68 +231,80 @@ export default function LoginPage() {
                 />
               </div>
 
-              {captcha?.enabled && (
+              {captcha?.enabled ? (
                 <div>
-                  <Label htmlFor="captcha" className="mb-1.5 block text-[13px] font-medium text-slate-500">
+                  <Label htmlFor="captcha" className="mb-2 block text-[13px] font-medium text-foreground/78">
                     {t("login.captcha")}
                   </Label>
                   <div className="flex items-center gap-2">
                     <Input
                       id="captcha"
+                      name="captcha"
+                      autoComplete="one-time-code"
+                      inputMode="text"
                       placeholder={t("login.captchaPlaceholder")}
                       value={captchaAnswer}
                       onChange={(e) => setCaptchaAnswer(e.target.value)}
                       className="auth-input flex-1"
                       required
                     />
-                    {captcha.image && (
-                      <img
-                        src={captcha.image}
-                        alt="captcha"
-                        className="h-10 w-24 cursor-pointer rounded-xl border border-slate-200/60 bg-white object-cover"
+                    {captcha.image ? (
+                      <button
+                        type="button"
+                        className="flex h-[2.875rem] w-24 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border/70 bg-background/80 transition hover:border-ring/60 hover:bg-background"
                         onClick={loadCaptcha}
+                        aria-label={t("login.captchaRefresh")}
                         title={t("login.captchaRefresh")}
-                      />
-                    )}
+                      >
+                        <img
+                          src={captcha.image}
+                          alt={t("login.captcha")}
+                          width={96}
+                          height={40}
+                          className="h-10 w-24 object-cover"
+                        />
+                      </button>
+                    ) : null}
                   </div>
                 </div>
-              )}
+              ) : null}
             </div>
 
-            {error && (
-              <div className="rounded-xl bg-red-50 px-3.5 py-2.5 text-[13px] leading-snug text-red-600">
+            {error ? (
+              <div aria-live="polite" className="rounded-2xl border border-destructive/18 bg-destructive/6 px-3.5 py-3 text-[13px] leading-snug text-destructive">
                 {error}
               </div>
-            )}
+            ) : null}
 
             <div className="space-y-4 pt-1">
               <Button
                 type="submit"
-                className="h-[2.625rem] w-full rounded-xl border-0 bg-slate-900 text-sm font-medium tracking-[-0.01em] text-white shadow-[0_1px_2px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.06)] hover:bg-slate-800 active:scale-[0.985]"
+                className="h-11 w-full rounded-xl text-sm font-medium tracking-[-0.01em] shadow-[0_24px_50px_-24px_hsl(var(--primary)/0.75)]"
                 disabled={loading}
               >
-                {loading ? t("login.loggingIn") : t("login.submit")}
+                {loading ? t("login.submitting") : t("login.submit")}
               </Button>
 
-              {providers.length > 0 && (
+              {providers.length > 0 ? (
                 <>
                   <div className="relative">
                     <div className="absolute inset-0 flex items-center">
-                      <span className="w-full border-t border-slate-200/60" />
+                      <span className="w-full border-t border-border/70" />
                     </div>
                     <div className="relative flex justify-center">
-                      <span className="bg-white/60 px-2.5 text-[11px] font-medium tracking-wide text-slate-300 uppercase">
+                      <span className="bg-white/78 px-2.5 text-[11px] font-medium tracking-[0.16em] text-muted-foreground uppercase">
                         {t("login.or")}
                       </span>
                     </div>
                   </div>
 
-                  <div className="grid gap-2">
+                  <div className="grid gap-2.5">
                     {providers.map((provider) => (
                       <Button
                         key={provider.providerKey}
+                        type="button"
                         variant="outline"
-                        className="h-10 rounded-xl border-slate-200/70 bg-white text-[13px] font-medium text-slate-600 shadow-none hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
+                        className="h-10 justify-center rounded-xl border-border/70 bg-background/86 text-[13px] font-medium text-foreground/78 shadow-none hover:border-ring/40 hover:bg-background hover:text-foreground"
                         onClick={() => handleOAuth(provider.providerKey)}
                       >
                         <ProviderIcon provider={provider.providerKey} />
@@ -234,30 +313,29 @@ export default function LoginPage() {
                     ))}
                   </div>
                 </>
-              )}
+              ) : null}
             </div>
           </form>
 
-          {/* Footer */}
-          <div className="mt-6 text-center text-[12.5px] text-slate-400">
+          <div className="mt-6 text-center text-[12.5px] text-muted-foreground">
             {registrationOpen ? (
               <p>
                 {t("login.noAccount")}{" "}
-                <Link to="/register" className="font-medium text-slate-600 transition hover:text-slate-900">
+                <Link to="/register" className="font-medium text-foreground transition hover:text-primary">
                   {t("login.createAccount")}
                 </Link>
               </p>
             ) : (
-              <p>{t("login.contactAdmin")}</p>
+              <p>{t("login.cantLogin")}</p>
             )}
           </div>
         </div>
       </div>
-      {siteInfo?.version && (
-        <div className="fixed bottom-3 right-4 text-[11px] text-slate-300">
+      {siteInfo?.version ? (
+        <div className="pointer-events-none absolute bottom-5 right-5 text-xs text-muted-foreground/80 sm:bottom-6 sm:right-6 lg:bottom-7 lg:right-8" translate="no">
           {siteInfo.version}
         </div>
-      )}
+      ) : null}
     </AuthShell>
   )
 }

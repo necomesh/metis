@@ -23,12 +23,15 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	if err := db.AutoMigrate(
 		// Provider & Model
 		&Provider{}, &AIModel{}, &AILog{},
-		// Knowledge
-		&KnowledgeBase{}, &KnowledgeSource{}, &KnowledgeLog{},
+		// Knowledge (new unified model)
+		&KnowledgeAsset{}, &KnowledgeSource{}, &KnowledgeAssetSource{},
+		&RAGChunk{}, &KnowledgeLog{},
+		// Legacy knowledge table
+		&KnowledgeBase{},
 		// Tool registry
 		&Tool{}, &MCPServer{}, &Skill{},
 		// Agent bindings
-		&AgentTool{}, &AgentMCPServer{}, &AgentSkill{}, &AgentKnowledgeBase{},
+		&AgentTool{}, &AgentMCPServer{}, &AgentSkill{}, &AgentKnowledgeBase{}, &AgentKnowledgeGraph{},
 		// Agent runtime
 		&Agent{}, &AgentTemplate{}, &AgentSession{}, &SessionMessage{}, &AgentMemory{},
 	); err != nil {
@@ -103,28 +106,18 @@ func newSessionServiceForTest(t *testing.T, db *gorm.DB) *SessionService {
 	}
 }
 
-func newKnowledgeBaseServiceForTest(t *testing.T, db *gorm.DB, graphRepo *stubKnowledgeGraphRepo) *KnowledgeBaseService {
-	t.Helper()
-	return &KnowledgeBaseService{
-		repo:       &KnowledgeBaseRepo{db: &database.DB{DB: db}},
-		sourceRepo: &KnowledgeSourceRepo{db: &database.DB{DB: db}},
-		graphRepo:  graphRepo,
-	}
-}
-
-func newKnowledgeSourceServiceForTest(t *testing.T, db *gorm.DB, graphRepo *stubKnowledgeGraphRepo) *KnowledgeSourceService {
+func newKnowledgeSourceServiceForTest(t *testing.T, db *gorm.DB) *KnowledgeSourceService {
 	t.Helper()
 	return &KnowledgeSourceService{
-		repo:      &KnowledgeSourceRepo{db: &database.DB{DB: db}},
-		kbRepo:    &KnowledgeBaseRepo{db: &database.DB{DB: db}},
-		graphRepo: graphRepo,
+		sourceRepo: &KnowledgeSourceRepo{db: &database.DB{DB: db}},
+		assetRepo:  &KnowledgeAssetRepo{db: &database.DB{DB: db}},
 	}
 }
 
 // stubKnowledgeGraphRepo is a minimal stub for KnowledgeGraphRepo used in tests.
 type stubKnowledgeGraphRepo struct {
-	deleteGraphCalls     []uint
-	deleteNodesBySource  []struct{ kbID, sourceID uint }
+	deleteGraphCalls    []uint
+	deleteNodesBySource []struct{ kbID, sourceID uint }
 }
 
 func (s *stubKnowledgeGraphRepo) DeleteGraph(kbID uint) error {

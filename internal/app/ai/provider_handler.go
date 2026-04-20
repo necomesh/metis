@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -78,8 +79,14 @@ func (h *ProviderHandler) List(c *gin.Context) {
 	for i, p := range providers {
 		ids[i] = p.ID
 	}
-	modelCounts, _ := h.repo.ModelCountsForProviders(ids)
-	modelTypeCounts, _ := h.modelRepo.TypeCountsForProviders(ids)
+	modelCounts, err := h.repo.ModelCountsForProviders(ids)
+	if err != nil {
+		slog.Warn("ai: failed to query model counts for providers", "error", err)
+	}
+	modelTypeCounts, err := h.modelRepo.TypeCountsForProviders(ids)
+	if err != nil {
+		slog.Warn("ai: failed to query model type counts for providers", "error", err)
+	}
 
 	items := make([]ProviderResponse, len(providers))
 	for i, p := range providers {
@@ -164,8 +171,11 @@ func (h *ProviderHandler) Delete(c *gin.Context) {
 }
 
 func (h *ProviderHandler) TestConnection(c *gin.Context) {
-	id, _ := strconv.Atoi(c.Param("id"))
-	p, err := h.svc.Get(uint(id))
+	id, ok := pid(c)
+	if !ok {
+		return
+	}
+	p, err := h.svc.Get(id)
 	if err != nil {
 		handler.Fail(c, http.StatusNotFound, err.Error())
 		return
@@ -185,7 +195,8 @@ func (h *ProviderHandler) TestConnection(c *gin.Context) {
 	case "openai":
 		testErr = testOpenAIConnection(ctx, p.BaseURL, apiKey)
 	case "anthropic":
-		testErr = testAnthropicConnection(ctx, p.BaseURL, apiKey)
+		modelID := h.resolveAnthropicTestModel(p.ID)
+		testErr = testAnthropicConnection(ctx, p.BaseURL, apiKey, modelID)
 	}
 
 	if testErr != nil {
@@ -208,15 +219,40 @@ func testOpenAIConnection(ctx context.Context, baseURL, apiKey string) error {
 	return err
 }
 
-func testAnthropicConnection(ctx context.Context, baseURL, apiKey string) error {
+func testAnthropicConnection(ctx context.Context, baseURL, apiKey, modelID string) error {
 	client, err := llm.NewClient(llm.ProtocolAnthropic, baseURL, apiKey)
 	if err != nil {
 		return err
 	}
 	_, err = client.Chat(ctx, llm.ChatRequest{
-		Model:     "claude-haiku-3-5-20241022",
+		Model:     modelID,
 		Messages:  []llm.Message{{Role: llm.RoleUser, Content: "hi"}},
 		MaxTokens: 1,
 	})
 	return err
+}
+
+const defaultAnthropicTestModel = "claude-haiku-3-5-20241022"
+
+// resolveAnthropicTestModel picks a model ID for the connectivity test.
+// It prefers the provider's default LLM, then any active model, falling back
+// to a well-known model if none are synced yet.
+func (h *ProviderHandler) resolveAnthropicTestModel(providerID uint) string {
+	models, err := h.modelRepo.ListByProviderID(providerID)
+	if err != nil || len(models) == 0 {
+		return defaultAnthropicTestModel
+	}
+	// Prefer the default model of this provider.
+	for _, m := range models {
+		if m.IsDefault && m.Status == ModelStatusActive {
+			return m.ModelID
+		}
+	}
+	// Otherwise pick first active model.
+	for _, m := range models {
+		if m.Status == ModelStatusActive {
+			return m.ModelID
+		}
+	}
+	return defaultAnthropicTestModel
 }

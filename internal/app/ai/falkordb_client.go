@@ -43,14 +43,14 @@ func NewFalkorDBClient(i do.Injector) (*FalkorDBClient, error) {
 	return &FalkorDBClient{db: db}, nil
 }
 
-// GraphFor returns the FalkorDB graph for a given knowledge base ID.
-func (c *FalkorDBClient) GraphFor(kbID uint) *falkordb.Graph {
-	return c.db.SelectGraph(fmt.Sprintf("kb_%d", kbID))
+// GraphFor returns the FalkorDB graph for a given knowledge graph asset ID.
+func (c *FalkorDBClient) GraphFor(kgID uint) *falkordb.Graph {
+	return c.db.SelectGraph(fmt.Sprintf("kg_%d", kgID))
 }
 
-// DeleteGraph deletes the graph for a knowledge base.
-func (c *FalkorDBClient) DeleteGraph(kbID uint) error {
-	graph := c.GraphFor(kbID)
+// DeleteGraph deletes the graph for a knowledge graph asset.
+func (c *FalkorDBClient) DeleteGraph(kgID uint) error {
+	graph := c.GraphFor(kgID)
 	err := graph.Delete()
 	// Ignore error if graph doesn't exist (never compiled)
 	if err != nil && err.Error() == "ERR Invalid graph operation on empty key" {

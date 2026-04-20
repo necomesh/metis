@@ -35,36 +35,36 @@
 
 ## 6. Frontend Shared Components
 
-- [ ] 6.1 Create `web/src/apps/ai/pages/_shared/agent-list-page.tsx` — generic agent card grid component accepting agentType, title, createPath, queryKey, permissions config
-- [ ] 6.2 Create `web/src/apps/ai/pages/_shared/agent-detail-page.tsx` — generic agent detail component accepting agentType, basePath, permissions config
-- [ ] 6.3 Create `web/src/apps/ai/pages/_shared/agent-form-common.tsx` — shared form fields (name, description, visibility, instructions)
-- [ ] 6.4 Move `binding-checkbox-list.tsx` to `web/src/apps/ai/pages/_shared/`
+- [x] 6.1 Create `web/src/apps/ai/pages/_shared/agent-list-page.tsx` — generic agent card grid component accepting agentType, title, createPath, queryKey, permissions config
+- [x] 6.2 Create `web/src/apps/ai/pages/_shared/agent-detail-page.tsx` — generic agent detail component accepting agentType, basePath, permissions config
+- [x] 6.3 Create `web/src/apps/ai/pages/_shared/agent-form-common.tsx` — shared form fields (name, description, visibility, instructions)
+- [x] 6.4 Move `binding-checkbox-list.tsx` to `web/src/apps/ai/pages/_shared/`
 
 ## 7. Frontend Assistant Agent Pages
 
-- [ ] 7.1 Create `web/src/apps/ai/pages/assistant-agents/index.tsx` — thin wrapper passing assistant config to shared list page
-- [ ] 7.2 Create `web/src/apps/ai/pages/assistant-agents/create.tsx` — creation page composing common fields + assistant-specific fields (provider, model, strategy, temperature, max tokens, max turns, system prompt, tool/skill/mcp/kb bindings)
-- [ ] 7.3 Create `web/src/apps/ai/pages/assistant-agents/[id].tsx` — detail page using shared component with assistant config sections
-- [ ] 7.4 Create `web/src/apps/ai/pages/assistant-agents/[id]/edit.tsx` — edit page composing same fields as create, pre-filled
+- [x] 7.1 Create `web/src/apps/ai/pages/assistant-agents/index.tsx` — thin wrapper passing assistant config to shared list page
+- [x] 7.2 Create `web/src/apps/ai/pages/assistant-agents/create.tsx` — creation page composing common fields + assistant-specific fields (provider, model, strategy, temperature, max tokens, max turns, system prompt, tool/skill/mcp/kb bindings)
+- [x] 7.3 Create `web/src/apps/ai/pages/assistant-agents/[id].tsx` — detail page using shared component with assistant config sections
+- [x] 7.4 Create `web/src/apps/ai/pages/assistant-agents/[id]/edit.tsx` — edit page composing same fields as create, pre-filled
 
 ## 8. Frontend Coding Agent Pages
 
-- [ ] 8.1 Create `web/src/apps/ai/pages/coding-agents/index.tsx` — thin wrapper passing coding config to shared list page
-- [ ] 8.2 Create `web/src/apps/ai/pages/coding-agents/create.tsx` — creation page composing common fields + coding-specific fields (runtime, exec mode, workspace, node, mcp/skill bindings)
-- [ ] 8.3 Create `web/src/apps/ai/pages/coding-agents/[id].tsx` — detail page using shared component with coding config sections
-- [ ] 8.4 Create `web/src/apps/ai/pages/coding-agents/[id]/edit.tsx` — edit page composing same fields as create, pre-filled
+- [x] 8.1 Create `web/src/apps/ai/pages/coding-agents/index.tsx` — thin wrapper passing coding config to shared list page
+- [x] 8.2 Create `web/src/apps/ai/pages/coding-agents/create.tsx` — creation page composing common fields + coding-specific fields (runtime, exec mode, workspace, node, mcp/skill bindings)
+- [x] 8.3 Create `web/src/apps/ai/pages/coding-agents/[id].tsx` — detail page using shared component with coding config sections
+- [x] 8.4 Create `web/src/apps/ai/pages/coding-agents/[id]/edit.tsx` — edit page composing same fields as create, pre-filled
 
 ## 9. Frontend Navigation and Routes
 
-- [ ] 9.1 Update `web/src/apps/ai/module.ts` navigation: replace single `agents` group item with `assistantAgents` and `codingAgents` items, each with its own permission
-- [ ] 9.2 Update `web/src/apps/ai/module.ts` routes: add `ai/assistant-agents` and `ai/coding-agents` route trees, remove old `ai/agents` routes
-- [ ] 9.3 Add locale entries for `assistantAgents` and `codingAgents` in both `zh-CN.json` and `en.json` (titles, create/edit labels, empty states, menu labels)
-- [ ] 9.4 Add permission label mappings in locale `menuPermissions` section for new permission keys
+- [x] 9.1 Update `web/src/apps/ai/module.ts` navigation: replace single `agents` group item with `assistantAgents` and `codingAgents` items, each with its own permission
+- [x] 9.2 Update `web/src/apps/ai/module.ts` routes: add `ai/assistant-agents` and `ai/coding-agents` route trees, remove old `ai/agents` routes
+- [x] 9.3 Add locale entries for `assistantAgents` and `codingAgents` in both `zh-CN.json` and `en.json` (titles, create/edit labels, empty states, menu labels)
+- [x] 9.4 Add permission label mappings in locale `menuPermissions` section for new permission keys
 
 ## 10. Cleanup
 
-- [ ] 10.1 Delete old `web/src/apps/ai/pages/agents/` directory (all files)
-- [ ] 10.2 Remove old `agentApi` from `web/src/lib/api.ts` (keep `AgentInfo` type if still used by session/chat pages, otherwise remove)
-- [ ] 10.3 Verify chat page (`/ai/chat/:sid`) still works — it uses `sessionApi` which is unchanged
-- [ ] 10.4 Run `cd web && bun run lint` and `cd web && bun run build` to verify frontend builds cleanly
-- [ ] 10.5 Run `go build -tags dev ./cmd/server` to verify backend compiles
+- [x] 10.1 Delete old `web/src/apps/ai/pages/agents/` directory (all files)
+- [x] 10.2 Remove old `agentApi` from `web/src/lib/api.ts` (keep `AgentInfo` type if still used by session/chat pages, otherwise remove)
+- [x] 10.3 Verify chat page (`/ai/chat/:sid`) still works — it uses `sessionApi` which is unchanged
+- [x] 10.4 Run `cd web && bun run lint` and `cd web && bun run build` to verify frontend builds cleanly
+- [x] 10.5 Run `go build -tags dev ./cmd/server` to verify backend compiles

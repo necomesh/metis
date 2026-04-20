@@ -32,7 +32,13 @@
     "syncing": "同步中...",
     "syncSuccess": "同步完成，新增 {{count}} 个模型",
     "hasModelsError": "请先删除该供应商下的所有模型",
-    "backToList": "返回供应商列表"
+    "backToList": "返回供应商列表",
+    "timeAgo": {
+      "justNow": "刚刚",
+      "minutes": "{{count}} 分钟前",
+      "hours": "{{count}} 小时前",
+      "days": "{{count}} 天前"
+    }
   },
   "models": {
     "title": "模型管理",
@@ -59,6 +65,7 @@
     "setDefaultSuccess": "已设为默认模型",
     "status": "状态",
     "empty": "暂无模型",
+    "emptySearch": "未找到匹配的模型",
     "emptyHint": "点击「新建模型」手动添加或通过供应商同步",
     "createSuccess": "模型创建成功",
     "updateSuccess": "模型更新成功",
@@ -82,6 +89,7 @@
     "tts": "语音合成",
     "stt": "语音识别",
     "image": "图像生成",
+    "other": "其他",
     "unclassified": "未分类"
   },
   "statusLabels": {
@@ -454,6 +462,34 @@
     "confirmDelete": "确定删除",
     "viewDetail": "查看详情",
     "hasRunningSessions": "该智能体存在运行中的会话，无法删除"
+  },
+  "assistantAgents": {
+    "title": "助手智能体",
+    "create": "新建助手智能体",
+    "edit": "编辑助手智能体",
+    "searchPlaceholder": "搜索助手智能体名称",
+    "empty": "暂无助手智能体",
+    "emptyHint": "点击「新建助手智能体」创建第一个助手智能体",
+    "createSuccess": "助手智能体创建成功",
+    "updateSuccess": "助手智能体更新成功",
+    "deleteSuccess": "助手智能体已删除",
+    "deleteTitle": "删除助手智能体",
+    "deleteDesc": "确定要删除助手智能体「{{name}}」吗？",
+    "confirmDelete": "确定删除"
+  },
+  "codingAgents": {
+    "title": "编码智能体",
+    "create": "新建编码智能体",
+    "edit": "编辑编码智能体",
+    "searchPlaceholder": "搜索编码智能体名称",
+    "empty": "暂无编码智能体",
+    "emptyHint": "点击「新建编码智能体」创建第一个编码智能体",
+    "createSuccess": "编码智能体创建成功",
+    "updateSuccess": "编码智能体更新成功",
+    "deleteSuccess": "编码智能体已删除",
+    "deleteTitle": "删除编码智能体",
+    "deleteDesc": "确定要删除编码智能体「{{name}}」吗？",
+    "confirmDelete": "确定删除"
   },
   "chat": {
     "title": "对话",

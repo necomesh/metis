@@ -22,14 +22,14 @@ import (
 
 type KnowledgeExtractService struct {
 	sourceRepo *KnowledgeSourceRepo
-	kbRepo     *KnowledgeBaseRepo
+	assetRepo  *KnowledgeAssetRepo
 	engine     *scheduler.Engine
 }
 
 func NewKnowledgeExtractService(i do.Injector) (*KnowledgeExtractService, error) {
 	return &KnowledgeExtractService{
 		sourceRepo: do.MustInvoke[*KnowledgeSourceRepo](i),
-		kbRepo:     do.MustInvoke[*KnowledgeBaseRepo](i),
+		assetRepo:  do.MustInvoke[*KnowledgeAssetRepo](i),
 		engine:     do.MustInvoke[*scheduler.Engine](i),
 	}, nil
 }
@@ -87,17 +87,8 @@ func (s *KnowledgeExtractService) HandleExtract(ctx context.Context, payload jso
 		return err
 	}
 
-	if err := s.kbRepo.UpdateSourceCount(src.KbID); err != nil {
-		slog.Error("failed to update kb counts after extract", "kb_id", src.KbID, "error", err)
-	}
-
-	// Auto-compile if enabled
-	kb, err := s.kbRepo.FindByID(src.KbID)
-	if err == nil && kb.AutoCompile {
-		if err := s.enqueueCompile(kb.ID, false); err != nil {
-			slog.Error("failed to enqueue auto-compile", "kb_id", kb.ID, "error", err)
-		}
-	}
+	// Update source counts and trigger auto-build for all referencing assets
+	s.notifyReferencingAssets(src.ID)
 
 	return nil
 }
@@ -155,7 +146,6 @@ func (s *KnowledgeExtractService) crawlChildPages(ctx context.Context, parent *K
 		}
 
 		child := &KnowledgeSource{
-			KbID:          parent.KbID,
 			ParentID:      &parent.ID,
 			Title:         link,
 			Format:        SourceFormatURL,
@@ -208,6 +198,30 @@ func (s *KnowledgeExtractService) EnqueueExtract(sourceID uint) error {
 	))
 }
 
+// notifyReferencingAssets updates source counts and triggers auto-build for
+// all assets that reference the given source.
+func (s *KnowledgeExtractService) notifyReferencingAssets(sourceID uint) {
+	assetIDs, err := s.assetRepo.ListAssetIDsBySource(sourceID)
+	if err != nil {
+		slog.Error("failed to find referencing assets", "source_id", sourceID, "error", err)
+		return
+	}
+	for _, assetID := range assetIDs {
+		if err := s.assetRepo.UpdateSourceCount(assetID); err != nil {
+			slog.Error("failed to update asset source count", "asset_id", assetID, "error", err)
+		}
+		asset, err := s.assetRepo.FindByID(assetID)
+		if err != nil {
+			continue
+		}
+		if asset.AutoBuild {
+			if err := s.enqueueCompile(assetID, false); err != nil {
+				slog.Error("failed to enqueue auto-compile", "asset_id", assetID, "error", err)
+			}
+		}
+	}
+}
+
 // enqueueCompile enqueues a knowledge compile task using a typed payload.
 func (s *KnowledgeExtractService) enqueueCompile(kbID uint, recompile bool) error {
 	payload := compilePayload{KbID: kbID, Recompile: recompile}
@@ -249,7 +263,7 @@ func (s *KnowledgeExtractService) HandleCrawl(ctx context.Context, _ json.RawMes
 
 	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 	now := time.Now()
-	affectedKBs := make(map[uint]bool)
+	var affectedSources []uint
 
 	for _, src := range sources {
 		if src.CrawlSchedule == "" {
@@ -294,8 +308,8 @@ func (s *KnowledgeExtractService) HandleCrawl(ctx context.Context, _ json.RawMes
 			src.ContentHash = newHash
 			src.ExtractStatus = ExtractStatusCompleted
 			src.ErrorMessage = ""
-			slog.Info("crawl: content changed", "source_id", src.ID, "kb_id", src.KbID)
-			affectedKBs[src.KbID] = true
+			slog.Info("crawl: content changed", "source_id", src.ID)
+			affectedSources = append(affectedSources, src.ID)
 		}
 
 		if err := s.sourceRepo.Update(&src); err != nil {
@@ -303,20 +317,9 @@ func (s *KnowledgeExtractService) HandleCrawl(ctx context.Context, _ json.RawMes
 		}
 	}
 
-	// Update counts and trigger auto-compile for affected KBs
-	for kbID := range affectedKBs {
-		if err := s.kbRepo.UpdateSourceCount(kbID); err != nil {
-			slog.Error("crawl: update kb counts failed", "kb_id", kbID, "error", err)
-		}
-		kb, err := s.kbRepo.FindByID(kbID)
-		if err != nil {
-			continue
-		}
-		if kb.AutoCompile {
-			if err := s.enqueueCompile(kbID, false); err != nil {
-				slog.Error("crawl: failed to enqueue auto-compile", "kb_id", kbID, "error", err)
-			}
-		}
+	// Notify referencing assets for all affected sources
+	for _, srcID := range affectedSources {
+		s.notifyReferencingAssets(srcID)
 	}
 
 	return nil

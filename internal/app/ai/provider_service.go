@@ -64,11 +64,16 @@ func (s *ProviderService) Update(id uint, name, providerType, baseURL, apiKey st
 		return nil, ErrProviderNotFound
 	}
 
+	// Only reset status when connection-relevant fields change.
+	connectionChanged := p.BaseURL != baseURL || apiKey != ""
+
 	p.Name = name
 	p.Type = providerType
 	p.Protocol = ProtocolForType(providerType)
 	p.BaseURL = baseURL
-	p.Status = ProviderStatusInactive
+	if connectionChanged {
+		p.Status = ProviderStatusInactive
+	}
 
 	if apiKey != "" {
 		encrypted, err := crypto.Encrypt([]byte(apiKey), s.encKey)

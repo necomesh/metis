@@ -55,20 +55,26 @@ func (a *AIApp) Providers(i do.Injector) {
 	do.Provide(i, NewModelHandler)
 	// FalkorDB
 	do.Provide(i, NewFalkorDBClient)
-	// Knowledge
-	do.Provide(i, NewKnowledgeBaseRepo)
+	// Knowledge — new unified model
+	do.Provide(i, NewKnowledgeAssetRepo)
 	do.Provide(i, NewKnowledgeSourceRepo)
-	do.Provide(i, NewKnowledgeGraphRepo)
-	do.Provide(i, NewKnowledgeBaseService)
 	do.Provide(i, NewKnowledgeSourceService)
-	do.Provide(i, NewKnowledgeEmbeddingService)
-	do.Provide(i, NewKnowledgeBaseHandler)
 	do.Provide(i, NewKnowledgeSourceHandler)
-	do.Provide(i, NewKnowledgeNodeHandler)
 	do.Provide(i, NewKnowledgeLogRepo)
+	do.Provide(i, NewKnowledgeAssetService)
+	// Knowledge — graph engine
+	do.Provide(i, NewConceptMapEngine)
+	do.Provide(i, NewKnowledgeGraphHandler)
+	// Knowledge — RAG engine
+	do.Provide(i, NewRAGChunkRepo)
+	do.Provide(i, NewNaiveChunkEngine)
+	do.Provide(i, NewKnowledgeKBHandler)
+	// Knowledge — legacy (graph compile pipeline, will be replaced by ConceptMapEngine)
+	do.Provide(i, NewKnowledgeBaseRepo)
+	do.Provide(i, NewKnowledgeGraphRepo)
+	do.Provide(i, NewKnowledgeEmbeddingService)
 	do.Provide(i, NewKnowledgeExtractService)
 	do.Provide(i, NewKnowledgeCompileService)
-	do.Provide(i, NewKnowledgeQueryHandler)
 	// Tool registry
 	do.Provide(i, NewToolRepo)
 	do.Provide(i, NewToolService)
@@ -119,10 +125,7 @@ func (a *AIApp) Providers(i do.Injector) {
 func (a *AIApp) Routes(api *gin.RouterGroup) {
 	providerH := do.MustInvoke[*ProviderHandler](a.injector)
 	modelH := do.MustInvoke[*ModelHandler](a.injector)
-	kbH := do.MustInvoke[*KnowledgeBaseHandler](a.injector)
 	sourceH := do.MustInvoke[*KnowledgeSourceHandler](a.injector)
-	nodeH := do.MustInvoke[*KnowledgeNodeHandler](a.injector)
-	queryH := do.MustInvoke[*KnowledgeQueryHandler](a.injector)
 
 	providers := api.Group("/ai/providers")
 	{
@@ -145,30 +148,77 @@ func (a *AIApp) Routes(api *gin.RouterGroup) {
 		models.PATCH("/:id/default", modelH.SetDefault)
 	}
 
-	kbs := api.Group("/ai/knowledge-bases")
+	// Knowledge — source pool (new)
+	sources := api.Group("/ai/knowledge/sources")
 	{
-		kbs.POST("", kbH.Create)
-		kbs.GET("", kbH.List)
-		kbs.GET("/:id", kbH.Get)
-		kbs.PUT("/:id", kbH.Update)
-		kbs.DELETE("/:id", kbH.Delete)
-		kbs.POST("/:id/compile", kbH.Compile)
-		kbs.POST("/:id/recompile", kbH.Recompile)
-		kbs.GET("/:id/progress", kbH.GetProgress)
-		// Sources
-		kbs.POST("/:id/sources", sourceH.Create)
-		kbs.GET("/:id/sources", sourceH.List)
-		kbs.GET("/:id/sources/:sid", sourceH.Get)
-		kbs.DELETE("/:id/sources/:sid", sourceH.Delete)
-		// Nodes & Graph
-		kbs.GET("/:id/graph", nodeH.GetFullGraph)
-		kbs.GET("/:id/nodes", nodeH.List)
-		kbs.GET("/:id/nodes/:nid", nodeH.Get)
-		kbs.GET("/:id/nodes/:nid/graph", nodeH.GetGraph)
+		sources.POST("/upload", sourceH.Upload)
+		sources.POST("/url", sourceH.AddURL)
+		sources.POST("/text", sourceH.AddText)
+		sources.GET("", sourceH.List)
+		sources.GET("/:id", sourceH.Get)
+		sources.GET("/:id/content", sourceH.GetContent)
+		sources.GET("/:id/references", sourceH.GetReferences)
+		sources.DELETE("/:id", sourceH.Delete)
+	}
+
+	// Knowledge — type registry
+	api.GET("/ai/knowledge/types", func(c *gin.Context) {
+		category := c.Query("category")
+		types := ListAssetTypes(category)
+		c.JSON(200, types)
+	})
+
+	// Knowledge — graph assets (KG)
+	graphH := do.MustInvoke[*KnowledgeGraphHandler](a.injector)
+	graphs := api.Group("/ai/knowledge/graphs")
+	{
+		graphs.POST("", graphH.Create)
+		graphs.GET("", graphH.List)
+		graphs.GET("/:id", graphH.Get)
+		graphs.PUT("/:id", graphH.Update)
+		graphs.DELETE("/:id", graphH.Delete)
+		// Source associations
+		graphs.POST("/:id/sources", graphH.AddSources)
+		graphs.GET("/:id/sources", graphH.ListSources)
+		graphs.DELETE("/:id/sources/:sourceId", graphH.RemoveSource)
+		// Build
+		graphs.POST("/:id/build", graphH.Build)
+		graphs.POST("/:id/rebuild", graphH.Rebuild)
+		graphs.GET("/:id/progress", graphH.GetProgress)
 		// Logs
-		kbs.GET("/:id/logs", nodeH.ListLogs)
-		// Search (admin-facing, JWT auth)
-		kbs.GET("/:id/search", queryH.SearchByKb)
+		graphs.GET("/:id/logs", graphH.ListLogs)
+		// Graph content
+		graphs.GET("/:id/nodes", graphH.ListNodes)
+		graphs.GET("/:id/nodes/:nodeId", graphH.GetNode)
+		graphs.GET("/:id/nodes/:nodeId/subgraph", graphH.GetNodeSubgraph)
+		graphs.GET("/:id/graph", graphH.GetFullGraph)
+		// Search
+		graphs.POST("/:id/search", graphH.Search)
+	}
+
+	// Knowledge — knowledge base assets (KB / RAG)
+	kbH := do.MustInvoke[*KnowledgeKBHandler](a.injector)
+	bases := api.Group("/ai/knowledge/bases")
+	{
+		bases.POST("", kbH.Create)
+		bases.GET("", kbH.List)
+		bases.GET("/:id", kbH.Get)
+		bases.PUT("/:id", kbH.Update)
+		bases.DELETE("/:id", kbH.Delete)
+		// Source associations
+		bases.POST("/:id/sources", kbH.AddSources)
+		bases.GET("/:id/sources", kbH.ListSources)
+		bases.DELETE("/:id/sources/:sourceId", kbH.RemoveSource)
+		// Build
+		bases.POST("/:id/build", kbH.Build)
+		bases.POST("/:id/rebuild", kbH.Rebuild)
+		bases.GET("/:id/progress", kbH.GetProgress)
+		// Content
+		bases.GET("/:id/chunks", kbH.ListChunks)
+		// Logs
+		bases.GET("/:id/logs", kbH.ListLogs)
+		// Search
+		bases.POST("/:id/search", kbH.Search)
 	}
 
 	// Tool registry
@@ -262,14 +312,11 @@ func (a *AIApp) Routes(api *gin.RouterGroup) {
 	}
 
 	// Agent knowledge query API (Sidecar token auth, bypasses JWT+Casbin)
+	// TODO: Re-enable after Phase 4/5 provide the new query handler
 	r := do.MustInvoke[*gin.Engine](a.injector)
 	nodeRepo := do.MustInvoke[*node.NodeRepo](a.injector)
-	knowledge := r.Group("/api/v1/ai/knowledge", node.NodeTokenMiddleware(nodeRepo))
-	{
-		knowledge.GET("/search", queryH.Search)
-		knowledge.GET("/nodes/:id", queryH.GetNode)
-		knowledge.GET("/nodes/:id/graph", queryH.GetNodeGraph)
-	}
+	_ = r
+	_ = nodeRepo
 
 	// Internal API for Agent to download skill packages (Node token auth)
 	internal := r.Group("/api/v1/ai/internal", node.NodeTokenMiddleware(nodeRepo))

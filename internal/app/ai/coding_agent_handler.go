@@ -76,8 +76,8 @@ func (h *CodingAgentHandler) Create(c *gin.Context) {
 		return
 	}
 
-	if len(req.ToolIDs) > 0 || len(req.SkillIDs) > 0 || len(req.MCPServerIDs) > 0 || len(req.KnowledgeBaseIDs) > 0 {
-		if err := h.svc.UpdateBindings(a.ID, req.ToolIDs, req.SkillIDs, req.MCPServerIDs, req.KnowledgeBaseIDs); err != nil {
+	if len(req.ToolIDs) > 0 || len(req.SkillIDs) > 0 || len(req.MCPServerIDs) > 0 || len(req.KnowledgeBaseIDs) > 0 || len(req.KnowledgeGraphIDs) > 0 {
+		if err := h.svc.UpdateBindings(a.ID, req.ToolIDs, req.SkillIDs, req.MCPServerIDs, req.KnowledgeBaseIDs, req.KnowledgeGraphIDs); err != nil {
 			handler.Fail(c, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -187,7 +187,7 @@ func (h *CodingAgentHandler) Update(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.UpdateBindings(a.ID, req.ToolIDs, req.SkillIDs, req.MCPServerIDs, req.KnowledgeBaseIDs); err != nil {
+	if err := h.svc.UpdateBindings(a.ID, req.ToolIDs, req.SkillIDs, req.MCPServerIDs, req.KnowledgeBaseIDs, req.KnowledgeGraphIDs); err != nil {
 		handler.Fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -251,13 +251,15 @@ func (h *CodingAgentHandler) agentWithBindings(a *Agent) gin.H {
 	skillIDs, _ := h.repo.GetSkillIDs(a.ID)
 	mcpIDs, _ := h.repo.GetMCPServerIDs(a.ID)
 	kbIDs, _ := h.repo.GetKnowledgeBaseIDs(a.ID)
+	kgIDs, _ := h.repo.GetKnowledgeGraphIDs(a.ID)
 
 	return gin.H{
-		"agent":            resp,
-		"toolIds":          toolIDs,
-		"skillIds":         skillIDs,
-		"mcpServerIds":     mcpIDs,
-		"knowledgeBaseIds": kbIDs,
+		"agent":             resp,
+		"toolIds":           toolIDs,
+		"skillIds":          skillIDs,
+		"mcpServerIds":      mcpIDs,
+		"knowledgeBaseIds":  kbIDs,
+		"knowledgeGraphIds": kgIDs,
 	}
 }
 

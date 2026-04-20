@@ -29,6 +29,7 @@ const (
 	ModelTypeTTS    = "tts"
 	ModelTypeSTT    = "stt"
 	ModelTypeImage  = "image"
+	ModelTypeOther  = "other"
 )
 
 // Model statuses
@@ -48,6 +49,7 @@ const (
 var ValidModelTypes = map[string]bool{
 	ModelTypeLLM: true, ModelTypeEmbed: true, ModelTypeRerank: true,
 	ModelTypeTTS: true, ModelTypeSTT: true, ModelTypeImage: true,
+	ModelTypeOther: true,
 }
 
 // ValidCapabilities for LLM models.

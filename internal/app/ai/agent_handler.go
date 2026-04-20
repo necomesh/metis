@@ -26,29 +26,30 @@ func NewAgentHandler(i do.Injector) (*AgentHandler, error) {
 }
 
 type createAgentReq struct {
-	Name             string          `json:"name" binding:"required"`
-	Code             *string         `json:"code"`
-	Description      string          `json:"description"`
-	Avatar           string          `json:"avatar"`
-	Type             string          `json:"type" binding:"required"`
-	Visibility       string          `json:"visibility"`
-	Strategy         string          `json:"strategy"`
-	ModelID          *uint           `json:"modelId"`
-	SystemPrompt     string          `json:"systemPrompt"`
-	Temperature      float64         `json:"temperature"`
-	MaxTokens        int             `json:"maxTokens"`
-	MaxTurns         int             `json:"maxTurns"`
-	Runtime          string          `json:"runtime"`
-	RuntimeConfig    json.RawMessage `json:"runtimeConfig"`
-	ExecMode         string          `json:"execMode"`
-	NodeID           *uint           `json:"nodeId"`
-	Workspace        string          `json:"workspace"`
-	Instructions     string          `json:"instructions"`
-	ToolIDs          []uint          `json:"toolIds"`
-	SkillIDs         []uint          `json:"skillIds"`
-	MCPServerIDs     []uint          `json:"mcpServerIds"`
-	KnowledgeBaseIDs []uint          `json:"knowledgeBaseIds"`
-	TemplateID       *uint           `json:"templateId"`
+	Name              string          `json:"name" binding:"required"`
+	Code              *string         `json:"code"`
+	Description       string          `json:"description"`
+	Avatar            string          `json:"avatar"`
+	Type              string          `json:"type" binding:"required"`
+	Visibility        string          `json:"visibility"`
+	Strategy          string          `json:"strategy"`
+	ModelID           *uint           `json:"modelId"`
+	SystemPrompt      string          `json:"systemPrompt"`
+	Temperature       float64         `json:"temperature"`
+	MaxTokens         int             `json:"maxTokens"`
+	MaxTurns          int             `json:"maxTurns"`
+	Runtime           string          `json:"runtime"`
+	RuntimeConfig     json.RawMessage `json:"runtimeConfig"`
+	ExecMode          string          `json:"execMode"`
+	NodeID            *uint           `json:"nodeId"`
+	Workspace         string          `json:"workspace"`
+	Instructions      string          `json:"instructions"`
+	ToolIDs           []uint          `json:"toolIds"`
+	SkillIDs          []uint          `json:"skillIds"`
+	MCPServerIDs      []uint          `json:"mcpServerIds"`
+	KnowledgeBaseIDs  []uint          `json:"knowledgeBaseIds"`
+	KnowledgeGraphIDs []uint          `json:"knowledgeGraphIds"`
+	TemplateID        *uint           `json:"templateId"`
 }
 
 func (h *AgentHandler) Create(c *gin.Context) {
@@ -106,8 +107,8 @@ func (h *AgentHandler) Create(c *gin.Context) {
 	}
 
 	// Update bindings
-	if len(req.ToolIDs) > 0 || len(req.SkillIDs) > 0 || len(req.MCPServerIDs) > 0 || len(req.KnowledgeBaseIDs) > 0 {
-		if err := h.svc.UpdateBindings(a.ID, req.ToolIDs, req.SkillIDs, req.MCPServerIDs, req.KnowledgeBaseIDs); err != nil {
+	if len(req.ToolIDs) > 0 || len(req.SkillIDs) > 0 || len(req.MCPServerIDs) > 0 || len(req.KnowledgeBaseIDs) > 0 || len(req.KnowledgeGraphIDs) > 0 {
+		if err := h.svc.UpdateBindings(a.ID, req.ToolIDs, req.SkillIDs, req.MCPServerIDs, req.KnowledgeBaseIDs, req.KnowledgeGraphIDs); err != nil {
 			handler.Fail(c, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -171,27 +172,28 @@ func (h *AgentHandler) Get(c *gin.Context) {
 }
 
 type updateAgentReq struct {
-	Name             string          `json:"name" binding:"required"`
-	Description      string          `json:"description"`
-	Avatar           string          `json:"avatar"`
-	Visibility       string          `json:"visibility"`
-	IsActive         *bool           `json:"isActive"`
-	Strategy         string          `json:"strategy"`
-	ModelID          *uint           `json:"modelId"`
-	SystemPrompt     string          `json:"systemPrompt"`
-	Temperature      float64         `json:"temperature"`
-	MaxTokens        int             `json:"maxTokens"`
-	MaxTurns         int             `json:"maxTurns"`
-	Runtime          string          `json:"runtime"`
-	RuntimeConfig    json.RawMessage `json:"runtimeConfig"`
-	ExecMode         string          `json:"execMode"`
-	NodeID           *uint           `json:"nodeId"`
-	Workspace        string          `json:"workspace"`
-	Instructions     string          `json:"instructions"`
-	ToolIDs          []uint          `json:"toolIds"`
-	SkillIDs         []uint          `json:"skillIds"`
-	MCPServerIDs     []uint          `json:"mcpServerIds"`
-	KnowledgeBaseIDs []uint          `json:"knowledgeBaseIds"`
+	Name              string          `json:"name" binding:"required"`
+	Description       string          `json:"description"`
+	Avatar            string          `json:"avatar"`
+	Visibility        string          `json:"visibility"`
+	IsActive          *bool           `json:"isActive"`
+	Strategy          string          `json:"strategy"`
+	ModelID           *uint           `json:"modelId"`
+	SystemPrompt      string          `json:"systemPrompt"`
+	Temperature       float64         `json:"temperature"`
+	MaxTokens         int             `json:"maxTokens"`
+	MaxTurns          int             `json:"maxTurns"`
+	Runtime           string          `json:"runtime"`
+	RuntimeConfig     json.RawMessage `json:"runtimeConfig"`
+	ExecMode          string          `json:"execMode"`
+	NodeID            *uint           `json:"nodeId"`
+	Workspace         string          `json:"workspace"`
+	Instructions      string          `json:"instructions"`
+	ToolIDs           []uint          `json:"toolIds"`
+	SkillIDs          []uint          `json:"skillIds"`
+	MCPServerIDs      []uint          `json:"mcpServerIds"`
+	KnowledgeBaseIDs  []uint          `json:"knowledgeBaseIds"`
+	KnowledgeGraphIDs []uint          `json:"knowledgeGraphIds"`
 }
 
 func (h *AgentHandler) Update(c *gin.Context) {
@@ -244,7 +246,7 @@ func (h *AgentHandler) Update(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.UpdateBindings(a.ID, req.ToolIDs, req.SkillIDs, req.MCPServerIDs, req.KnowledgeBaseIDs); err != nil {
+	if err := h.svc.UpdateBindings(a.ID, req.ToolIDs, req.SkillIDs, req.MCPServerIDs, req.KnowledgeBaseIDs, req.KnowledgeGraphIDs); err != nil {
 		handler.Fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -309,12 +311,14 @@ func (h *AgentHandler) agentWithBindings(a *Agent) gin.H {
 	skillIDs, _ := h.repo.GetSkillIDs(a.ID)
 	mcpIDs, _ := h.repo.GetMCPServerIDs(a.ID)
 	kbIDs, _ := h.repo.GetKnowledgeBaseIDs(a.ID)
+	kgIDs, _ := h.repo.GetKnowledgeGraphIDs(a.ID)
 
 	return gin.H{
-		"agent":            resp,
-		"toolIds":          toolIDs,
-		"skillIds":         skillIDs,
-		"mcpServerIds":     mcpIDs,
-		"knowledgeBaseIds": kbIDs,
+		"agent":             resp,
+		"toolIds":           toolIDs,
+		"skillIds":          skillIDs,
+		"mcpServerIds":      mcpIDs,
+		"knowledgeBaseIds":  kbIDs,
+		"knowledgeGraphIds": kgIDs,
 	}
 }

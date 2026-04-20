@@ -91,7 +91,7 @@ func (s *KnowledgeEmbeddingService) GenerateEmbeddings(ctx context.Context, kbID
 		if err != nil {
 			slog.Error("embedding API error", "kb_id", kbID, "batch", i/batchSize, "error", err)
 			s.logRepo.Create(&KnowledgeLog{
-				KbID:         kbID,
+				AssetID:      kbID,
 				Action:       "embedding_error",
 				ErrorMessage: fmt.Sprintf("batch %d: %s", i/batchSize, err.Error()),
 			})

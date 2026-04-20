@@ -15,7 +15,7 @@ import { ProviderLogo } from "./provider-logo"
 import { StatusDot } from "./status-dot"
 import type { ProviderItem } from "./provider-sheet"
 
-const MODEL_TYPE_ORDER = ["llm", "embed", "rerank", "tts", "stt", "image"] as const
+const MODEL_TYPE_ORDER = ["llm", "embed", "rerank", "tts", "stt", "image", "other"] as const
 
 interface ProviderCardProps {
   provider: ProviderItem
@@ -27,16 +27,16 @@ interface ProviderCardProps {
   onDelete: (provider: ProviderItem) => void
 }
 
-function formatRelativeTime(dateStr: string | null): string | null {
+function formatRelativeTime(dateStr: string | null, t: (key: string, opts?: Record<string, unknown>) => string): string | null {
   if (!dateStr) return null
   const diff = Date.now() - new Date(dateStr).getTime()
   const minutes = Math.floor(diff / 60000)
-  if (minutes < 1) return "<1m"
-  if (minutes < 60) return `${minutes}m`
+  if (minutes < 1) return t("ai:providers.timeAgo.justNow")
+  if (minutes < 60) return t("ai:providers.timeAgo.minutes", { count: minutes })
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h`
+  if (hours < 24) return t("ai:providers.timeAgo.hours", { count: hours })
   const days = Math.floor(hours / 24)
-  return `${days}d`
+  return t("ai:providers.timeAgo.days", { count: days })
 }
 
 function ModelChips({ provider }: { provider: ProviderItem }) {
@@ -78,7 +78,7 @@ export function ProviderCard({
   const navigate = useNavigate()
   const brand = getProviderBrand(provider.type)
   const isTesting = testingId === provider.id
-  const relTime = formatRelativeTime(provider.healthCheckedAt)
+  const relTime = formatRelativeTime(provider.healthCheckedAt, t)
 
   function handleCardClick(e: React.MouseEvent) {
     // Don't navigate if clicking on action buttons or dropdown

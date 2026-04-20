@@ -71,11 +71,12 @@ func (s *ModelService) SetDefault(id uint) error {
 	if err != nil {
 		return ErrModelNotFound
 	}
-	if err := s.repo.ClearDefaultByType(m.Type); err != nil {
-		return err
-	}
-	m.IsDefault = true
-	return s.repo.Update(m)
+	return s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		if err := s.repo.ClearDefaultByProviderAndType(tx, m.ProviderID, m.Type); err != nil {
+			return err
+		}
+		return s.repo.SetDefaultInTx(tx, m.ID)
+	})
 }
 
 func (s *ModelService) SyncModels(ctx context.Context, providerID uint) (int, error) {
@@ -183,7 +184,7 @@ func guessModelType(modelID string) string {
 			return ModelTypeLLM
 		}
 	}
-	return ""
+	return ModelTypeOther
 }
 
 func decryptAPIKey(encrypted []byte, key crypto.EncryptionKey) (string, error) {

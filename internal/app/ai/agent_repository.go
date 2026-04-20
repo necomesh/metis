@@ -238,6 +238,32 @@ func (r *AgentRepo) GetKnowledgeBaseIDs(agentID uint) ([]uint, error) {
 	return ids, nil
 }
 
+func (r *AgentRepo) ReplaceKnowledgeGraphBindings(agentID uint, kgIDs []uint) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("agent_id = ?", agentID).Delete(&AgentKnowledgeGraph{}).Error; err != nil {
+			return err
+		}
+		for _, kid := range kgIDs {
+			if err := tx.Create(&AgentKnowledgeGraph{AgentID: agentID, KnowledgeGraphID: kid}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (r *AgentRepo) GetKnowledgeGraphIDs(agentID uint) ([]uint, error) {
+	var bindings []AgentKnowledgeGraph
+	if err := r.db.Where("agent_id = ?", agentID).Find(&bindings).Error; err != nil {
+		return nil, err
+	}
+	ids := make([]uint, len(bindings))
+	for i, b := range bindings {
+		ids[i] = b.KnowledgeGraphID
+	}
+	return ids, nil
+}
+
 // --- Template helpers ---
 
 func (r *AgentRepo) ListTemplates() ([]AgentTemplate, error) {

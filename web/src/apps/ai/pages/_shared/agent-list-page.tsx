@@ -51,7 +51,6 @@ export interface AgentListPageConfig {
 function AgentCard({
   agent,
   basePath,
-  i18nKey,
   onChat,
   chattingId,
   canUpdate,
@@ -60,7 +59,6 @@ function AgentCard({
 }: {
   agent: AgentInfo
   basePath: string
-  i18nKey: string
   onChat: () => void
   chattingId: number | null
   canUpdate: boolean
@@ -235,7 +233,6 @@ export function AgentListPage({ config }: { config: AgentListPageConfig }) {
               key={agent.id}
               agent={agent}
               basePath={config.basePath}
-              i18nKey={config.i18nKey}
               onChat={() => createSessionMutation.mutate(agent.id)}
               chattingId={createSessionMutation.isPending ? (createSessionMutation.variables ?? null) : null}
               canUpdate={canUpdate}

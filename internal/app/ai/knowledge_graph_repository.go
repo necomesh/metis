@@ -15,7 +15,7 @@ import (
 )
 
 // KnowledgeGraphRepo handles all knowledge node and edge operations via FalkorDB.
-// Each KnowledgeBase maps to an independent FalkorDB graph named "kb_<id>".
+// Each KnowledgeAsset (category=kg) maps to an independent FalkorDB graph named "kg_<id>".
 type KnowledgeGraphRepo struct {
 	client *FalkorDBClient
 }
@@ -61,10 +61,10 @@ WITH n, count(n) AS cnt
 DELETE n
 RETURN sum(cnt) AS deleted`
 	params := map[string]interface{}{
-		"p1": "[" + idStr + "]",  // sole element: [1]
-		"p2": "[" + idStr + ",",  // first element: [1,
-		"p3": "," + idStr + "]",  // last element: ,1]
-		"p4": "," + idStr + ",",  // middle element: ,1,
+		"p1": "[" + idStr + "]", // sole element: [1]
+		"p2": "[" + idStr + ",", // first element: [1,
+		"p3": "," + idStr + "]", // last element: ,1]
+		"p4": "," + idStr + ",", // middle element: ,1,
 	}
 	result, err := g.Query(query, params, nil)
 	if err != nil {

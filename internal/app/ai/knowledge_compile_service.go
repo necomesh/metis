@@ -216,7 +216,7 @@ func (s *KnowledgeCompileService) HandleCompile(ctx context.Context, payload jso
 			slog.Error("failed to update kb status", "kb_id", kb.ID, "error", updateErr)
 		}
 		if logErr := s.logRepo.Create(&KnowledgeLog{
-			KbID:         kb.ID,
+			AssetID:      kb.ID,
 			Action:       KnowledgeLogCompile,
 			ModelID:      modelIDStr,
 			ErrorMessage: err.Error(),
@@ -234,7 +234,7 @@ func (s *KnowledgeCompileService) HandleCompile(ctx context.Context, payload jso
 			slog.Error("failed to update kb status", "kb_id", kb.ID, "error", updateErr)
 		}
 		if logErr := s.logRepo.Create(&KnowledgeLog{
-			KbID:         kb.ID,
+			AssetID:      kb.ID,
 			Action:       KnowledgeLogCompile,
 			ModelID:      modelIDStr,
 			ErrorMessage: err.Error(),
@@ -331,7 +331,7 @@ func (s *KnowledgeCompileService) HandleCompile(ctx context.Context, payload jso
 		action = KnowledgeLogRecompile
 	}
 	s.logRepo.Create(&KnowledgeLog{
-		KbID:           kb.ID,
+		AssetID:        kb.ID,
 		Action:         action,
 		ModelID:        modelIDStr,
 		NodesCreated:   stats.created,
@@ -962,7 +962,7 @@ func extractFromText(text string, concepts map[string]bool) {
 		// Pattern 2: Words in quotes or backticks
 		w := words[i]
 		if strings.HasPrefix(w, "`") || strings.HasPrefix(w, "'") || strings.HasPrefix(w, "\"") {
-			cleaned := strings.Trim(w, "`'\"" + ".,;:!?")
+			cleaned := strings.Trim(w, "`'\""+".,;:!?")
 			if len(cleaned) > 2 {
 				concepts[cleaned] = true
 			}

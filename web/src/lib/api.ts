@@ -337,12 +337,12 @@ export interface CodingAgentInfo extends AgentBase {
 
 export type AgentInfo = AssistantAgentInfo | CodingAgentInfo;
 
-export interface AgentWithBindings extends AgentInfo {
+export type AgentWithBindings = AgentInfo & {
   toolIds: number[];
   skillIds: number[];
   mcpServerIds: number[];
   knowledgeBaseIds: number[];
-}
+};
 
 interface AgentDetailResponse {
   agent: AgentInfo;
@@ -393,50 +393,6 @@ export interface AgentMemory {
   createdAt: string;
   updatedAt: string;
 }
-
-export const agentApi = {
-  list: (params?: { page?: number; pageSize?: number; keyword?: string; type?: string }) => {
-    const p = new URLSearchParams();
-    if (params?.page) p.set('page', String(params.page));
-    if (params?.pageSize) p.set('pageSize', String(params.pageSize));
-    if (params?.keyword) p.set('keyword', params.keyword);
-    if (params?.type) p.set('type', params.type);
-    return api.get<PaginatedResponse<AgentInfo>>(`/api/v1/ai/agents?${p}`);
-  },
-
-  get: async (id: number) => {
-    const data = await api.get<AgentWithBindings | AgentDetailResponse>(`/api/v1/ai/agents/${id}`);
-    if ('agent' in data) {
-      return {
-        ...data.agent,
-        toolIds: data.toolIds ?? [],
-        skillIds: data.skillIds ?? [],
-        mcpServerIds: data.mcpServerIds ?? [],
-        knowledgeBaseIds: data.knowledgeBaseIds ?? [],
-      } satisfies AgentWithBindings;
-    }
-    return data;
-  },
-
-  create: (data: Partial<AgentInfo> & {
-    toolIds?: number[];
-    skillIds?: number[];
-    mcpServerIds?: number[];
-    knowledgeBaseIds?: number[];
-    templateId?: number;
-  }) => api.post<AgentInfo>('/api/v1/ai/agents', data),
-
-  update: (id: number, data: Partial<AgentInfo> & {
-    toolIds?: number[];
-    skillIds?: number[];
-    mcpServerIds?: number[];
-    knowledgeBaseIds?: number[];
-  }) => api.put<AgentInfo>(`/api/v1/ai/agents/${id}`, data),
-
-  delete: (id: number) => api.delete<null>(`/api/v1/ai/agents/${id}`),
-
-  templates: () => api.get<AgentTemplate[]>('/api/v1/ai/agents/templates'),
-};
 
 function makeTypedAgentApi(basePath: string) {
   return {

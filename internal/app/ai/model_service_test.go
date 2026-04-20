@@ -170,3 +170,41 @@ func TestModelService_SyncModels_Idempotent(t *testing.T) {
 		t.Errorf("second sync: expected 0, got %d", second)
 	}
 }
+
+func TestModelService_SetDefault_ScopedToProvider(t *testing.T) {
+	db := setupTestDB(t)
+	providerSvc := newProviderServiceForTest(t, db)
+	svc := newModelServiceForTest(t, db)
+
+	pA := seedProvider(t, db, providerSvc, ProviderTypeOpenAI)
+	pB := seedProvider(t, db, providerSvc, ProviderTypeAnthropic)
+
+	mA := &AIModel{ModelID: "gpt-4", DisplayName: "GPT-4", ProviderID: pA.ID, Type: ModelTypeLLM}
+	mB := &AIModel{ModelID: "claude-opus", DisplayName: "Claude Opus", ProviderID: pB.ID, Type: ModelTypeLLM}
+	_ = svc.Create(mA)
+	_ = svc.Create(mB)
+
+	// Set gpt-4 as default in Provider A
+	if err := svc.SetDefault(mA.ID); err != nil {
+		t.Fatalf("set default mA: %v", err)
+	}
+	loadedA, _ := svc.Get(mA.ID)
+	if !loadedA.IsDefault {
+		t.Error("mA should be default")
+	}
+
+	// Set claude-opus as default in Provider B
+	if err := svc.SetDefault(mB.ID); err != nil {
+		t.Fatalf("set default mB: %v", err)
+	}
+	loadedB, _ := svc.Get(mB.ID)
+	if !loadedB.IsDefault {
+		t.Error("mB should be default")
+	}
+
+	// Verify: gpt-4 in Provider A should STILL be default (not cleared)
+	loadedA, _ = svc.Get(mA.ID)
+	if !loadedA.IsDefault {
+		t.Error("mA should still be default — SetDefault must be scoped to provider")
+	}
+}

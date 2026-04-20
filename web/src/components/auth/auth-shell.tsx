@@ -11,32 +11,36 @@ interface AuthShellProps {
 
 export function AuthShell({ aside, children, className }: AuthShellProps) {
   return (
-    <div className="auth-shell-bg relative min-h-screen overflow-hidden">
-      <div className="auth-grid pointer-events-none absolute inset-0 opacity-60" />
-      <div className="auth-orb-primary pointer-events-none absolute left-[-10rem] top-[-8rem] h-80 w-80 rounded-full blur-3xl" />
-      <div className="auth-orb-secondary pointer-events-none absolute bottom-[-10rem] right-[-8rem] h-96 w-96 rounded-full blur-3xl" />
+    <div className="auth-shell-bg relative min-h-dvh overflow-hidden lg:h-dvh">
+      <div className="auth-grid pointer-events-none absolute inset-0" />
+      <div className="auth-orb-primary pointer-events-none absolute left-[8%] top-[10%] h-72 w-72 rounded-full blur-3xl" />
+      <div className="auth-orb-secondary pointer-events-none absolute bottom-[8%] right-[10%] h-80 w-80 rounded-full blur-3xl" />
 
-      <div
-        className={cn(
-          "relative mx-auto grid min-h-screen w-full max-w-[1600px] grid-cols-1",
-          aside && "lg:grid-cols-[minmax(0,1.12fr)_minmax(420px,520px)]",
-          className
-        )}
-      >
-        {aside ? (
-          <aside className="hidden min-h-screen px-8 py-8 lg:flex lg:items-stretch lg:px-10 xl:px-14">
-            {aside}
-          </aside>
-        ) : null}
+      <div className="relative mx-auto flex min-h-dvh w-full max-w-[1560px] items-stretch px-3 py-3 sm:px-4 sm:py-4 lg:h-dvh lg:px-7 lg:py-7">
+        <div
+          className={cn(
+            "auth-stage relative grid w-full grid-cols-1 overflow-hidden rounded-[1.75rem] sm:rounded-[2rem] lg:h-full",
+            aside && "lg:grid-cols-[minmax(0,1.08fr)_minmax(26rem,30rem)]",
+            className
+          )}
+        >
+          {aside ? (
+            <aside className="hidden min-h-full px-8 py-8 lg:flex lg:items-center lg:px-10 xl:px-14 xl:py-10">
+              {aside}
+            </aside>
+          ) : null}
 
-        <main className="flex min-h-screen items-center justify-center px-4 py-6 sm:px-6 lg:px-8">
-          {children}
-        </main>
-      </div>
+          <main className={cn(
+            "flex min-h-full items-center justify-center px-4 py-5 sm:px-6 sm:py-6 lg:justify-end lg:px-10 lg:py-10 xl:px-14",
+            aside && "lg:bg-transparent"
+          )}>
+            {children}
+          </main>
 
-      {/* Language switcher */}
-      <div className="absolute bottom-4 right-4">
-        <LanguageSwitcher />
+          <div className="absolute right-4 top-4 sm:right-5 sm:top-5">
+            <LanguageSwitcher />
+          </div>
+        </div>
       </div>
     </div>
   )

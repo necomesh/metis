@@ -144,30 +144,81 @@ func seedAI(db *gorm.DB, enforcer *casbin.Enforcer) error {
 	}
 	seedButtons(providerMenu.ID, buttons)
 
-	// 3. 知识库管理菜单
+	// 3. 知识管理菜单（三个子菜单：知识管理、知识库、知识图谱）
+	var sourceMenu model.Menu
+	sourceMenu = model.Menu{
+		ParentID:   &knowledgeDir.ID,
+		Name:       "知识管理",
+		Type:       model.MenuTypeMenu,
+		Path:       "/ai/knowledge/sources",
+		Icon:       "FileText",
+		Permission: "ai:knowledge-source:list",
+		Sort:       0,
+	}
+	if err := upsertMenu(&sourceMenu); err != nil {
+		return err
+	}
+
+	sourceButtons := []model.Menu{
+		{Name: "上传素材", Type: model.MenuTypeButton, Permission: "ai:knowledge-source:create", Sort: 0},
+		{Name: "删除素材", Type: model.MenuTypeButton, Permission: "ai:knowledge-source:delete", Sort: 1},
+	}
+	seedButtons(sourceMenu.ID, sourceButtons)
+
 	var kbMenu model.Menu
 	kbMenu = model.Menu{
 		ParentID:   &knowledgeDir.ID,
 		Name:       "知识库",
 		Type:       model.MenuTypeMenu,
-		Path:       "/ai/knowledge",
+		Path:       "/ai/knowledge/bases",
 		Icon:       "BookOpen",
-		Permission: "ai:knowledge:list",
-		Sort:       0,
+		Permission: "ai:knowledge-base:list",
+		Sort:       1,
 	}
 	if err := upsertMenu(&kbMenu); err != nil {
 		return err
 	}
 
 	kbButtons := []model.Menu{
-		{Name: "新增知识库", Type: model.MenuTypeButton, Permission: "ai:knowledge:create", Sort: 0},
-		{Name: "编辑知识库", Type: model.MenuTypeButton, Permission: "ai:knowledge:update", Sort: 1},
-		{Name: "删除知识库", Type: model.MenuTypeButton, Permission: "ai:knowledge:delete", Sort: 2},
-		{Name: "编译知识库", Type: model.MenuTypeButton, Permission: "ai:knowledge:compile", Sort: 3},
-		{Name: "上传原料", Type: model.MenuTypeButton, Permission: "ai:knowledge:source:create", Sort: 4},
-		{Name: "删除原料", Type: model.MenuTypeButton, Permission: "ai:knowledge:source:delete", Sort: 5},
+		{Name: "新增知识库", Type: model.MenuTypeButton, Permission: "ai:knowledge-base:create", Sort: 0},
+		{Name: "编辑知识库", Type: model.MenuTypeButton, Permission: "ai:knowledge-base:update", Sort: 1},
+		{Name: "删除知识库", Type: model.MenuTypeButton, Permission: "ai:knowledge-base:delete", Sort: 2},
+		{Name: "构建知识库", Type: model.MenuTypeButton, Permission: "ai:knowledge-base:build", Sort: 3},
 	}
 	seedButtons(kbMenu.ID, kbButtons)
+
+	var kgMenu model.Menu
+	kgMenu = model.Menu{
+		ParentID:   &knowledgeDir.ID,
+		Name:       "知识图谱",
+		Type:       model.MenuTypeMenu,
+		Path:       "/ai/knowledge/graphs",
+		Icon:       "GitBranch",
+		Permission: "ai:knowledge-graph:list",
+		Sort:       2,
+	}
+	if err := upsertMenu(&kgMenu); err != nil {
+		return err
+	}
+
+	kgButtons := []model.Menu{
+		{Name: "新增知识图谱", Type: model.MenuTypeButton, Permission: "ai:knowledge-graph:create", Sort: 0},
+		{Name: "编辑知识图谱", Type: model.MenuTypeButton, Permission: "ai:knowledge-graph:update", Sort: 1},
+		{Name: "删除知识图谱", Type: model.MenuTypeButton, Permission: "ai:knowledge-graph:delete", Sort: 2},
+		{Name: "编译知识图谱", Type: model.MenuTypeButton, Permission: "ai:knowledge-graph:build", Sort: 3},
+	}
+	seedButtons(kgMenu.ID, kgButtons)
+
+	// Cleanup old knowledge menu (ai:knowledge:list)
+	for _, oldPerm := range []string{
+		"ai:knowledge:list", "ai:knowledge:create", "ai:knowledge:update",
+		"ai:knowledge:delete", "ai:knowledge:compile",
+		"ai:knowledge:source:create", "ai:knowledge:source:delete",
+	} {
+		if err := db.Where("permission = ?", oldPerm).Delete(&model.Menu{}).Error; err != nil {
+			slog.Warn("seed: failed to cleanup old knowledge menu", "permission", oldPerm, "error", err)
+		}
+	}
 
 	// 4. 工具菜单
 	var builtinToolsMenu model.Menu

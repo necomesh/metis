@@ -89,10 +89,11 @@ export function AgentForm({ agentType, agent, onSubmit }: AgentFormProps) {
   const { t } = useTranslation(["ai", "common"])
 
   // For edit mode: resolve providerId from the agent's modelId
+  const agentModelId = agent?.type === "assistant" ? agent.modelId : undefined
   const { data: editModelDetail } = useQuery({
-    queryKey: ["ai-model-detail", agent?.modelId],
-    queryFn: () => api.get<ModelItem>(`/api/v1/ai/models/${agent!.modelId}`),
-    enabled: !!agent?.modelId,
+    queryKey: ["ai-model-detail", agentModelId],
+    queryFn: () => api.get<ModelItem>(`/api/v1/ai/models/${agentModelId}`),
+    enabled: !!agentModelId,
   })
   const editProviderId = editModelDetail?.providerId ? String(editModelDetail.providerId) : ""
 
@@ -131,10 +132,10 @@ export function AgentForm({ agentType, agent, onSubmit }: AgentFormProps) {
   }, [resetValues, form])
 
   useEffect(() => {
-    if (!agent?.modelId || !editProviderId) return
+    if (!agentModelId || !editProviderId) return
     if (form.getValues("providerId") !== "") return
     form.setValue("providerId", editProviderId, { shouldDirty: false, shouldTouch: false })
-  }, [agent?.modelId, editProviderId, form])
+  }, [agentModelId, editProviderId, form])
 
   const watchExecMode = useWatch({ control: form.control, name: "execMode" })
   const selectedProviderId = useWatch({ control: form.control, name: "providerId" }) ?? ""

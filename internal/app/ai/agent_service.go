@@ -207,7 +207,7 @@ func (s *AgentService) ListTemplatesByType(agentType string) ([]AgentTemplate, e
 }
 
 // UpdateBindings replaces all bindings for the given agent
-func (s *AgentService) UpdateBindings(agentID uint, toolIDs, skillIDs, mcpIDs, kbIDs []uint) error {
+func (s *AgentService) UpdateBindings(agentID uint, toolIDs, skillIDs, mcpIDs, kbIDs, kgIDs []uint) error {
 	if err := s.repo.ReplaceToolBindings(agentID, toolIDs); err != nil {
 		return err
 	}
@@ -217,11 +217,14 @@ func (s *AgentService) UpdateBindings(agentID uint, toolIDs, skillIDs, mcpIDs, k
 	if err := s.repo.ReplaceMCPServerBindings(agentID, mcpIDs); err != nil {
 		return err
 	}
-	return s.repo.ReplaceKnowledgeBaseBindings(agentID, kbIDs)
+	if err := s.repo.ReplaceKnowledgeBaseBindings(agentID, kbIDs); err != nil {
+		return err
+	}
+	return s.repo.ReplaceKnowledgeGraphBindings(agentID, kgIDs)
 }
 
 // GetBindings returns all binding IDs for an agent
-func (s *AgentService) GetBindings(agentID uint) (toolIDs, skillIDs, mcpIDs, kbIDs []uint, err error) {
+func (s *AgentService) GetBindings(agentID uint) (toolIDs, skillIDs, mcpIDs, kbIDs, kgIDs []uint, err error) {
 	toolIDs, err = s.repo.GetToolIDs(agentID)
 	if err != nil {
 		return
@@ -235,6 +238,10 @@ func (s *AgentService) GetBindings(agentID uint) (toolIDs, skillIDs, mcpIDs, kbI
 		return
 	}
 	kbIDs, err = s.repo.GetKnowledgeBaseIDs(agentID)
+	if err != nil {
+		return
+	}
+	kgIDs, err = s.repo.GetKnowledgeGraphIDs(agentID)
 	return
 }
 

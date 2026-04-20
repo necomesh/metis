@@ -179,12 +179,12 @@ func TestAgentService_UpdateBindings_And_GetBindings(t *testing.T) {
 	a := &Agent{Name: "Agent", Type: AgentTypeAssistant, ModelID: &modelID, CreatedBy: 1}
 	_ = svc.Create(a)
 
-	err := svc.UpdateBindings(a.ID, []uint{1, 2}, []uint{3}, []uint{4}, []uint{5})
+	err := svc.UpdateBindings(a.ID, []uint{1, 2}, []uint{3}, []uint{4}, []uint{5}, []uint{6})
 	if err != nil {
 		t.Fatalf("update bindings: %v", err)
 	}
 
-	toolIDs, skillIDs, mcpIDs, kbIDs, err := svc.GetBindings(a.ID)
+	toolIDs, skillIDs, mcpIDs, kbIDs, kgIDs, err := svc.GetBindings(a.ID)
 	if err != nil {
 		t.Fatalf("get bindings: %v", err)
 	}
@@ -201,10 +201,13 @@ func TestAgentService_UpdateBindings_And_GetBindings(t *testing.T) {
 	if len(kbIDs) != 1 || kbIDs[0] != 5 {
 		t.Errorf("kbIDs: expected [5], got %v", kbIDs)
 	}
+	if len(kgIDs) != 1 || kgIDs[0] != 6 {
+		t.Errorf("kgIDs: expected [6], got %v", kgIDs)
+	}
 
 	// Replace with empty
-	_ = svc.UpdateBindings(a.ID, []uint{}, []uint{}, []uint{}, []uint{})
-	toolIDs, _, _, _, _ = svc.GetBindings(a.ID)
+	_ = svc.UpdateBindings(a.ID, []uint{}, []uint{}, []uint{}, []uint{}, []uint{})
+	toolIDs, _, _, _, _, _ = svc.GetBindings(a.ID)
 	if len(toolIDs) != 0 {
 		t.Errorf("toolIDs after clear: expected [], got %v", toolIDs)
 	}
