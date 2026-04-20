@@ -13,6 +13,7 @@ import (
 	appcore "metis/internal/app"
 	aiapp "metis/internal/app/ai"
 	"metis/internal/app/itsm/engine"
+	org "metis/internal/app/org"
 	"metis/internal/database"
 	"metis/internal/model"
 )
@@ -127,9 +128,9 @@ func newSmartServiceFixture(t *testing.T, plan string) *smartServiceFixture {
 		t.Fatalf("migrate db: %v", err)
 	}
 
-	requester := model.User{Username: "requester", Nickname: "Requester", IsActive: true}
-	approver := model.User{Username: "approver", Nickname: "Approver", IsActive: true}
-	outsider := model.User{Username: "outsider", Nickname: "Outsider", IsActive: true}
+	requester := model.User{Username: "requester", IsActive: true}
+	approver := model.User{Username: "approver", IsActive: true}
+	outsider := model.User{Username: "outsider", IsActive: true}
 	for _, u := range []*model.User{&requester, &approver, &outsider} {
 		if err := db.Create(u).Error; err != nil {
 			t.Fatalf("create user %s: %v", u.Username, err)
@@ -148,7 +149,8 @@ func newSmartServiceFixture(t *testing.T, plan string) *smartServiceFixture {
 		t.Fatalf("create user position: %v", err)
 	}
 
-	agent := aiapp.Agent{Name: "decision", Code: "itsm.decision", Type: "internal", IsActive: true}
+	decisionCode := "itsm.decision"
+	agent := aiapp.Agent{Name: "decision", Code: &decisionCode, Type: "internal", IsActive: true}
 	if err := db.Create(&agent).Error; err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
@@ -164,7 +166,6 @@ func newSmartServiceFixture(t *testing.T, plan string) *smartServiceFixture {
 		Name:              "Smart Service",
 		Code:              "smart-service",
 		CatalogID:         catalog.ID,
-		PriorityID:        priority.ID,
 		EngineType:        "smart",
 		AgentID:           &agent.ID,
 		IsActive:          true,

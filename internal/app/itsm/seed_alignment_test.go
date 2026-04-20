@@ -4,13 +4,26 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/casbin/casbin/v2"
+	casbinmodel "github.com/casbin/casbin/v2/model"
+	"github.com/casbin/casbin/v2/persist"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 
 	aiapp "metis/internal/app/ai"
 	org "metis/internal/app/org"
-	"metis/internal/model"
+	coremodel "metis/internal/model"
 )
+
+type noopAdapter struct{}
+
+func (noopAdapter) LoadPolicy(casbinmodel.Model) error                        { return nil }
+func (noopAdapter) SavePolicy(casbinmodel.Model) error                        { return nil }
+func (noopAdapter) AddPolicy(string, string, []string) error                  { return nil }
+func (noopAdapter) RemovePolicy(string, string, []string) error               { return nil }
+func (noopAdapter) RemoveFilteredPolicy(string, string, int, ...string) error { return nil }
+
+var _ persist.Adapter = (*noopAdapter)(nil)
 
 func newSeedAlignmentDB(t *testing.T) *gorm.DB {
 	t.Helper()
@@ -22,52 +35,73 @@ func newSeedAlignmentDB(t *testing.T) *gorm.DB {
 	if err := db.AutoMigrate(
 		&ServiceCatalog{}, &ServiceDefinition{}, &ServiceAction{}, &SLATemplate{},
 		&org.Department{}, &org.Position{}, &org.DepartmentPosition{}, &org.UserPosition{},
-		&model.User{}, &model.Role{}, &model.SystemConfig{}, &aiapp.Agent{},
+		&coremodel.User{}, &coremodel.Role{}, &coremodel.Menu{}, &coremodel.SystemConfig{}, &aiapp.Agent{},
 	); err != nil {
 		t.Fatalf("migrate db: %v", err)
 	}
 	return db
 }
 
+func newTestEnforcer(t *testing.T) *casbin.Enforcer {
+	t.Helper()
+	m, err := casbinmodel.NewModelFromString(`[request_definition]
+r = sub, obj, act
+[policy_definition]
+p = sub, obj, act
+[role_definition]
+g = _, _
+[policy_effect]
+e = some(where (p.eft == allow))
+[matchers]
+m = r.sub == p.sub && r.obj == p.obj && r.act == p.act
+`)
+	if err != nil {
+		t.Fatalf("create casbin model: %v", err)
+	}
+	e, err := casbin.NewEnforcer(m, &noopAdapter{})
+	if err != nil {
+		t.Fatalf("create casbin enforcer: %v", err)
+	}
+	return e
+}
+
 func TestBuiltInSmartSeedsAlignParticipantsAndInstallAdminIdentity(t *testing.T) {
 	db := newSeedAlignmentDB(t)
+	enforcer := newTestEnforcer(t)
 
-	adminRole := model.Role{Name: "Admin", Code: model.RoleAdmin}
+	adminRole := coremodel.Role{Name: "Admin", Code: coremodel.RoleAdmin}
 	if err := db.Create(&adminRole).Error; err != nil {
 		t.Fatalf("create admin role: %v", err)
 	}
-	decisionAgent := aiapp.Agent{Name: "Decision", Code: "itsm.decision", Type: "internal", IsActive: true}
+	decisionCode := "itsm.decision"
+	decisionAgent := aiapp.Agent{Name: "Decision", Code: &decisionCode, Type: "internal", IsActive: true}
 	if err := db.Create(&decisionAgent).Error; err != nil {
 		t.Fatalf("create decision agent: %v", err)
 	}
-	admin := model.User{Username: "admin", Nickname: "Admin", IsActive: true, RoleID: adminRole.ID}
+	admin := coremodel.User{Username: "admin", IsActive: true, RoleID: adminRole.ID}
 	if err := db.Create(&admin).Error; err != nil {
 		t.Fatalf("create admin user: %v", err)
 	}
 
-	if err := seedDepartments(db); err != nil {
-		t.Fatalf("seed departments: %v", err)
+	var orgApp org.OrgApp
+	if err := orgApp.Seed(db, enforcer, true); err != nil {
+		t.Fatalf("seed org: %v", err)
 	}
-	if err := seedPositions(db); err != nil {
-		t.Fatalf("seed positions: %v", err)
+	var itsmApp ITSMApp
+	if err := itsmApp.Seed(db, enforcer, true); err != nil {
+		t.Fatalf("seed itsm: %v", err)
 	}
-	if err := seedDepartmentPositions(db); err != nil {
-		t.Fatalf("seed department positions: %v", err)
+
+	var dept org.Department
+	if err := db.Where("code = ?", "it").First(&dept).Error; err != nil {
+		t.Fatalf("load it dept: %v", err)
 	}
-	if err := seedCatalogs(db); err != nil {
-		t.Fatalf("seed catalogs: %v", err)
+	var pos org.Position
+	if err := db.Where("code = ?", "it_admin").First(&pos).Error; err != nil {
+		t.Fatalf("load it_admin: %v", err)
 	}
-	if err := seedPriorities(db); err != nil {
-		t.Fatalf("seed priorities: %v", err)
-	}
-	if err := seedSLATemplates(db); err != nil {
-		t.Fatalf("seed sla: %v", err)
-	}
-	if err := seedServiceDefinitions(db); err != nil {
-		t.Fatalf("seed services: %v", err)
-	}
-	if err := assignInstallAdminOrgIdentity(db, "admin"); err != nil {
-		t.Fatalf("assign install admin identity: %v", err)
+	if err := db.Create(&org.UserPosition{UserID: admin.ID, DepartmentID: dept.ID, PositionID: pos.ID, IsPrimary: true}).Error; err != nil {
+		t.Fatalf("assign admin identity: %v", err)
 	}
 
 	t.Run("org positions include required built-ins", func(t *testing.T) {
@@ -129,14 +163,6 @@ func TestBuiltInSmartSeedsAlignParticipantsAndInstallAdminIdentity(t *testing.T)
 	})
 
 	t.Run("install admin gets it_admin identity", func(t *testing.T) {
-		var dept org.Department
-		if err := db.Where("code = ?", "it").First(&dept).Error; err != nil {
-			t.Fatalf("load it dept: %v", err)
-		}
-		var pos org.Position
-		if err := db.Where("code = ?", "it_admin").First(&pos).Error; err != nil {
-			t.Fatalf("load it_admin: %v", err)
-		}
 		var count int64
 		if err := db.Table("user_positions").Where("user_id = ? AND department_id = ? AND position_id = ? AND is_primary = ?", admin.ID, dept.ID, pos.ID, true).Count(&count).Error; err != nil {
 			t.Fatalf("count admin user position: %v", err)

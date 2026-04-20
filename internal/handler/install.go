@@ -3,10 +3,12 @@ package handler
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/casbin/casbin/v2"
 	"github.com/gin-gonic/gin"
@@ -278,8 +280,15 @@ func (h *InstallHandler) Execute(c *gin.Context) {
 		return
 	}
 	if _, err := userSvc.Create(req.AdminUsername, req.AdminPassword, req.AdminEmail, "", adminRole.ID); err != nil {
-		Fail(c, http.StatusInternalServerError, "failed to create admin: "+err.Error())
-		return
+		if errors.Is(err, service.ErrUsernameExists) {
+			if err := upsertInstallAdmin(db.DB, req.AdminUsername, req.AdminPassword, req.AdminEmail, adminRole.ID); err != nil {
+				Fail(c, http.StatusInternalServerError, "failed to reuse existing admin: "+err.Error())
+				return
+			}
+		} else {
+			Fail(c, http.StatusInternalServerError, "failed to create admin: "+err.Error())
+			return
+		}
 	}
 	if err := assignInstallAdminOrgIdentity(db.DB, req.AdminUsername); err != nil {
 		Fail(c, http.StatusInternalServerError, "failed to assign admin org identity: "+err.Error())
@@ -342,6 +351,31 @@ func assignInstallAdminOrgIdentity(db *gorm.DB, username string) error {
 		"position_id":   pos.ID,
 		"is_primary":    true,
 	}).Error
+}
+
+func upsertInstallAdmin(db *gorm.DB, username, password, email string, roleID uint) error {
+	hashed, err := token.HashPassword(password)
+	if err != nil {
+		return err
+	}
+
+	now := time.Now()
+	updates := map[string]any{
+		"password":            hashed,
+		"email":               email,
+		"role_id":             roleID,
+		"is_active":           true,
+		"password_changed_at": &now,
+	}
+
+	result := db.Model(&model.User{}).Where("username = ?", username).Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 func (h *InstallHandler) hotSwitch(cfg *config.MetisConfig, db *database.DB, enforcer *casbin.Enforcer) error {

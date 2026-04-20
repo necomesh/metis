@@ -21,6 +21,6 @@
 
 ## 4. Verification
 
-- [ ] 4.1 Add or update backend tests/BDD scenarios for near-real-time continuation after approval completion, action completion, and AI decision confirm/reject.
-- [ ] 4.2 Add or update tests for AI pending approval visibility, approval counts, and unauthorized confirm/reject attempts.
-- [ ] 4.3 Add or update fresh-install/seed verification covering built-in smart services, participant validation, and admin default identity.
+- [x] 4.1 Add or update backend tests/BDD scenarios for near-real-time continuation after approval completion, action completion, and AI decision confirm/reject.
+- [x] 4.2 Add or update tests for AI pending approval visibility, approval counts, and unauthorized confirm/reject attempts.
+- [x] 4.3 Add or update fresh-install/seed verification covering built-in smart services, participant validation, and admin default identity.
