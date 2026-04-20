@@ -314,23 +314,33 @@ export function AgentDetailPage({ config }: { config: AgentDetailPageConfig }) {
   const TypeIcon = TYPE_ICON[agent.type] ?? Bot
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <Link to={config.basePath}>
-          <Button variant="ghost" size="icon" className="h-8 w-8">
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-        </Link>
-        <TypeIcon className="h-5 w-5 text-muted-foreground" />
-        <div className="flex-1">
-          <h2 className="text-lg font-semibold">{agent.name}</h2>
-          <div className="flex items-center gap-2 mt-0.5">
-            <Badge variant={agent.isActive ? "default" : "secondary"}>
-              {agent.isActive ? t("ai:statusLabels.active") : t("ai:statusLabels.inactive")}
-            </Badge>
+    <div className="workspace-page">
+      <div className="workspace-page-header gap-4">
+        <div className="min-w-0 flex-1">
+          <nav className="mb-3 flex items-center gap-1.5 text-sm text-muted-foreground">
+            <Link to={config.basePath} className="inline-flex items-center gap-1 transition-colors hover:text-foreground">
+              <ArrowLeft className="h-3.5 w-3.5" />
+              {t(`ai:${config.i18nKey}.title`)}
+            </Link>
+            <span className="text-muted-foreground/50">/</span>
+            <span className="text-foreground">{agent.name}</span>
+          </nav>
+          <div className="flex items-start gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-border/60 bg-surface-soft/78 text-foreground/80 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]">
+              <TypeIcon className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="workspace-page-title">{agent.name}</h2>
+              <div className="mt-2 flex items-center gap-2">
+                <Badge variant={agent.isActive ? "default" : "secondary"}>
+                  {agent.isActive ? t("ai:statusLabels.active") : t("ai:statusLabels.inactive")}
+                </Badge>
+                <span className="text-sm text-muted-foreground">{t(`ai:agents.agentTypes.${agent.type}`)}</span>
+              </div>
+            </div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
           <Button
             variant="outline"
             size="sm"
@@ -367,12 +377,12 @@ export function AgentDetailPage({ config }: { config: AgentDetailPageConfig }) {
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
-          </AlertDialog>
+            </AlertDialog>
         </div>
       </div>
 
       <Tabs defaultValue="config">
-        <TabsList>
+        <TabsList className="workspace-surface rounded-xl p-1.5" variant="default">
           <TabsTrigger value="config">{t("ai:agents.tabs.config")}</TabsTrigger>
           <TabsTrigger value="sessions">{t("ai:agents.tabs.sessions")}</TabsTrigger>
         </TabsList>

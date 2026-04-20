@@ -30,9 +30,12 @@ export function BuildProgressDisplay({ buildProgress }: BuildProgressProps) {
       }
       update()
       const interval = setInterval(update, 1000)
-      return () => clearInterval(interval)
+      return () => {
+        clearInterval(interval)
+        setElapsedSeconds(0)
+      }
     }
-    setElapsedSeconds(0)
+    return undefined
   }, [isActive, buildProgress?.startedAt])
 
   if (!buildProgress || !isActive) return null

@@ -53,6 +53,7 @@ const agentSchema = z.object({
   skillIds: z.array(z.number()),
   mcpServerIds: z.array(z.number()),
   knowledgeBaseIds: z.array(z.number()),
+  knowledgeGraphIds: z.array(z.number()),
 })
 
 export type AgentFormValues = z.infer<typeof agentSchema>
@@ -83,6 +84,7 @@ const defaultValues: AgentFormValues = {
   skillIds: [],
   mcpServerIds: [],
   knowledgeBaseIds: [],
+  knowledgeGraphIds: [],
 }
 
 export function AgentForm({ agentType, agent, onSubmit }: AgentFormProps) {
@@ -119,6 +121,7 @@ export function AgentForm({ agentType, agent, onSubmit }: AgentFormProps) {
       skillIds: agent.skillIds ?? [],
       mcpServerIds: agent.mcpServerIds ?? [],
       knowledgeBaseIds: agent.knowledgeBaseIds ?? [],
+      knowledgeGraphIds: agent.knowledgeGraphIds ?? [],
     }
   }, [agent])
 
@@ -180,6 +183,12 @@ export function AgentForm({ agentType, agent, onSubmit }: AgentFormProps) {
     queryKey: ["ai-binding-knowledge-bases"],
     queryFn: () =>
       api.get<PaginatedResponse<BindingItem>>("/api/v1/ai/knowledge-bases?pageSize=100").then((r) => r?.items ?? []),
+  })
+
+  const { data: kgItems = [], isLoading: kgLoading } = useQuery({
+    queryKey: ["ai-binding-knowledge-graphs"],
+    queryFn: () =>
+      api.get<PaginatedResponse<BindingItem>>("/api/v1/ai/knowledge/graphs?pageSize=100").then((r) => r?.items ?? []),
   })
 
   function handleProviderChange(value: string) {
@@ -413,6 +422,13 @@ export function AgentForm({ agentType, agent, onSubmit }: AgentFormProps) {
                 isLoading={kbLoading}
                 value={form.watch("knowledgeBaseIds")}
                 onChange={(ids) => form.setValue("knowledgeBaseIds", ids)}
+              />
+              <BindingCheckboxList
+                title="知识图谱"
+                items={kgItems}
+                isLoading={kgLoading}
+                value={form.watch("knowledgeGraphIds")}
+                onChange={(ids) => form.setValue("knowledgeGraphIds", ids)}
               />
             </div>
           </CardContent>

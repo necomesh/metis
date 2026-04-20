@@ -62,6 +62,19 @@ registerApp({
           lazy: () => import("./pages/knowledge/[id]"),
         },
         {
+          path: "sources",
+          children: [
+            {
+              index: true,
+              lazy: () => import("./pages/knowledge/sources/index"),
+            },
+            {
+              path: ":id",
+              lazy: () => import("./pages/knowledge/sources/[id]"),
+            },
+          ],
+        },
+        {
           path: "bases",
           children: [
             {

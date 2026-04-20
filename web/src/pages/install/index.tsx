@@ -129,20 +129,20 @@ async function apiPost<T>(url: string, data: unknown): Promise<T> {
 
 function StepIndicator({ steps, current }: { steps: StepDef[]; current: number }) {
   return (
-    <div className="flex items-center justify-center gap-0">
+    <div className="flex items-start justify-center gap-0">
       {steps.map((step, i) => {
         const isCompleted = i < current
         const isCurrent = i === current
         return (
-          <div key={step.id} className="flex items-center">
-            {i > 0 && (
-              <div
-                className={`h-px w-6 sm:w-10 transition-colors duration-300 ${
-                  isCompleted ? "bg-primary/80" : "bg-border/80"
-                }`}
-              />
-            )}
-            <div className="flex flex-col items-center gap-1.5">
+          <div key={step.id} className="flex flex-col items-center gap-1.5">
+            <div className="flex h-7 items-center">
+              {i > 0 && (
+                <div
+                  className={`h-px w-6 sm:w-10 transition-colors duration-300 ${
+                    isCompleted ? "bg-primary/80" : "bg-border/80"
+                  }`}
+                />
+              )}
               <div
                 className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold transition-all duration-300 ${
                   isCompleted
@@ -160,14 +160,14 @@ function StepIndicator({ steps, current }: { steps: StepDef[]; current: number }
                   i + 1
                 )}
               </div>
-              <span
-                className={`text-[11px] font-medium whitespace-nowrap ${
-                  isCurrent ? "text-foreground/78" : isCompleted ? "text-muted-foreground" : "text-muted-foreground/70"
-                }`}
-              >
-                {step.label}
-              </span>
             </div>
+            <span
+              className={`text-[11px] font-medium whitespace-nowrap ${
+                isCurrent ? "text-foreground/78" : isCompleted ? "text-muted-foreground" : "text-muted-foreground/70"
+              }`}
+            >
+              {step.label}
+            </span>
           </div>
         )
       })}

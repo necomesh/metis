@@ -342,6 +342,7 @@ export type AgentWithBindings = AgentInfo & {
   skillIds: number[];
   mcpServerIds: number[];
   knowledgeBaseIds: number[];
+  knowledgeGraphIds: number[];
 };
 
 interface AgentDetailResponse {
@@ -350,6 +351,7 @@ interface AgentDetailResponse {
   skillIds?: number[];
   mcpServerIds?: number[];
   knowledgeBaseIds?: number[];
+  knowledgeGraphIds?: number[];
 }
 
 export interface AgentTemplate {

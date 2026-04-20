@@ -23,15 +23,19 @@ export function Component() {
   })
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate("/ai/coding-agents")}>
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-          <h2 className="text-lg font-semibold">{t("ai:codingAgents.create")}</h2>
+    <div className="workspace-page">
+      <div className="workspace-page-header gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="mb-3">
+            <Button variant="ghost" size="sm" className="-ml-2 px-2" onClick={() => navigate("/ai/coding-agents")}>
+              <ArrowLeft className="h-4 w-4" />
+              {t("ai:codingAgents.title")}
+            </Button>
+          </div>
+          <h2 className="workspace-page-title">{t("ai:codingAgents.create")}</h2>
+          <p className="workspace-page-description">{t("ai:agents.agentTypes.coding")}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
           <Button variant="outline" onClick={() => navigate("/ai/coding-agents")}>
             {t("common:cancel")}
           </Button>
