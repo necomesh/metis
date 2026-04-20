@@ -162,7 +162,7 @@ function AgentConfiguration({ agent }: { agent: AgentWithBindings }) {
         <CardContent className="space-y-4">
           <div>
             <h4 className="text-sm font-medium mb-2">{t("ai:agents.tools")}</h4>
-            <BindingBadges ids={agent.toolIds} queryKey={["ai-binding-tools"]} endpoint="/api/v1/ai/tools?pageSize=100" />
+            <BindingBadges ids={agent.toolIds} queryKey={["ai-agent-detail-tools"]} endpoint="/api/v1/ai/tools?pageSize=100" />
           </div>
           <div>
             <h4 className="text-sm font-medium mb-2">{t("ai:agents.mcpServers")}</h4>
