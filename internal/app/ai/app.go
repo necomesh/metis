@@ -37,7 +37,7 @@ func (a *AIApp) Models() []any {
 	}
 }
 
-func (a *AIApp) Seed(db *gorm.DB, enforcer *casbin.Enforcer) error {
+func (a *AIApp) Seed(db *gorm.DB, enforcer *casbin.Enforcer, _ bool) error {
 	return seedAI(db, enforcer)
 }
 
@@ -92,14 +92,19 @@ func (a *AIApp) Providers(i do.Injector) {
 	do.Provide(i, NewMemoryHandler)
 	do.Provide(i, NewAgentGateway)
 
+	// DecisionExecutor for smart workflow engine decision cycles
+	do.Provide(i, func(i do.Injector) (app.AIDecisionExecutor, error) {
+		gw := do.MustInvoke[*AgentGateway](i)
+		return NewDecisionExecutor(gw), nil
+	})
+
 	// General tool registry (used by CompositeToolExecutor in gateway)
 	do.Provide(i, func(i do.Injector) (*GeneralToolRegistry, error) {
 		userSvc := do.MustInvoke[*service.UserService](i)
 		userFinder := &userFinderAdapter{userSvc: userSvc}
 
 		// OrgResolver is optional (Org App may not be installed)
-		var orgResolver OrgResolver
-		// TODO: wire OrgResolver adapter when Org App provides the interface
+		orgResolver, _ := do.InvokeAs[app.OrgResolver](i)
 
 		return NewGeneralToolRegistry(userFinder, orgResolver), nil
 	})

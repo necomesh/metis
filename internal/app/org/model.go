@@ -92,7 +92,6 @@ type Position struct {
 	model.BaseModel
 	Name        string `json:"name" gorm:"size:128;not null"`
 	Code        string `json:"code" gorm:"size:64;uniqueIndex;not null"`
-	Level       int    `json:"level" gorm:"default:0"`
 	Sort        int    `json:"sort" gorm:"default:0"`
 	Description string `json:"description" gorm:"size:255"`
 	IsActive    bool   `json:"isActive" gorm:"not null;default:true"`
@@ -104,7 +103,6 @@ type PositionResponse struct {
 	ID          uint      `json:"id"`
 	Name        string    `json:"name"`
 	Code        string    `json:"code"`
-	Level       int       `json:"level"`
 	Description string    `json:"description"`
 	IsActive    bool      `json:"isActive"`
 	CreatedAt   time.Time `json:"createdAt"`
@@ -116,7 +114,6 @@ func (p *Position) ToResponse() PositionResponse {
 		ID:          p.ID,
 		Name:        p.Name,
 		Code:        p.Code,
-		Level:       p.Level,
 		Description: p.Description,
 		IsActive:    p.IsActive,
 		CreatedAt:   p.CreatedAt,
@@ -127,9 +124,9 @@ func (p *Position) ToResponse() PositionResponse {
 // UserPosition 人员岗位关联
 type UserPosition struct {
 	model.BaseModel
-	UserID       uint       `json:"userId" gorm:"not null;index:idx_user_pos_user_dep,unique"`
-	DepartmentID uint       `json:"departmentId" gorm:"not null;index:idx_user_pos_user_dep,unique"`
-	PositionID   uint       `json:"positionId" gorm:"not null;index"`
+	UserID       uint       `json:"userId" gorm:"not null;index:idx_user_pos_user_dep_pos,unique"`
+	DepartmentID uint       `json:"departmentId" gorm:"not null;index:idx_user_pos_user_dep_pos,unique"`
+	PositionID   uint       `json:"positionId" gorm:"not null;index:idx_user_pos_user_dep_pos,unique"`
 	IsPrimary    bool       `json:"isPrimary" gorm:"not null;default:false"`
 	Sort         int        `json:"sort" gorm:"default:0"`
 	Department   Department `json:"department,omitempty" gorm:"foreignKey:DepartmentID"`
@@ -149,6 +146,15 @@ type UserPositionResponse struct {
 	Position     *PositionResponse   `json:"position,omitempty"`
 }
 
+// DepartmentPosition 部门可用职位关联
+type DepartmentPosition struct {
+	model.BaseModel
+	DepartmentID uint `json:"departmentId" gorm:"not null;uniqueIndex:idx_dept_pos"`
+	PositionID   uint `json:"positionId" gorm:"not null;uniqueIndex:idx_dept_pos"`
+}
+
+func (DepartmentPosition) TableName() string { return "department_positions" }
+
 type AssignmentItem struct {
 	UserID       uint      `json:"userId"`
 	Username     string    `json:"username"`
@@ -156,8 +162,28 @@ type AssignmentItem struct {
 	Avatar       string    `json:"avatar"`
 	DepartmentID uint      `json:"departmentId"`
 	PositionID   uint      `json:"positionId"`
+	PositionName string    `json:"positionName"`
 	IsPrimary    bool      `json:"isPrimary"`
 	AssignmentID uint      `json:"assignmentId"`
 	CreatedAt    time.Time `json:"createdAt"`
+}
+
+// MemberPositionItem represents a single position within a member's department assignment.
+type MemberPositionItem struct {
+	AssignmentID uint   `json:"assignmentId"`
+	PositionID   uint   `json:"positionId"`
+	PositionName string `json:"positionName"`
+	IsPrimary    bool   `json:"isPrimary"`
+}
+
+// MemberWithPositions groups all positions for a user within a department.
+type MemberWithPositions struct {
+	UserID       uint                 `json:"userId"`
+	Username     string               `json:"username"`
+	Email        string               `json:"email"`
+	Avatar       string               `json:"avatar"`
+	DepartmentID uint                 `json:"departmentId"`
+	Positions    []MemberPositionItem `json:"positions"`
+	CreatedAt    time.Time            `json:"createdAt"`
 }
 

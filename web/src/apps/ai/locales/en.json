@@ -31,7 +31,8 @@
     "syncModels": "Sync",
     "syncing": "Syncing...",
     "syncSuccess": "Sync complete, {{count}} models added",
-    "hasModelsError": "Please remove all models under this provider first"
+    "hasModelsError": "Please remove all models under this provider first",
+    "backToList": "Back to providers"
   },
   "models": {
     "title": "Models",

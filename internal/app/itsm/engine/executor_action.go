@@ -155,13 +155,25 @@ func replaceTemplateVars(template string, ticket *ticketModel) string {
 	if template == "" {
 		return ""
 	}
-	r := strings.NewReplacer(
+	pairs := []string{
 		"{{ticket.id}}", fmt.Sprintf("%d", ticket.ID),
+		"{{ticket.code}}", ticket.Code,
 		"{{ticket.status}}", ticket.Status,
 		"{{ticket.requester_id}}", fmt.Sprintf("%d", ticket.RequesterID),
 		"{{ticket.priority_id}}", fmt.Sprintf("%d", ticket.PriorityID),
-	)
-	return r.Replace(template)
+	}
+
+	// Support {{ticket.form_data.<key>}} by parsing FormData JSON.
+	if ticket.FormData != "" {
+		var formData map[string]any
+		if json.Unmarshal([]byte(ticket.FormData), &formData) == nil {
+			for k, v := range formData {
+				pairs = append(pairs, fmt.Sprintf("{{ticket.form_data.%s}}", k), fmt.Sprint(v))
+			}
+		}
+	}
+
+	return strings.NewReplacer(pairs...).Replace(template)
 }
 
 // --- DB model for action execution records ---

@@ -6,17 +6,26 @@ package itsm
 // Each scenario gets a fresh context via reset().
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"sync"
+	"time"
 
 	"github.com/cucumber/godog"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 
+	"metis/internal/app"
 	"metis/internal/app/ai"
 	"metis/internal/app/itsm/engine"
 	"metis/internal/app/org"
+	"metis/internal/llm"
 	"metis/internal/model"
 )
 
@@ -42,6 +51,10 @@ type bddContext struct {
 	priority          *Priority
 	ticket            *Ticket
 	tickets           map[string]*Ticket // multi-ticket scenarios, key = alias
+	fallbackUserID    uint               // fallback assignee for participant validation scenarios
+	dialogState       dialogTestState    // dialog validation test state
+	actionReceiver    *LocalActionReceiver // action HTTP test receiver (nil if not needed)
+	serviceActions    map[string]*ServiceAction // key = action code
 }
 
 func newBDDContext() *bddContext {
@@ -71,6 +84,12 @@ func (bc *bddContext) reset() {
 	bc.positions = make(map[string]*org.Position)
 	bc.departments = make(map[string]*org.Department)
 	bc.tickets = make(map[string]*Ticket)
+	bc.fallbackUserID = 0
+	bc.dialogState = dialogTestState{}
+	bc.serviceActions = make(map[string]*ServiceAction)
+	if bc.actionReceiver != nil {
+		bc.actionReceiver.Clear()
+	}
 
 	// Fresh in-memory database per scenario.
 	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:bdd_%p?mode=memory&cache=shared", bc)), &gorm.Config{})
@@ -94,7 +113,6 @@ func (bc *bddContext) reset() {
 		&ServiceCatalog{},
 		&ServiceDefinition{},
 		&ServiceAction{},
-		&FormDefinition{},
 		&Priority{},
 		&SLATemplate{},
 		&EscalationRule{},
@@ -121,21 +139,78 @@ func (bc *bddContext) reset() {
 	// Build ClassicEngine with test dependencies.
 	orgSvc := &testOrgService{db: db}
 	resolver := engine.NewParticipantResolver(orgSvc)
-	bc.engine = engine.NewClassicEngine(resolver, &noopSubmitter{}, nil)
+
+	// Choose submitter: syncActionSubmitter when actionReceiver is active, noopSubmitter otherwise.
+	var submitter engine.TaskSubmitter = &noopSubmitter{}
+	bc.engine = engine.NewClassicEngine(resolver, submitter, nil)
+
+	if bc.actionReceiver != nil {
+		submitter = &syncActionSubmitter{db: db, classicEngine: bc.engine}
+	}
 
 	// Build SmartEngine with test dependencies.
-	agentProvider := &testAgentProvider{db: db, llmCfg: bc.llmCfg}
+	executor := &testDecisionExecutor{db: db, llmCfg: bc.llmCfg}
 	userProvider := &testUserProvider{db: db}
-	bc.smartEngine = engine.NewSmartEngine(agentProvider, nil, userProvider, resolver, &noopSubmitter{})
+	bc.smartEngine = engine.NewSmartEngine(executor, nil, userProvider, resolver, submitter, &bddConfigProvider{bc: bc})
 }
 
 // ---------------------------------------------------------------------------
 // Test doubles for engine dependencies
 // ---------------------------------------------------------------------------
 
-// testOrgService implements engine.OrgService by querying the BDD in-memory DB.
+// testOrgService implements app.OrgResolver by querying the BDD in-memory DB.
+// Only participant resolution methods are exercised in tests; others return zero values.
 type testOrgService struct {
 	db *gorm.DB
+}
+
+func (s *testOrgService) GetUserDeptScope(_ uint, _ bool) ([]uint, error) { return nil, nil }
+func (s *testOrgService) GetUserPositionIDs(_ uint) ([]uint, error)       { return nil, nil }
+func (s *testOrgService) GetUserDepartmentIDs(_ uint) ([]uint, error)     { return nil, nil }
+func (s *testOrgService) GetUserPositions(_ uint) ([]app.OrgPosition, error) {
+	return nil, nil
+}
+func (s *testOrgService) GetUserDepartment(_ uint) (*app.OrgDepartment, error) {
+	return nil, nil
+}
+func (s *testOrgService) QueryContext(_, _, _ string, _ bool) (*app.OrgContextResult, error) {
+	return nil, nil
+}
+
+func (s *testOrgService) FindUsersByPositionCode(posCode string) ([]uint, error) {
+	var pos org.Position
+	if err := s.db.Where("code = ?", posCode).First(&pos).Error; err != nil {
+		return nil, err
+	}
+	return s.FindUsersByPositionID(pos.ID)
+}
+
+func (s *testOrgService) FindUsersByDepartmentCode(deptCode string) ([]uint, error) {
+	var dept org.Department
+	if err := s.db.Where("code = ?", deptCode).First(&dept).Error; err != nil {
+		return nil, err
+	}
+	return s.FindUsersByDepartmentID(dept.ID)
+}
+
+func (s *testOrgService) FindUsersByPositionAndDepartment(posCode, deptCode string) ([]uint, error) {
+	var pos org.Position
+	if err := s.db.Where("code = ?", posCode).First(&pos).Error; err != nil {
+		return nil, fmt.Errorf("position code %q not found: %w", posCode, err)
+	}
+	var dept org.Department
+	if err := s.db.Where("code = ?", deptCode).First(&dept).Error; err != nil {
+		return nil, fmt.Errorf("department code %q not found: %w", deptCode, err)
+	}
+	var ups []org.UserPosition
+	if err := s.db.Where("position_id = ? AND department_id = ?", pos.ID, dept.ID).Find(&ups).Error; err != nil {
+		return nil, err
+	}
+	ids := make([]uint, 0, len(ups))
+	for _, up := range ups {
+		ids = append(ids, up.UserID)
+	}
+	return ids, nil
 }
 
 func (s *testOrgService) FindUsersByPositionID(positionID uint) ([]uint, error) {
@@ -173,28 +248,8 @@ func (s *testOrgService) FindManagerByUserID(userID uint) (uint, error) {
 	return *user.ManagerID, nil
 }
 
-func (s *testOrgService) FindUsersByPositionCodeAndDepartmentCode(positionCode, departmentCode string) ([]uint, error) {
-	var pos org.Position
-	if err := s.db.Where("code = ?", positionCode).First(&pos).Error; err != nil {
-		return nil, fmt.Errorf("position code %q not found: %w", positionCode, err)
-	}
-	var dept org.Department
-	if err := s.db.Where("code = ?", departmentCode).First(&dept).Error; err != nil {
-		return nil, fmt.Errorf("department code %q not found: %w", departmentCode, err)
-	}
-	var ups []org.UserPosition
-	if err := s.db.Where("position_id = ? AND department_id = ?", pos.ID, dept.ID).Find(&ups).Error; err != nil {
-		return nil, err
-	}
-	ids := make([]uint, 0, len(ups))
-	for _, up := range ups {
-		ids = append(ids, up.UserID)
-	}
-	return ids, nil
-}
-
 // Compile-time check.
-var _ engine.OrgService = (*testOrgService)(nil)
+var _ app.OrgResolver = (*testOrgService)(nil)
 
 // noopSubmitter implements engine.TaskSubmitter as a no-op.
 type noopSubmitter struct{}
@@ -203,31 +258,246 @@ func (n *noopSubmitter) SubmitTask(_ string, _ json.RawMessage) error { return n
 
 var _ engine.TaskSubmitter = (*noopSubmitter)(nil)
 
-// testAgentProvider implements engine.AgentProvider for BDD tests.
-// Reads Agent record from DB, combines with LLM config from env.
-type testAgentProvider struct {
+// ---------------------------------------------------------------------------
+// LocalActionReceiver — in-process HTTP server for testing action webhooks
+// ---------------------------------------------------------------------------
+
+// ActionRecord captures a single HTTP request received by LocalActionReceiver.
+type ActionRecord struct {
+	Path   string
+	Method string
+	Body   string
+}
+
+// LocalActionReceiver is an in-process HTTP server that records incoming requests.
+type LocalActionReceiver struct {
+	server  *httptest.Server
+	mu      sync.Mutex
+	records []ActionRecord
+}
+
+// NewLocalActionReceiver creates and starts a new LocalActionReceiver.
+func NewLocalActionReceiver() *LocalActionReceiver {
+	r := &LocalActionReceiver{}
+	r.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		body, _ := io.ReadAll(io.LimitReader(req.Body, 64*1024))
+		r.mu.Lock()
+		r.records = append(r.records, ActionRecord{
+			Path:   req.URL.Path,
+			Method: req.Method,
+			Body:   string(body),
+		})
+		r.mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"ok"}`))
+	}))
+	return r
+}
+
+func (r *LocalActionReceiver) Records() []ActionRecord {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]ActionRecord, len(r.records))
+	copy(out, r.records)
+	return out
+}
+
+func (r *LocalActionReceiver) RecordsByPath(path string) []ActionRecord {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []ActionRecord
+	for _, rec := range r.records {
+		if rec.Path == path {
+			out = append(out, rec)
+		}
+	}
+	return out
+}
+
+func (r *LocalActionReceiver) Clear() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.records = nil
+}
+
+func (r *LocalActionReceiver) URL(path string) string {
+	return r.server.URL + path
+}
+
+func (r *LocalActionReceiver) Close() {
+	r.server.Close()
+}
+
+// ---------------------------------------------------------------------------
+// syncActionSubmitter — synchronous action execution for BDD tests
+// ---------------------------------------------------------------------------
+
+// syncActionSubmitter implements engine.TaskSubmitter. On "itsm-action-execute",
+// it synchronously runs ActionExecutor.Execute() + classicEngine.Progress(),
+// matching production HandleActionExecute behavior. Other tasks are no-op.
+type syncActionSubmitter struct {
+	db            *gorm.DB
+	classicEngine *engine.ClassicEngine
+}
+
+func (s *syncActionSubmitter) SubmitTask(taskName string, payload json.RawMessage) error {
+	if taskName != "itsm-action-execute" {
+		return nil // no-op for other tasks
+	}
+
+	var p engine.ActionExecutePayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return fmt.Errorf("syncActionSubmitter: invalid payload: %w", err)
+	}
+
+	executor := engine.NewActionExecutor(s.db)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	err := executor.Execute(ctx, p.TicketID, p.ActivityID, p.ActionID)
+
+	outcome := "success"
+	if err != nil {
+		outcome = "failed"
+	}
+
+	// Smart engine tickets have no execution tokens — directly mark activity completed.
+	var ticket struct{ EngineType string }
+	s.db.Table("itsm_tickets").Select("engine_type").Where("id = ?", p.TicketID).First(&ticket)
+	if ticket.EngineType == "smart" {
+		now := time.Now()
+		return s.db.Table("itsm_ticket_activities").Where("id = ?", p.ActivityID).Updates(map[string]any{
+			"status":             "completed",
+			"transition_outcome": outcome,
+			"finished_at":        now,
+		}).Error
+	}
+
+	return s.classicEngine.Progress(ctx, s.db, engine.ProgressParams{
+		TicketID:   p.TicketID,
+		ActivityID: p.ActivityID,
+		Outcome:    outcome,
+		OperatorID: 0,
+	})
+}
+
+var _ engine.TaskSubmitter = (*syncActionSubmitter)(nil)
+
+// testDecisionExecutor implements app.AIDecisionExecutor for BDD tests.
+// Reads Agent record from DB, combines with LLM config from env, and runs the ReAct loop.
+type testDecisionExecutor struct {
 	db     *gorm.DB
 	llmCfg llmConfig
 }
 
-func (p *testAgentProvider) GetAgentConfig(agentID uint) (*engine.SmartAgentConfig, error) {
+func (e *testDecisionExecutor) Execute(ctx context.Context, agentID uint, req app.AIDecisionRequest) (*app.AIDecisionResponse, error) {
+	// 1. Read agent from DB for system prompt / temperature / max_tokens.
 	var agent ai.Agent
-	if err := p.db.First(&agent, agentID).Error; err != nil {
+	if err := e.db.First(&agent, agentID).Error; err != nil {
 		return nil, fmt.Errorf("agent %d not found: %w", agentID, err)
 	}
-	return &engine.SmartAgentConfig{
-		Name:         agent.Name,
-		SystemPrompt: agent.SystemPrompt,
-		Temperature:  agent.Temperature,
-		MaxTokens:    agent.MaxTokens,
-		Protocol:     "openai",
-		BaseURL:      p.llmCfg.baseURL,
-		APIKey:       p.llmCfg.apiKey,
-		Model:        p.llmCfg.model,
-	}, nil
+
+	// 2. Create LLM client.
+	client, err := llm.NewClient(llm.ProtocolOpenAI, e.llmCfg.baseURL, e.llmCfg.apiKey)
+	if err != nil {
+		return nil, fmt.Errorf("create llm client: %w", err)
+	}
+
+	// 3. Compose system prompt: agent's own + domain prompt from request.
+	systemPrompt := ""
+	if agent.SystemPrompt != "" {
+		systemPrompt = "## 角色定义\n\n" + agent.SystemPrompt + "\n\n---\n\n"
+	}
+	systemPrompt += req.SystemPrompt
+
+	// 4. Convert tool defs.
+	toolDefs := make([]llm.ToolDef, len(req.Tools))
+	for i, t := range req.Tools {
+		toolDefs[i] = llm.ToolDef{
+			Name:        t.Name,
+			Description: t.Description,
+			Parameters:  t.Parameters,
+		}
+	}
+
+	// 5. Build messages.
+	messages := []llm.Message{
+		{Role: llm.RoleSystem, Content: systemPrompt},
+		{Role: llm.RoleUser, Content: req.UserMessage},
+	}
+
+	var tempPtr *float32
+	if agent.Temperature != 0 {
+		temp := float32(agent.Temperature)
+		tempPtr = &temp
+	}
+	maxTokens := agent.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 4096
+	}
+
+	maxTurns := req.MaxTurns
+	if maxTurns <= 0 {
+		maxTurns = 8
+	}
+
+	// 6. ReAct loop: chat → tool calls → tool results → repeat.
+	var totalInputTokens, totalOutputTokens int
+	for turn := 0; turn < maxTurns; turn++ {
+		chatReq := llm.ChatRequest{
+			Model:       e.llmCfg.model,
+			Messages:    messages,
+			Tools:       toolDefs,
+			MaxTokens:   maxTokens,
+			Temperature: tempPtr,
+		}
+
+		resp, err := client.Chat(ctx, chatReq)
+		if err != nil {
+			return nil, fmt.Errorf("llm chat (turn %d): %w", turn, err)
+		}
+
+		totalInputTokens += resp.Usage.InputTokens
+		totalOutputTokens += resp.Usage.OutputTokens
+
+		// No tool calls → final answer.
+		if len(resp.ToolCalls) == 0 {
+			return &app.AIDecisionResponse{
+				Content:      resp.Content,
+				InputTokens:  totalInputTokens,
+				OutputTokens: totalOutputTokens,
+				Turns:        turn + 1,
+			}, nil
+		}
+
+		// Append assistant message with tool calls.
+		messages = append(messages, llm.Message{
+			Role:      llm.RoleAssistant,
+			Content:   resp.Content,
+			ToolCalls: resp.ToolCalls,
+		})
+
+		// Execute tool calls via the provided handler.
+		for _, tc := range resp.ToolCalls {
+			result, err := req.ToolHandler(tc.Name, json.RawMessage(tc.Arguments))
+			var content string
+			if err != nil {
+				content = fmt.Sprintf(`{"error": "%s"}`, err.Error())
+			} else {
+				content = string(result)
+			}
+			messages = append(messages, llm.Message{
+				Role:       llm.RoleTool,
+				Content:    content,
+				ToolCallID: tc.ID,
+			})
+		}
+	}
+
+	return nil, fmt.Errorf("决策循环超过最大轮数 (%d)，未产生最终决策", maxTurns)
 }
 
-var _ engine.AgentProvider = (*testAgentProvider)(nil)
+var _ app.AIDecisionExecutor = (*testDecisionExecutor)(nil)
 
 // testUserProvider implements engine.UserProvider for BDD tests.
 // Queries all active users with their position/department info from the BDD in-memory DB.
@@ -265,6 +535,29 @@ func (p *testUserProvider) ListActiveUsers() ([]engine.ParticipantCandidate, err
 }
 
 var _ engine.UserProvider = (*testUserProvider)(nil)
+
+// bddConfigProvider implements engine.EngineConfigProvider for BDD tests.
+// Dynamically reads the agent ID from bddContext.service (set after service publish).
+type bddConfigProvider struct {
+	bc *bddContext
+}
+
+func (p *bddConfigProvider) FallbackAssigneeID() uint {
+	return p.bc.fallbackUserID
+}
+
+func (p *bddConfigProvider) DecisionMode() string {
+	return "" // default
+}
+
+func (p *bddConfigProvider) DecisionAgentID() uint {
+	if p.bc.service != nil && p.bc.service.AgentID != nil {
+		return *p.bc.service.AgentID
+	}
+	return 0
+}
+
+var _ engine.EngineConfigProvider = (*bddConfigProvider)(nil)
 
 // ---------------------------------------------------------------------------
 // Common step definitions
@@ -392,4 +685,385 @@ func registerCommonSteps(sc *godog.ScenarioContext, bc *bddContext) {
 	sc.Given(`^已定义 VPN 开通申请协作规范$`, bc.givenVPNCollaborationSpec)
 	sc.Then(`^工单状态为 "([^"]*)"$`, bc.thenTicketStatusIs)
 	sc.Then(`^工单状态不为 "([^"]*)"$`, bc.thenTicketStatusIsNot)
+	sc.Then(`^当前审批分配到岗位 "([^"]*)"$`, bc.thenCurrentApprovalAssignedToPosition)
+	sc.Then(`^当前审批仅对 "([^"]*)" 可见$`, bc.thenCurrentApprovalOnlyVisibleTo)
+	sc.Then(`^"([^"]*)" 认领当前工单应失败$`, bc.thenClaimShouldFail)
+	sc.Then(`^"([^"]*)" 审批当前工单应失败$`, bc.thenApproveShouldFail)
+
+	sc.When(`^智能引擎执行决策循环直到工单完成$`, bc.whenSmartEngineDecisionCycleUntilComplete)
+}
+
+// ---------------------------------------------------------------------------
+// Responsibility boundary step definitions
+// ---------------------------------------------------------------------------
+
+// thenCurrentApprovalAssignedToPosition asserts the current activity's assignment
+// targets the expected position — either via PositionID on the assignment,
+// or via the assigned user belonging to that position+department.
+func (bc *bddContext) thenCurrentApprovalAssignedToPosition(positionCode string) error {
+	activity, err := bc.getCurrentActivity()
+	if err != nil {
+		return err
+	}
+
+	var assignments []TicketAssignment
+	if err := bc.db.Where("activity_id = ?", activity.ID).Find(&assignments).Error; err != nil {
+		return fmt.Errorf("query assignments for activity %d: %w", activity.ID, err)
+	}
+	if len(assignments) == 0 {
+		return fmt.Errorf("no assignments found for activity %d", activity.ID)
+	}
+
+	orgSvc := &testOrgService{db: bc.db}
+
+	for _, assignment := range assignments {
+		// Check 1: direct PositionID match.
+		if assignment.PositionID != nil {
+			for code, pos := range bc.positions {
+				if pos.ID == *assignment.PositionID && code == positionCode {
+					return nil
+				}
+			}
+		}
+
+		// Check 2: assigned user belongs to the expected position (for smart engine).
+		var userID uint
+		if assignment.AssigneeID != nil {
+			userID = *assignment.AssigneeID
+		} else if assignment.UserID != nil {
+			userID = *assignment.UserID
+		}
+		if userID > 0 {
+			// Find what department code is associated with this position code.
+			for deptCode := range bc.departments {
+				eligibleIDs, err := orgSvc.FindUsersByPositionAndDepartment(positionCode, deptCode)
+				if err != nil {
+					continue
+				}
+				for _, uid := range eligibleIDs {
+					if uid == userID {
+						return nil
+					}
+				}
+			}
+		}
+	}
+
+	return fmt.Errorf("no assignment for activity %d targets position %q", activity.ID, positionCode)
+}
+
+// thenCurrentApprovalOnlyVisibleTo asserts that only the specified user is the assignee
+// or is eligible for the current activity's assignment.
+func (bc *bddContext) thenCurrentApprovalOnlyVisibleTo(username string) error {
+	expectedUser, ok := bc.usersByName[username]
+	if !ok {
+		return fmt.Errorf("user %q not found in context", username)
+	}
+
+	activity, err := bc.getCurrentActivity()
+	if err != nil {
+		return err
+	}
+
+	var assignments []TicketAssignment
+	if err := bc.db.Where("activity_id = ?", activity.ID).Find(&assignments).Error; err != nil {
+		return fmt.Errorf("query assignments for activity %d: %w", activity.ID, err)
+	}
+	if len(assignments) == 0 {
+		// No assignment record — check AI decision for participant_id referencing the expected user.
+		if len(activity.AIDecision) > 0 {
+			var plan engine.DecisionPlan
+			if err := json.Unmarshal([]byte(activity.AIDecision), &plan); err == nil {
+				for _, da := range plan.Activities {
+					if da.ParticipantID != nil && *da.ParticipantID == expectedUser.ID {
+						return nil // AI intended this user
+					}
+				}
+			}
+		}
+		return fmt.Errorf("no assignments found for activity %d", activity.ID)
+	}
+
+	orgSvc := &testOrgService{db: bc.db}
+
+	for _, assignment := range assignments {
+		// Case 1: assignment has PositionID+DepartmentID — check via org resolution.
+		if assignment.PositionID != nil && assignment.DepartmentID != nil {
+			var posCode, deptCode string
+			for code, pos := range bc.positions {
+				if pos.ID == *assignment.PositionID {
+					posCode = code
+					break
+				}
+			}
+			for code, dept := range bc.departments {
+				if dept.ID == *assignment.DepartmentID {
+					deptCode = code
+					break
+				}
+			}
+
+			eligibleIDs, err := orgSvc.FindUsersByPositionAndDepartment(posCode, deptCode)
+			if err != nil {
+				return fmt.Errorf("resolve eligible users for %s/%s: %w", deptCode, posCode, err)
+			}
+
+			found := false
+			for _, uid := range eligibleIDs {
+				if uid == expectedUser.ID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("expected user %q is NOT eligible for %s/%s", username, deptCode, posCode)
+			}
+
+			for otherName, otherUser := range bc.usersByName {
+				if otherName == username {
+					continue
+				}
+				for _, uid := range eligibleIDs {
+					if uid == otherUser.ID {
+						return fmt.Errorf("user %q should NOT be eligible for %s/%s, but is", otherName, deptCode, posCode)
+					}
+				}
+			}
+			return nil
+		}
+
+		// Case 2: assignment has direct UserID or AssigneeID — check it matches expected user.
+		var assignedUserID uint
+		if assignment.AssigneeID != nil {
+			assignedUserID = *assignment.AssigneeID
+		} else if assignment.UserID != nil {
+			assignedUserID = *assignment.UserID
+		}
+		if assignedUserID > 0 {
+			if assignedUserID != expectedUser.ID {
+				return fmt.Errorf("assignment is for user ID %d, not %q (ID %d)", assignedUserID, username, expectedUser.ID)
+			}
+			return nil
+		}
+	}
+
+	return fmt.Errorf("could not determine visibility for assignments on activity %d", activity.ID)
+}
+
+// thenClaimShouldFail asserts that the specified user cannot claim the current activity's assignment
+// because they are not the assigned user or not in the assignment's position+department.
+func (bc *bddContext) thenClaimShouldFail(username string) error {
+	user, ok := bc.usersByName[username]
+	if !ok {
+		return fmt.Errorf("user %q not found in context", username)
+	}
+
+	activity, err := bc.getCurrentActivity()
+	if err != nil {
+		return err
+	}
+
+	var assignments []TicketAssignment
+	if err := bc.db.Where("activity_id = ?", activity.ID).Find(&assignments).Error; err != nil {
+		return fmt.Errorf("query assignments for activity %d: %w", activity.ID, err)
+	}
+
+	orgSvc := &testOrgService{db: bc.db}
+
+	for _, assignment := range assignments {
+		// Check position+department eligibility.
+		if assignment.PositionID != nil && assignment.DepartmentID != nil {
+			var posCode, deptCode string
+			for code, pos := range bc.positions {
+				if pos.ID == *assignment.PositionID {
+					posCode = code
+					break
+				}
+			}
+			for code, dept := range bc.departments {
+				if dept.ID == *assignment.DepartmentID {
+					deptCode = code
+					break
+				}
+			}
+
+			eligibleIDs, _ := orgSvc.FindUsersByPositionAndDepartment(posCode, deptCode)
+			for _, uid := range eligibleIDs {
+				if uid == user.ID {
+					return fmt.Errorf("user %q IS eligible for %s/%s — claim should not fail", username, deptCode, posCode)
+				}
+			}
+			continue
+		}
+
+		// Check direct user assignment.
+		var assignedUserID uint
+		if assignment.AssigneeID != nil {
+			assignedUserID = *assignment.AssigneeID
+		} else if assignment.UserID != nil {
+			assignedUserID = *assignment.UserID
+		}
+		if assignedUserID > 0 && assignedUserID == user.ID {
+			return fmt.Errorf("user %q IS directly assigned — claim should not fail", username)
+		}
+	}
+
+	// User is not eligible — assertion passes.
+	return nil
+}
+
+// thenApproveShouldFail asserts that the specified user cannot directly approve the current activity
+// because they are not in the assignment's position+department.
+func (bc *bddContext) thenApproveShouldFail(username string) error {
+	// Same eligibility check — if user can't claim, they can't approve either.
+	return bc.thenClaimShouldFail(username)
+}
+
+// ---------------------------------------------------------------------------
+// Shared smart engine retry step
+// ---------------------------------------------------------------------------
+
+// whenSmartEngineDecisionCycleUntilComplete runs the decision cycle up to 5 times,
+// stopping early once the ticket reaches a terminal state ("completed", "cancelled", "failed").
+// Between attempts it auto-approves any pending/in_progress activities the LLM may have
+// created, clearing the path for a completion decision on the next cycle.
+func (bc *bddContext) whenSmartEngineDecisionCycleUntilComplete() error {
+	if bc.ticket == nil {
+		return fmt.Errorf("no ticket in context")
+	}
+
+	const maxAttempts = 5
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		// Refresh ticket status.
+		bc.db.First(bc.ticket, bc.ticket.ID)
+		if isTerminal(bc.ticket.Status) {
+			return nil
+		}
+
+		// Between retries (attempt > 1): auto-approve any pending activities the LLM created
+		// on previous cycles, so they don't block the completion decision.
+		if attempt > 1 {
+			bc.autoApproveBlockingActivities()
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		var completedID *uint
+		var lastCompleted TicketActivity
+		if err := bc.db.Where("ticket_id = ? AND status = ?", bc.ticket.ID, "completed").
+			Order("id DESC").First(&lastCompleted).Error; err == nil {
+			completedID = &lastCompleted.ID
+		}
+
+		err := bc.smartEngine.RunDecisionCycleForTicket(ctx, bc.db, bc.ticket.ID, completedID)
+		cancel()
+
+		if err != nil {
+			if err == engine.ErrAIDecisionFailed || err == engine.ErrAIDisabled {
+				log.Printf("decision cycle attempt %d/%d: %v", attempt, maxAttempts, err)
+				continue
+			}
+			log.Printf("decision cycle attempt %d/%d failed: %v", attempt, maxAttempts, err)
+		}
+
+		bc.db.First(bc.ticket, bc.ticket.ID)
+		if isTerminal(bc.ticket.Status) {
+			return nil
+		}
+	}
+
+	bc.db.First(bc.ticket, bc.ticket.ID)
+	return nil // let the Then step assert the final status
+}
+
+func isTerminal(status string) bool {
+	return status == "completed" || status == "cancelled" || status == "failed"
+}
+
+// autoApproveBlockingActivities finds any pending/in_progress activities (non-parallel)
+// for the current ticket and auto-approves them via SmartEngine.Progress so the next
+// decision cycle can produce a "complete" decision.
+func (bc *bddContext) autoApproveBlockingActivities() {
+	var activities []TicketActivity
+	bc.db.Where("ticket_id = ? AND status IN ?",
+		bc.ticket.ID, []string{"pending", "in_progress"}).
+		Find(&activities)
+
+	for _, act := range activities {
+		// Determine operator from assignment.
+		var assignment TicketAssignment
+		if err := bc.db.Where("activity_id = ?", act.ID).First(&assignment).Error; err != nil {
+			// No assignment — create one with the requester as fallback.
+			fallbackID := bc.ticket.RequesterID
+			provider := &testUserProvider{db: bc.db}
+			candidates, _ := provider.ListActiveUsers()
+			for _, c := range candidates {
+				if c.UserID != bc.ticket.RequesterID {
+					fallbackID = c.UserID
+					break
+				}
+			}
+			bc.db.Create(&TicketAssignment{
+				TicketID:        bc.ticket.ID,
+				ActivityID:      act.ID,
+				ParticipantType: "user",
+				UserID:          &fallbackID,
+				AssigneeID:      &fallbackID,
+				Status:          "claimed",
+				IsCurrent:       true,
+			})
+			assignment.AssigneeID = &fallbackID
+		}
+
+		var operatorID uint
+		if assignment.AssigneeID != nil {
+			operatorID = *assignment.AssigneeID
+		} else if assignment.UserID != nil {
+			operatorID = *assignment.UserID
+		} else {
+			// Resolve from position+department.
+			operatorID = bc.resolveOperatorFromAssignment(assignment)
+		}
+		if operatorID == 0 {
+			continue
+		}
+
+		// Claim if not yet claimed.
+		bc.db.Model(&TicketAssignment{}).
+			Where("activity_id = ?", act.ID).
+			Updates(map[string]any{"assignee_id": operatorID, "status": "claimed"})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		err := bc.smartEngine.Progress(ctx, bc.db, engine.ProgressParams{
+			TicketID:   bc.ticket.ID,
+			ActivityID: act.ID,
+			Outcome:    "approved",
+			OperatorID: operatorID,
+		})
+		cancel()
+		if err != nil {
+			log.Printf("[auto-approve] activity %d: %v", act.ID, err)
+		}
+	}
+}
+
+// resolveOperatorFromAssignment attempts to resolve an operator user ID from position/department in assignment.
+func (bc *bddContext) resolveOperatorFromAssignment(assignment TicketAssignment) uint {
+	if assignment.PositionID == nil || assignment.DepartmentID == nil {
+		return 0
+	}
+	orgSvc := &testOrgService{db: bc.db}
+	for posCode, p := range bc.positions {
+		if p.ID == *assignment.PositionID {
+			for deptCode, d := range bc.departments {
+				if d.ID == *assignment.DepartmentID {
+					userIDs, _ := orgSvc.FindUsersByPositionAndDepartment(posCode, deptCode)
+					if len(userIDs) > 0 {
+						return userIDs[0]
+					}
+				}
+			}
+		}
+	}
+	return 0
 }

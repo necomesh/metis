@@ -8,10 +8,12 @@ import (
 )
 
 var (
-	ErrAssignmentNotFound = errors.New("assignment not found")
-	ErrAlreadyAssigned    = errors.New("user already assigned to this department")
-	ErrDepartmentInactive = errors.New("department is inactive")
-	ErrPositionInactive   = errors.New("position is inactive")
+	ErrAssignmentNotFound       = errors.New("assignment not found")
+	ErrAlreadyAssigned          = errors.New("user already assigned to this department")
+	ErrPositionAlreadyAssigned  = errors.New("user already has this position in this department")
+	ErrDepartmentInactive       = errors.New("department is inactive")
+	ErrPositionInactive         = errors.New("position is inactive")
+	ErrPositionNotAllowedInDept = errors.New("position is not allowed in this department")
 )
 
 type AssignmentService struct {
@@ -80,12 +82,21 @@ func (s *AssignmentService) AddUserPosition(userID, deptID, posID uint, isPrimar
 		return nil, ErrPositionInactive
 	}
 
-	exists, err := s.repo.ExistsByUserAndDept(userID, deptID)
+	// Validate position is allowed in this department
+	allowed, err := s.deptRepo.IsPositionAllowed(deptID, posID)
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, ErrPositionNotAllowedInDept
+	}
+
+	exists, err := s.repo.ExistsByUserDeptAndPosition(userID, deptID, posID)
 	if err != nil {
 		return nil, err
 	}
 	if exists {
-		return nil, ErrAlreadyAssigned
+		return nil, ErrPositionAlreadyAssigned
 	}
 
 	up := &UserPosition{
@@ -110,6 +121,21 @@ func (s *AssignmentService) RemoveUserPosition(userID, assignmentID uint) error 
 func (s *AssignmentService) UpdateUserPosition(userID, assignmentID uint, positionID *uint, isPrimary *bool) error {
 	fields := map[string]any{}
 	if positionID != nil {
+		// Validate position is allowed in the assignment's department
+		assignment, err := s.repo.FindByID(assignmentID)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrAssignmentNotFound
+			}
+			return err
+		}
+		allowed, err := s.deptRepo.IsPositionAllowed(assignment.DepartmentID, *positionID)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return ErrPositionNotAllowedInDept
+		}
 		fields["position_id"] = *positionID
 	}
 	setPrimary := isPrimary != nil && *isPrimary
@@ -131,8 +157,63 @@ func (s *AssignmentService) SetPrimary(userID uint, assignmentID uint) error {
 	return err
 }
 
-func (s *AssignmentService) ListDepartmentMembers(deptID uint, keyword string, page, pageSize int) ([]AssignmentItem, int64, error) {
-	return s.repo.ListUsersByDepartment(deptID, keyword, page, pageSize)
+func (s *AssignmentService) ListDepartmentMembers(deptID uint, keyword string, page, pageSize int) ([]MemberWithPositions, int64, error) {
+	items, total, err := s.repo.ListUsersByDepartment(deptID, keyword, page, pageSize)
+	if err != nil {
+		return nil, 0, err
+	}
+	return GroupAssignmentsByUser(items), total, nil
+}
+
+func (s *AssignmentService) SetUserDeptPositions(userID, deptID uint, positionIDs []uint, primaryPositionID *uint) error {
+	// Validate department
+	dept, err := s.deptRepo.FindByID(deptID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrDepartmentNotFound
+		}
+		return err
+	}
+	if !dept.IsActive {
+		return ErrDepartmentInactive
+	}
+
+	// Validate each position
+	for _, posID := range positionIDs {
+		pos, err := s.posRepo.FindByID(posID)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrPositionNotFound
+			}
+			return err
+		}
+		if !pos.IsActive {
+			return ErrPositionInactive
+		}
+		allowed, err := s.deptRepo.IsPositionAllowed(deptID, posID)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return ErrPositionNotAllowedInDept
+		}
+	}
+
+	// Validate primaryPositionID is in positionIDs
+	if primaryPositionID != nil {
+		found := false
+		for _, pid := range positionIDs {
+			if pid == *primaryPositionID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			primaryPositionID = nil
+		}
+	}
+
+	return s.repo.SetUserDeptPositions(userID, deptID, positionIDs, primaryPositionID)
 }
 
 // Scope helpers for future data permission isolation

@@ -30,6 +30,15 @@ const (
 	SLAStatusBreachedResolve  = "breached_resolution"
 )
 
+// Assignment status constants
+const (
+	AssignmentPending       = "pending"
+	AssignmentCompleted     = "completed"
+	AssignmentTransferred   = "transferred"
+	AssignmentDelegated     = "delegated"
+	AssignmentClaimedByOther = "claimed_by_other"
+)
+
 // Ticket 工单
 type Ticket struct {
 	model.BaseModel
@@ -51,6 +60,7 @@ type Ticket struct {
 	SLAResponseDeadline   *time.Time `json:"slaResponseDeadline"`
 	SLAResolutionDeadline *time.Time `json:"slaResolutionDeadline"`
 	SLAStatus             string     `json:"slaStatus" gorm:"size:32;default:on_track"`
+	SLAPausedAt           *time.Time `json:"slaPausedAt"`
 	FinishedAt            *time.Time `json:"finishedAt"`
 }
 
@@ -76,6 +86,7 @@ type TicketResponse struct {
 	SLAResponseDeadline   *time.Time `json:"slaResponseDeadline"`
 	SLAResolutionDeadline *time.Time `json:"slaResolutionDeadline"`
 	SLAStatus             string     `json:"slaStatus"`
+	SLAPausedAt           *time.Time `json:"slaPausedAt"`
 	FinishedAt            *time.Time `json:"finishedAt"`
 	CreatedAt             time.Time  `json:"createdAt"`
 	UpdatedAt             time.Time  `json:"updatedAt"`
@@ -102,6 +113,7 @@ func (t *Ticket) ToResponse() TicketResponse {
 		SLAResponseDeadline:   t.SLAResponseDeadline,
 		SLAResolutionDeadline: t.SLAResolutionDeadline,
 		SLAStatus:             t.SLAStatus,
+		SLAPausedAt:           t.SLAPausedAt,
 		FinishedAt:            t.FinishedAt,
 		CreatedAt:             t.CreatedAt,
 		UpdatedAt:             t.UpdatedAt,
@@ -125,6 +137,7 @@ type TicketActivity struct {
 	Status            string     `json:"status" gorm:"size:16;default:pending"`
 	NodeID            string     `json:"nodeId" gorm:"column:node_id;size:64"`
 	ExecutionMode     string     `json:"executionMode" gorm:"column:execution_mode;size:16"`
+	ActivityGroupID   string     `json:"activityGroupId" gorm:"column:activity_group_id;size:36;index"`
 	FormSchema        JSONField  `json:"formSchema" gorm:"column:form_schema;type:text"`
 	FormData          JSONField  `json:"formData" gorm:"column:form_data;type:text"`
 	TransitionOutcome string     `json:"transitionOutcome" gorm:"column:transition_outcome;size:16"`
@@ -152,6 +165,8 @@ type TicketAssignment struct {
 	Status          string     `json:"status" gorm:"size:16;default:pending"`
 	Sequence        int        `json:"sequence" gorm:"default:0"`
 	IsCurrent       bool       `json:"isCurrent" gorm:"default:false"`
+	DelegatedFrom   *uint      `json:"delegatedFrom" gorm:"index"`   // original assignment ID when delegated
+	TransferFrom    *uint      `json:"transferFrom" gorm:"index"`    // original assignment ID when transferred
 	ClaimedAt       *time.Time `json:"claimedAt"`
 	FinishedAt      *time.Time `json:"finishedAt"`
 }

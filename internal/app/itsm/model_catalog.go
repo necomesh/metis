@@ -97,11 +97,12 @@ type ServiceDefinition struct {
 	CatalogID         uint      `json:"catalogId" gorm:"not null;index"`
 	EngineType        string    `json:"engineType" gorm:"size:16;not null;default:classic"` // classic | smart
 	SLAID             *uint     `json:"slaId" gorm:"index"`
-	FormID            *uint     `json:"formId" gorm:"index"`
+	IntakeFormSchema  JSONField `json:"intakeFormSchema" gorm:"type:text"`    // inline form schema
 	WorkflowJSON      JSONField `json:"workflowJson" gorm:"type:text"`        // classic mode
 	CollaborationSpec string    `json:"collaborationSpec" gorm:"type:text"`    // smart mode
 	AgentID           *uint     `json:"agentId" gorm:"index"`                 // smart mode
 	AgentConfig       JSONField `json:"agentConfig" gorm:"type:text"`         // smart mode
+	KnowledgeBaseIDs  JSONField `json:"knowledgeBaseIds" gorm:"type:text"`    // smart mode: [1,2,3]
 	IsActive          bool      `json:"isActive" gorm:"not null;default:true"`
 	SortOrder         int       `json:"sortOrder" gorm:"default:0"`
 }
@@ -116,11 +117,12 @@ type ServiceDefinitionResponse struct {
 	CatalogID         uint      `json:"catalogId"`
 	EngineType        string    `json:"engineType"`
 	SLAID             *uint     `json:"slaId"`
-	FormID            *uint     `json:"formId"`
+	IntakeFormSchema  JSONField `json:"intakeFormSchema"`
 	WorkflowJSON      JSONField `json:"workflowJson"`
 	CollaborationSpec string    `json:"collaborationSpec"`
 	AgentID           *uint     `json:"agentId"`
 	AgentConfig       JSONField `json:"agentConfig"`
+	KnowledgeBaseIDs  JSONField `json:"knowledgeBaseIds"`
 	IsActive          bool      `json:"isActive"`
 	SortOrder         int       `json:"sortOrder"`
 	CreatedAt         time.Time `json:"createdAt"`
@@ -136,11 +138,12 @@ func (s *ServiceDefinition) ToResponse() ServiceDefinitionResponse {
 		CatalogID:         s.CatalogID,
 		EngineType:        s.EngineType,
 		SLAID:             s.SLAID,
-		FormID:            s.FormID,
+		IntakeFormSchema:  s.IntakeFormSchema,
 		WorkflowJSON:      s.WorkflowJSON,
 		CollaborationSpec: s.CollaborationSpec,
 		AgentID:           s.AgentID,
 		AgentConfig:       s.AgentConfig,
+		KnowledgeBaseIDs:  s.KnowledgeBaseIDs,
 		IsActive:          s.IsActive,
 		SortOrder:         s.SortOrder,
 		CreatedAt:         s.CreatedAt,

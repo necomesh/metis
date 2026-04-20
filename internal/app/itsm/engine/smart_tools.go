@@ -1,12 +1,11 @@
 package engine
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
 	"time"
-
-	"gorm.io/gorm"
 
 	"metis/internal/llm"
 )
@@ -19,12 +18,13 @@ type decisionToolDef struct {
 
 // decisionToolContext holds the shared context for all decision tool executions.
 type decisionToolContext struct {
-	tx                *gorm.DB
+	data              DecisionDataProvider
 	ticketID          uint
 	serviceID         uint
 	knowledgeSearcher KnowledgeSearcher
 	resolver          *ParticipantResolver
 	knowledgeBaseIDs  []uint
+	actionExecutor    *ActionExecutor
 }
 
 // allDecisionTools returns the complete set of decision domain tools.
@@ -37,6 +37,7 @@ func allDecisionTools() []decisionToolDef {
 		toolSimilarHistory(),
 		toolSLAStatus(),
 		toolListActions(),
+		toolExecuteAction(),
 	}
 }
 
@@ -63,52 +64,39 @@ func toolTicketContext() decisionToolDef {
 			},
 		},
 		Handler: func(ctx *decisionToolContext, _ json.RawMessage) (json.RawMessage, error) {
-			var fullTicket struct {
-				Code                  string
-				Title                 string
-				Description           string
-				Status                string
-				Source                string
-				FormData              string
-				SLAResponseDeadline   *time.Time
-				SLAResolutionDeadline *time.Time
-			}
-			if err := ctx.tx.Table("itsm_tickets").Where("id = ?", ctx.ticketID).
-				Select("code, title, description, status, source, form_data, sla_response_deadline, sla_resolution_deadline").
-				First(&fullTicket).Error; err != nil {
+			ticket, err := ctx.data.GetTicketContext(ctx.ticketID)
+			if err != nil {
 				return toolError("工单不存在")
 			}
 
 			result := map[string]any{
-				"code":        fullTicket.Code,
-				"title":       fullTicket.Title,
-				"description": fullTicket.Description,
-				"status":      fullTicket.Status,
-				"source":      fullTicket.Source,
+				"code":        ticket.Code,
+				"title":       ticket.Title,
+				"description": ticket.Description,
+				"status":      ticket.Status,
+				"source":      ticket.Source,
 			}
 
 			// Form data
-			if fullTicket.FormData != "" {
-				result["form_data"] = json.RawMessage(fullTicket.FormData)
+			if ticket.FormData != "" {
+				result["form_data"] = json.RawMessage(ticket.FormData)
 			}
 
 			// SLA status
 			now := time.Now()
-			if fullTicket.SLAResponseDeadline != nil || fullTicket.SLAResolutionDeadline != nil {
+			if ticket.SLAResponseDeadline != nil || ticket.SLAResolutionDeadline != nil {
 				sla := map[string]any{}
-				if fullTicket.SLAResponseDeadline != nil {
-					sla["response_remaining_seconds"] = int64(fullTicket.SLAResponseDeadline.Sub(now).Seconds())
+				if ticket.SLAResponseDeadline != nil {
+					sla["response_remaining_seconds"] = int64(ticket.SLAResponseDeadline.Sub(now).Seconds())
 				}
-				if fullTicket.SLAResolutionDeadline != nil {
-					sla["resolution_remaining_seconds"] = int64(fullTicket.SLAResolutionDeadline.Sub(now).Seconds())
+				if ticket.SLAResolutionDeadline != nil {
+					sla["resolution_remaining_seconds"] = int64(ticket.SLAResolutionDeadline.Sub(now).Seconds())
 				}
 				result["sla_status"] = sla
 			}
 
 			// Activity history
-			var activities []activityModel
-			ctx.tx.Where("ticket_id = ? AND status = ?", ctx.ticketID, ActivityCompleted).
-				Order("id ASC").Find(&activities)
+			activities, _ := ctx.data.GetCompletedActivities(ctx.ticketID)
 
 			var history []map[string]any
 			for _, a := range activities {
@@ -127,21 +115,51 @@ func toolTicketContext() decisionToolDef {
 			}
 			result["activity_history"] = history
 
-			// Current assignment
-			var assignment struct {
-				AssigneeID *uint
+			// Executed actions — shows which service actions have been successfully run
+			execs, _ := ctx.data.GetExecutedActions(ctx.ticketID)
+
+			if len(execs) > 0 {
+				var execNames []string
+				for _, e := range execs {
+					execNames = append(execNames, e.ActionName)
+				}
+				result["executed_actions"] = execNames
+
+				// Check if all service actions have been executed
+				totalActions, _ := ctx.data.CountActiveServiceActions(ctx.serviceID)
+				if totalActions > 0 && int64(len(execs)) >= totalActions {
+					result["all_actions_completed"] = true
+				}
 			}
-			if err := ctx.tx.Table("itsm_ticket_assignments").
-				Where("ticket_id = ? AND is_current = ?", ctx.ticketID, true).
-				Select("assignee_id").First(&assignment).Error; err == nil && assignment.AssigneeID != nil {
-				var user struct {
-					Username string
-				}
-				ctx.tx.Table("users").Where("id = ?", *assignment.AssigneeID).Select("username").First(&user)
+
+			// Current assignment
+			assignment, err := ctx.data.GetCurrentAssignment(ctx.ticketID)
+			if err == nil && assignment != nil {
 				result["current_assignment"] = map[string]any{
-					"assignee_id":   *assignment.AssigneeID,
-					"assignee_name": user.Username,
+					"assignee_id":   assignment.AssigneeID,
+					"assignee_name": assignment.AssigneeName,
 				}
+			}
+
+			// Parallel groups — active countersign groups with progress
+			groups, _ := ctx.data.GetParallelGroups(ctx.ticketID)
+
+			var activeGroups []map[string]any
+			for _, g := range groups {
+				if g.Total-g.Completed > 0 {
+					// Collect pending activity names
+					pendingNames, _ := ctx.data.GetPendingActivityNames(ctx.ticketID, g.ActivityGroupID)
+
+					activeGroups = append(activeGroups, map[string]any{
+						"group_id":           g.ActivityGroupID,
+						"total":              g.Total,
+						"completed":          g.Completed,
+						"pending_activities": pendingNames,
+					})
+				}
+			}
+			if len(activeGroups) > 0 {
+				result["parallel_groups"] = activeGroups
 			}
 
 			return json.Marshal(result)
@@ -222,7 +240,7 @@ func toolResolveParticipant() decisionToolDef {
 				"type": "object",
 				"properties": map[string]any{
 					"type":            map[string]any{"type": "string", "description": "参与人类型: user|position|department|position_department|requester_manager"},
-					"value":           map[string]any{"type": "string", "description": "类型相关值（user类型为user_id, position类型为position_code等）"},
+					"value":           map[string]any{"type": "string", "description": "类型相关值（user类型为user_id或username, position类型为position_code等）"},
 					"position_code":   map[string]any{"type": "string", "description": "岗位代码（position_department类型时必填）"},
 					"department_code": map[string]any{"type": "string", "description": "部门代码（position_department类型时必填）"},
 				},
@@ -234,7 +252,7 @@ func toolResolveParticipant() decisionToolDef {
 				return toolError("参与人解析器不可用")
 			}
 
-			userIDs, err := ctx.resolver.ResolveForTool(ctx.tx, ctx.ticketID, args)
+			userIDs, err := ctx.data.ResolveForTool(ctx.resolver, ctx.ticketID, args)
 			if err != nil {
 				return toolError(fmt.Sprintf("参与人解析失败: %v", err))
 			}
@@ -242,13 +260,8 @@ func toolResolveParticipant() decisionToolDef {
 			// Enrich with user details
 			var candidates []map[string]any
 			for _, uid := range userIDs {
-				var user struct {
-					ID       uint
-					Username string
-					IsActive bool
-				}
-				if err := ctx.tx.Table("users").Where("id = ?", uid).
-					Select("id, username, is_active").First(&user).Error; err != nil {
+				user, err := ctx.data.GetUserBasicInfo(uid)
+				if err != nil {
 					continue
 				}
 				if !user.IsActive {
@@ -289,23 +302,13 @@ func toolUserWorkload() decisionToolDef {
 			}
 			json.Unmarshal(args, &params)
 
-			var user struct {
-				ID       uint
-				Username string
-				IsActive bool
-			}
-			if err := ctx.tx.Table("users").Where("id = ?", params.UserID).
-				Select("id, username, is_active").First(&user).Error; err != nil {
+			user, err := ctx.data.GetUserBasicInfo(params.UserID)
+			if err != nil {
 				return toolError("用户不存在")
 			}
 
 			// Count pending activities assigned to this user
-			var pendingCount int64
-			ctx.tx.Table("itsm_ticket_assignments").
-				Joins("JOIN itsm_ticket_activities ON itsm_ticket_activities.id = itsm_ticket_assignments.activity_id").
-				Where("itsm_ticket_assignments.assignee_id = ? AND itsm_ticket_activities.status IN ?",
-					params.UserID, []string{ActivityPending, ActivityInProgress}).
-				Count(&pendingCount)
+			pendingCount, _ := ctx.data.CountUserPendingActivities(params.UserID)
 
 			return json.Marshal(map[string]any{
 				"user_id":            user.ID,
@@ -340,22 +343,7 @@ func toolSimilarHistory() decisionToolDef {
 				params.Limit = 5
 			}
 
-			type historyRow struct {
-				ID         uint
-				Code       string
-				Title      string
-				Status     string
-				CreatedAt  time.Time
-				FinishedAt *time.Time
-			}
-			var rows []historyRow
-			ctx.tx.Table("itsm_tickets").
-				Where("service_id = ? AND status = ? AND id != ? AND deleted_at IS NULL",
-					ctx.serviceID, "completed", ctx.ticketID).
-				Select("id, code, title, status, created_at, finished_at").
-				Order("finished_at DESC").
-				Limit(params.Limit).
-				Find(&rows)
+			rows, _ := ctx.data.GetSimilarHistory(ctx.serviceID, ctx.ticketID, params.Limit)
 
 			var tickets []map[string]any
 			var totalHours float64
@@ -373,18 +361,14 @@ func toolSimilarHistory() decisionToolDef {
 				}
 
 				// Count activities
-				var actCount int64
-				ctx.tx.Table("itsm_ticket_activities").Where("ticket_id = ?", r.ID).Count(&actCount)
+				actCount, _ := ctx.data.CountTicketActivities(r.ID)
 				entry["activity_count"] = actCount
 
 				tickets = append(tickets, entry)
 			}
 
 			// Aggregate stats
-			var totalCount int64
-			ctx.tx.Table("itsm_tickets").
-				Where("service_id = ? AND status = ? AND deleted_at IS NULL", ctx.serviceID, "completed").
-				Count(&totalCount)
+			totalCount, _ := ctx.data.CountCompletedTickets(ctx.serviceID)
 
 			avgHours := 0.0
 			if len(rows) > 0 {
@@ -415,14 +399,8 @@ func toolSLAStatus() decisionToolDef {
 			},
 		},
 		Handler: func(ctx *decisionToolContext, _ json.RawMessage) (json.RawMessage, error) {
-			var ticket struct {
-				SLAStatus             string
-				SLAResponseDeadline   *time.Time
-				SLAResolutionDeadline *time.Time
-			}
-			if err := ctx.tx.Table("itsm_tickets").Where("id = ?", ctx.ticketID).
-				Select("sla_status, sla_response_deadline, sla_resolution_deadline").
-				First(&ticket).Error; err != nil {
+			ticket, err := ctx.data.GetSLAData(ctx.ticketID)
+			if err != nil {
 				return toolError("工单不存在")
 			}
 
@@ -478,18 +456,7 @@ func toolListActions() decisionToolDef {
 			},
 		},
 		Handler: func(ctx *decisionToolContext, _ json.RawMessage) (json.RawMessage, error) {
-			type actionRow struct {
-				ID          uint
-				Code        string
-				Name        string
-				Description string
-			}
-			var actions []actionRow
-			ctx.tx.Table("itsm_service_actions").
-				Where("service_id = ? AND is_active = ? AND deleted_at IS NULL", ctx.serviceID, true).
-				Select("id, code, name, description").
-				Order("id ASC").
-				Find(&actions)
+			actions, _ := ctx.data.ListActiveServiceActions(ctx.serviceID)
 
 			items := make([]map[string]any, len(actions))
 			for i, a := range actions {
@@ -503,6 +470,66 @@ func toolListActions() decisionToolDef {
 			return json.Marshal(map[string]any{
 				"actions": items,
 				"count":   len(items),
+			})
+		},
+	}
+}
+
+// --- Tool: decision.execute_action ---
+
+func toolExecuteAction() decisionToolDef {
+	return decisionToolDef{
+		Def: llm.ToolDef{
+			Name:        "decision.execute_action",
+			Description: "同步执行服务配置的自动化动作（webhook），返回执行结果。用于在决策推理过程中触发自动化操作并观察结果。",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"action_id": map[string]any{"type": "integer", "description": "要执行的动作 ID（从 decision.list_actions 获取）"},
+				},
+				"required": []string{"action_id"},
+			},
+		},
+		Handler: func(ctx *decisionToolContext, args json.RawMessage) (json.RawMessage, error) {
+			var params struct {
+				ActionID uint `json:"action_id"`
+			}
+			json.Unmarshal(args, &params)
+
+			if ctx.actionExecutor == nil {
+				return toolError("动作执行器不可用")
+			}
+
+			// Verify action exists and is active
+			action, err := ctx.data.GetServiceAction(params.ActionID, ctx.serviceID)
+			if err != nil {
+				return toolError("动作不存在")
+			}
+			if !action.IsActive {
+				return toolError("动作已停用")
+			}
+
+			// Create a placeholder activity for tracking the execution
+			// (ActionExecutor.Execute requires an activityID for recording)
+			err = ctx.actionExecutor.Execute(
+				context.Background(),
+				ctx.ticketID, 0, params.ActionID,
+			)
+
+			if err != nil {
+				return json.Marshal(map[string]any{
+					"success":     false,
+					"action_name": action.Name,
+					"action_code": action.Code,
+					"error":       err.Error(),
+				})
+			}
+
+			return json.Marshal(map[string]any{
+				"success":     true,
+				"action_name": action.Name,
+				"action_code": action.Code,
+				"message":     fmt.Sprintf("动作 [%s] 执行成功", action.Name),
 			})
 		},
 	}

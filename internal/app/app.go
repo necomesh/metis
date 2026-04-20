@@ -1,7 +1,9 @@
 package app
 
 import (
+	"context"
 	"embed"
+	"encoding/json"
 
 	"github.com/casbin/casbin/v2"
 	"github.com/gin-gonic/gin"
@@ -15,7 +17,7 @@ import (
 type App interface {
 	Name() string
 	Models() []any
-	Seed(db *gorm.DB, enforcer *casbin.Enforcer) error
+	Seed(db *gorm.DB, enforcer *casbin.Enforcer, install bool) error
 	Providers(i do.Injector)
 	Routes(api *gin.RouterGroup)
 	Tasks() []scheduler.TaskDef
@@ -27,24 +29,81 @@ type LocaleProvider interface {
 	Locales() embed.FS
 }
 
-// OrgScopeResolver is an optional interface implemented by the Org App.
-// It resolves the set of department IDs visible to a given user based on
-// their organisational assignments. DataScopeMiddleware uses this interface;
-// when the Org App is not installed the resolver is nil and no dept filtering
-// is applied (equivalent to DataScopeAll).
-type OrgScopeResolver interface {
-	// GetUserDeptScope returns the department IDs the user can access.
-	// For DataScopeDept it returns only the user's directly assigned departments.
-	// For DataScopeDeptAndSub it returns those plus all active sub-departments (BFS).
+// OrgResolver is the unified interface implemented by the Org App.
+// It provides all organisation-related queries consumed by:
+//   - DataScopeMiddleware (department scope filtering)
+//   - ITSM (multi-dimensional participant matching)
+//   - AI tools (current_user_profile enrichment, org_context queries)
+//
+// When the Org App is not installed the resolver is nil and consumers
+// handle the nil case gracefully.
+type OrgResolver interface {
+	// DataScope: department visibility
 	GetUserDeptScope(userID uint, includeSubDepts bool) ([]uint, error)
-}
-
-// OrgUserResolver is an optional interface implemented by the Org App.
-// It resolves the user's position and department IDs for multi-dimensional
-// participant matching (e.g. ITSM ticket assignment resolution).
-type OrgUserResolver interface {
+	// ITSM: participant matching by IDs
 	GetUserPositionIDs(userID uint) ([]uint, error)
 	GetUserDepartmentIDs(userID uint) ([]uint, error)
+	// AI tools: rich org info
+	GetUserPositions(userID uint) ([]OrgPosition, error)
+	GetUserDepartment(userID uint) (*OrgDepartment, error)
+	QueryContext(username, deptCode, positionCode string, includeInactive bool) (*OrgContextResult, error)
+	// Participant resolution: find users by org criteria
+	FindUsersByPositionCode(posCode string) ([]uint, error)
+	FindUsersByDepartmentCode(deptCode string) ([]uint, error)
+	FindUsersByPositionAndDepartment(posCode, deptCode string) ([]uint, error)
+	FindUsersByPositionID(positionID uint) ([]uint, error)
+	FindUsersByDepartmentID(departmentID uint) ([]uint, error)
+	FindManagerByUserID(userID uint) (uint, error)
+}
+
+// OrgDepartment represents a department in the organization.
+type OrgDepartment struct {
+	ID   uint   `json:"id"`
+	Code string `json:"code"`
+	Name string `json:"name"`
+}
+
+// OrgPosition represents a position held by a user.
+type OrgPosition struct {
+	ID        uint   `json:"id"`
+	Code      string `json:"code"`
+	Name      string `json:"name"`
+	IsPrimary bool   `json:"is_primary"`
+}
+
+// OrgContextResult is the full result from an org context query.
+type OrgContextResult struct {
+	Users       []OrgContextUser       `json:"users"`
+	Departments []OrgContextDepartment `json:"departments"`
+	Positions   []OrgContextPosition   `json:"positions"`
+	Summary     string                 `json:"summary"`
+}
+
+// OrgContextUser represents a user in the org context result.
+type OrgContextUser struct {
+	ID         uint           `json:"id"`
+	Username   string         `json:"username"`
+	Email      string         `json:"email"`
+	Department *OrgDepartment `json:"department,omitempty"`
+	Positions  []OrgPosition  `json:"positions,omitempty"`
+	IsActive   bool           `json:"is_active"`
+}
+
+// OrgContextDepartment represents a department in the org context result.
+type OrgContextDepartment struct {
+	ID         uint   `json:"id"`
+	Code       string `json:"code"`
+	Name       string `json:"name"`
+	ParentCode string `json:"parent_code,omitempty"`
+	IsActive   bool   `json:"is_active"`
+}
+
+// OrgContextPosition represents a position in the org context result.
+type OrgContextPosition struct {
+	ID       uint   `json:"id"`
+	Code     string `json:"code"`
+	Name     string `json:"name"`
+	IsActive bool   `json:"is_active"`
 }
 
 var apps []App
@@ -96,4 +155,35 @@ type AIToolRegistry interface {
 // The returned value must satisfy ai.ToolHandlerRegistry.
 type ToolRegistryProvider interface {
 	GetToolRegistry() any
+}
+
+// AIDecisionExecutor runs AI decision cycles (ReAct tool-calling loops) for smart
+// workflow engines. Implemented by the AI App; the engine provides domain context
+// and tool handlers.
+type AIDecisionExecutor interface {
+	Execute(ctx context.Context, agentID uint, req AIDecisionRequest) (*AIDecisionResponse, error)
+}
+
+// AIToolDef defines a tool available during AI decision.
+type AIToolDef struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Parameters  any    `json:"parameters"`
+}
+
+// AIDecisionRequest contains everything needed to run an AI decision cycle.
+type AIDecisionRequest struct {
+	SystemPrompt string
+	UserMessage  string
+	Tools        []AIToolDef
+	ToolHandler  func(name string, args json.RawMessage) (json.RawMessage, error)
+	MaxTurns     int // 0 = use default
+}
+
+// AIDecisionResponse contains the result of an AI decision cycle.
+type AIDecisionResponse struct {
+	Content      string
+	InputTokens  int
+	OutputTokens int
+	Turns        int
 }

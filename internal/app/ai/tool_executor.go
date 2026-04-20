@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"metis/internal/app"
 )
 
 // ToolHandlerRegistry is the interface each App implements to register its tool handlers.
@@ -30,16 +32,12 @@ func NewCompositeToolExecutor(registries []ToolHandlerRegistry, sessionID, userI
 	}
 }
 
-// sessionIDCtxKey is the well-known string key used to pass session ID through context.
-// Must match the key used by ITSM tools package (tools.SessionIDKey = "ai_session_id").
-const sessionIDCtxKey = "ai_session_id"
-
 // ExecuteTool implements ToolExecutor.
 func (e *CompositeToolExecutor) ExecuteTool(ctx context.Context, call ToolCall) (ToolResult, error) {
 	start := time.Now()
 
 	// Inject session ID into context for stateful tools (e.g. ITSM service desk).
-	ctx = context.WithValue(ctx, sessionIDCtxKey, e.sessionID)
+	ctx = context.WithValue(ctx, app.SessionIDKey, e.sessionID)
 
 	for _, reg := range e.registries {
 		if reg.HasTool(call.Name) {

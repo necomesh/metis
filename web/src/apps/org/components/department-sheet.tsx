@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/select"
 
 const ROOT_VALUE = "__root__"
+const NONE_VALUE = "__none__"
 
 export interface DepartmentItem {
   id: number
@@ -41,6 +42,7 @@ export interface DepartmentItem {
   code: string
   parentId: number | null
   managerId: number | null
+  managerName: string
   sort: number
   description: string
   isActive: boolean
@@ -52,13 +54,18 @@ interface TreeNode extends DepartmentItem {
   children?: TreeNode[]
 }
 
+interface UserOption {
+  id: number
+  username: string
+}
+
 function useDepartmentSchema() {
   const { t } = useTranslation("org")
   return z.object({
     name: z.string().min(1, t("validation.nameRequired")),
     code: z.string().min(1, t("validation.codeRequired")),
     parentId: z.string().optional(),
-    sort: z.number().default(0),
+    managerId: z.string().optional(),
     description: z.string().optional(),
   })
 }
@@ -80,13 +87,22 @@ export function DepartmentSheet({ open, onOpenChange, department }: DepartmentSh
   const form = useForm<FormValues>({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     resolver: zodResolver(schema as any),
-    defaultValues: { name: "", code: "", parentId: ROOT_VALUE, sort: 0, description: "" },
+    defaultValues: { name: "", code: "", parentId: ROOT_VALUE, managerId: NONE_VALUE, description: "" },
   })
 
   const { data: treeData = [] } = useQuery({
     queryKey: ["departments", "tree"],
     queryFn: async () => {
       const res = await api.get<{ items: TreeNode[] }>("/api/v1/org/departments/tree")
+      return res.items ?? []
+    },
+    enabled: open,
+  })
+
+  const { data: users = [] } = useQuery({
+    queryKey: ["users", "all"],
+    queryFn: async () => {
+      const res = await api.get<{ items: UserOption[] }>("/api/v1/users?page=1&pageSize=1000")
       return res.items ?? []
     },
     enabled: open,
@@ -99,24 +115,25 @@ export function DepartmentSheet({ open, onOpenChange, department }: DepartmentSh
           name: department.name,
           code: department.code,
           parentId: department.parentId ? String(department.parentId) : ROOT_VALUE,
-          sort: department.sort,
+          managerId: department.managerId ? String(department.managerId) : NONE_VALUE,
           description: department.description,
         })
       } else {
-        form.reset({ name: "", code: "", parentId: ROOT_VALUE, sort: 0, description: "" })
+        form.reset({ name: "", code: "", parentId: ROOT_VALUE, managerId: NONE_VALUE, description: "" })
       }
     }
   }, [open, department, form])
 
   const createMutation = useMutation({
-    mutationFn: (values: FormValues) =>
-      api.post("/api/v1/org/departments", {
+    mutationFn: async (values: FormValues) => {
+      await api.post("/api/v1/org/departments", {
         name: values.name,
         code: values.code,
         parentId: values.parentId && values.parentId !== ROOT_VALUE ? Number(values.parentId) : null,
-        sort: values.sort,
+        managerId: values.managerId && values.managerId !== NONE_VALUE ? Number(values.managerId) : null,
         description: values.description,
-      }),
+      })
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["departments"] })
       onOpenChange(false)
@@ -126,14 +143,15 @@ export function DepartmentSheet({ open, onOpenChange, department }: DepartmentSh
   })
 
   const updateMutation = useMutation({
-    mutationFn: (values: FormValues) =>
-      api.put(`/api/v1/org/departments/${department!.id}`, {
+    mutationFn: async (values: FormValues) => {
+      await api.put(`/api/v1/org/departments/${department!.id}`, {
         name: values.name,
         code: values.code,
         parentId: values.parentId && values.parentId !== ROOT_VALUE ? Number(values.parentId) : null,
-        sort: values.sort,
+        managerId: values.managerId && values.managerId !== NONE_VALUE ? Number(values.managerId) : null,
         description: values.description,
-      }),
+      })
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["departments"] })
       onOpenChange(false)
@@ -230,17 +248,25 @@ export function DepartmentSheet({ open, onOpenChange, department }: DepartmentSh
             />
             <FormField
               control={form.control}
-              name="sort"
+              name="managerId"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t("org:departments.sort")}</FormLabel>
-                  <FormControl>
-                    <Input
-                      type="number"
-                      {...field}
-                      onChange={(e) => field.onChange(Number(e.target.value))}
-                    />
-                  </FormControl>
+                  <FormLabel>{t("org:departments.manager")}</FormLabel>
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder={t("org:departments.selectManager")} />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value={NONE_VALUE}>{t("org:departments.noManager")}</SelectItem>
+                      {users.map((user) => (
+                        <SelectItem key={user.id} value={String(user.id)}>
+                          {user.username}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <FormMessage />
                 </FormItem>
               )}

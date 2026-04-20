@@ -29,6 +29,8 @@ type WaitTimerPayload struct {
 
 // HandleActionExecute is the scheduler task handler for itsm-action-execute.
 // It executes the HTTP webhook and then calls Progress on the engine.
+// For classic engine tickets, it uses classicEngine.Progress() (with token-based workflow).
+// For smart engine tickets, it directly marks the activity as completed (no execution tokens).
 // If the action fails and a b_error boundary event is attached, it triggers
 // the boundary error path instead of calling Progress with "failed".
 func HandleActionExecute(db *gorm.DB, classicEngine *ClassicEngine) func(ctx context.Context, payload json.RawMessage) error {
@@ -50,7 +52,21 @@ func HandleActionExecute(db *gorm.DB, classicEngine *ClassicEngine) func(ctx con
 			slog.Error("action execution failed", "error", err, "ticketID", p.TicketID, "actionID", p.ActionID)
 		}
 
-		// On failure, check for b_error boundary event before calling Progress
+		// Smart engine tickets: directly mark activity completed (no execution tokens).
+		var ticket ticketModel
+		if err := db.First(&ticket, p.TicketID).Error; err != nil {
+			return fmt.Errorf("ticket %d not found: %w", p.TicketID, err)
+		}
+		if ticket.EngineType == "smart" {
+			now := time.Now()
+			return db.Model(&activityModel{}).Where("id = ?", p.ActivityID).Updates(map[string]any{
+				"status":             ActivityCompleted,
+				"transition_outcome": outcome,
+				"finished_at":        now,
+			}).Error
+		}
+
+		// Classic engine: on failure, check for b_error boundary event before calling Progress
 		if outcome == "failed" {
 			if handled, bErr := tryHandleBoundaryError(ctx, db, classicEngine, p.TicketID, p.ActivityID); handled {
 				if bErr != nil {
@@ -278,6 +294,65 @@ func HandleBoundaryTimer(db *gorm.DB, classicEngine *ClassicEngine) func(ctx con
 
 			return classicEngine.processNode(ctx, tx, def, nodeMap, outEdges, &bToken, 0, targetNode, 0)
 		})
+	}
+}
+
+// HandleSmartRecovery scans in_progress smart tickets and resubmits decision cycles
+// for any that have no active activities and haven't been circuit-broken.
+// This runs once at startup to recover from server restarts.
+func HandleSmartRecovery(db *gorm.DB, smartEngine *SmartEngine) func(ctx context.Context, payload json.RawMessage) error {
+	return func(ctx context.Context, _ json.RawMessage) error {
+		// Find all in_progress smart tickets
+		type ticketRow struct {
+			ID               uint
+			Code             string
+			AIFailureCount   int
+			AIDisabledReason string
+		}
+		var tickets []ticketRow
+		if err := db.Table("itsm_tickets").
+			Where("engine_type = ? AND status = ? AND deleted_at IS NULL", "smart", "in_progress").
+			Select("id, code, ai_failure_count, ai_disabled_reason").
+			Find(&tickets).Error; err != nil {
+			return fmt.Errorf("smart recovery: query tickets: %w", err)
+		}
+
+		if len(tickets) == 0 {
+			slog.Info("smart recovery: no in_progress smart tickets found")
+			return nil
+		}
+
+		recovered := 0
+		for _, t := range tickets {
+			// Skip circuit-broken tickets
+			if t.AIDisabledReason != "" {
+				slog.Debug("smart recovery: skipping circuit-broken ticket", "ticketID", t.ID, "code", t.Code)
+				continue
+			}
+
+			// Check if there are active (pending/in_progress) activities
+			var activeCount int64
+			db.Table("itsm_ticket_activities").
+				Where("ticket_id = ? AND status IN ?", t.ID, []string{ActivityPending, ActivityInProgress}).
+				Count(&activeCount)
+
+			if activeCount > 0 {
+				slog.Debug("smart recovery: skipping ticket with active activities", "ticketID", t.ID, "code", t.Code, "activeCount", activeCount)
+				continue
+			}
+
+			// Submit recovery task
+			payload, _ := json.Marshal(SmartProgressPayload{TicketID: t.ID})
+			if err := smartEngine.SubmitProgressTask(payload); err != nil {
+				slog.Error("smart recovery: failed to submit progress task", "ticketID", t.ID, "error", err)
+				continue
+			}
+			recovered++
+			slog.Info("smart recovery: submitted progress task for orphaned ticket", "ticketID", t.ID, "code", t.Code)
+		}
+
+		slog.Info("smart recovery: completed", "scanned", len(tickets), "recovered", recovered)
+		return nil
 	}
 }
 

@@ -7,6 +7,7 @@ import { useMenuStore, type MenuItem } from "@/stores/menu"
 import { useUiStore } from "@/stores/ui"
 import { getIcon } from "@/lib/icon-map"
 import { cn } from "@/lib/utils"
+import { getMenuGroups } from "@/apps/registry"
 import {
   Tooltip,
   TooltipContent,
@@ -93,7 +94,27 @@ export function Sidebar() {
   const navApps = useMemo(() => buildNavApps(menuTree), [menuTree])
   const activeApp = useMemo(() => findActiveNavApp(navApps, pathname), [navApps, pathname])
 
-  const visibleItems = activeApp?.children ?? []
+  const visibleItems = useMemo(() => activeApp?.children ?? [], [activeApp])
+  const menuGroups = useMemo(
+    () => (activeApp ? getMenuGroups(activeApp.permission) : undefined),
+    [activeApp],
+  )
+
+  const sections = useMemo(() => {
+    if (!menuGroups || menuGroups.length === 0) {
+      return [{ label: null as string | null, items: visibleItems }]
+    }
+    const allGrouped = new Set(menuGroups.flatMap((g) => g.items))
+    const groups = menuGroups
+      .map((group) => ({
+        label: group.label as string | null,
+        items: visibleItems.filter((item) => group.items.includes(item.permission)),
+      }))
+      .filter((g) => g.items.length > 0)
+    const ungrouped = visibleItems.filter((item) => !allGrouped.has(item.permission))
+    if (ungrouped.length > 0) groups.push({ label: null, items: ungrouped })
+    return groups
+  }, [menuGroups, visibleItems])
 
   return (
     <aside
@@ -151,25 +172,34 @@ export function Sidebar() {
           collapsed ? "w-0 px-0" : "w-40 px-2",
         )}
       >
-        {visibleItems.map((item) => {
-          const Icon = getIcon(item.icon)
-          const isActive = pathname === item.path
-          return (
-            <button
-              key={item.id}
-              onClick={() => navigate(item.path || "/")}
-              className={cn(
-                "flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors duration-200",
-                isActive
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-                  : "text-sidebar-foreground hover:bg-black/[0.04]",
-              )}
-            >
-              <Icon className="h-4 w-4 shrink-0" />
-              <span className="truncate">{t(`menu.${item.permission ?? ""}`, { defaultValue: item.name, nsSeparator: false })}</span>
-            </button>
-          )
-        })}
+        {sections.map((section, si) => (
+          <div key={section.label ?? "ungrouped"} className={section.label && si > 0 ? "pt-2" : undefined}>
+            {section.label && (
+              <div className="px-3 pb-1 text-[11px] font-semibold tracking-wider text-muted-foreground/60 uppercase">
+                {t(`menuGroup.${section.label}`, { ns: activeApp?.permission, defaultValue: section.label, nsSeparator: false })}
+              </div>
+            )}
+            {section.items.map((item) => {
+              const Icon = getIcon(item.icon)
+              const isActive = pathname === item.path
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => navigate(item.path || "/")}
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors duration-200",
+                    isActive
+                      ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                      : "text-sidebar-foreground hover:bg-black/[0.04]",
+                  )}
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span className="truncate">{t(`menu.${item.permission ?? ""}`, { defaultValue: item.name, nsSeparator: false })}</span>
+                </button>
+              )
+            })}
+          </div>
+        ))}
       </nav>
     </aside>
   )

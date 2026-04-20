@@ -6,14 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"metis/internal/app"
 )
 
 // ToolHandler handles execution of a single tool call.
 type ToolHandler func(ctx context.Context, userID uint, args json.RawMessage) (json.RawMessage, error)
-
-// SessionIDKey is the context key for the session ID.
-// Uses plain string so the AI tool executor (different package) can inject the same key.
-const SessionIDKey = "ai_session_id"
 
 // ---------------------------------------------------------------------------
 // Session state
@@ -34,10 +32,68 @@ type ServiceDeskState struct {
 	FieldsHash           string         `json:"fields_hash,omitempty"`
 }
 
+// validTransitions defines the allowed stage transitions.
+// "idle" is always a valid target (reset via itsm.new_request).
+var validTransitions = map[string][]string{
+	"idle":                  {"candidates_ready"},
+	"candidates_ready":      {"candidates_ready", "service_selected", "service_loaded"},
+	"service_selected":      {"candidates_ready", "service_loaded"},
+	"service_loaded":        {"candidates_ready", "awaiting_confirmation"},
+	"awaiting_confirmation": {"candidates_ready", "confirmed", "awaiting_confirmation"},
+	"confirmed":             {"candidates_ready"},
+}
+
+// TransitionTo validates and performs a stage transition.
+// Transition to "idle" is always allowed (reset).
+func (s *ServiceDeskState) TransitionTo(next string) error {
+	if next == "idle" {
+		s.Stage = "idle"
+		return nil
+	}
+	allowed, ok := validTransitions[s.Stage]
+	if !ok {
+		return fmt.Errorf("invalid transition from %q to %q: current stage unknown", s.Stage, next)
+	}
+	for _, a := range allowed {
+		if a == next {
+			s.Stage = next
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid transition from %q to %q", s.Stage, next)
+}
+
 // StateStore reads/writes session state for a given session.
 type StateStore interface {
 	GetState(sessionID uint) (*ServiceDeskState, error)
 	SaveState(sessionID uint, state *ServiceDeskState) error
+}
+
+// ---------------------------------------------------------------------------
+// TicketCreator — full-lifecycle ticket creation
+// ---------------------------------------------------------------------------
+
+// TicketCreator creates tickets with full service processing (SLA, engine start, timeline).
+// Implemented by TicketService to ensure agent-created tickets receive identical processing
+// to UI-created tickets.
+type TicketCreator interface {
+	CreateFromAgent(ctx context.Context, req AgentTicketRequest) (*AgentTicketResult, error)
+}
+
+// AgentTicketRequest holds the parameters for creating a ticket from an AI agent session.
+type AgentTicketRequest struct {
+	UserID    uint
+	ServiceID uint
+	Summary   string
+	FormData  map[string]any
+	SessionID uint
+}
+
+// AgentTicketResult holds the outcome of an agent-created ticket.
+type AgentTicketResult struct {
+	TicketID   uint   `json:"ticket_id"`
+	TicketCode string `json:"ticket_code"`
+	Status     string `json:"status"`
 }
 
 // ---------------------------------------------------------------------------
@@ -170,7 +226,7 @@ func (r *Registry) HasTool(name string) bool {
 // ---------------------------------------------------------------------------
 
 func sessionID(ctx context.Context) uint {
-	id, _ := ctx.Value(SessionIDKey).(uint)
+	id, _ := ctx.Value(app.SessionIDKey).(uint)
 	return id
 }
 
@@ -248,7 +304,9 @@ func serviceMatchHandler(op ServiceDeskOperator, store StateStore) ToolHandler {
 		if state == nil {
 			state = defaultState()
 		}
-		state.Stage = "candidates_ready"
+		if err := state.TransitionTo("candidates_ready"); err != nil {
+			return nil, err
+		}
 		state.CandidateServiceIDs = candidateIDs
 		state.TopMatchServiceID = topMatchID
 		state.ConfirmationRequired = confirmationRequired
@@ -308,7 +366,9 @@ func serviceConfirmHandler(store StateStore) ToolHandler {
 		}
 
 		state.ConfirmedServiceID = p.ServiceID
-		state.Stage = "service_selected"
+		if err := state.TransitionTo("service_selected"); err != nil {
+			return nil, err
+		}
 		if err := store.SaveState(sid, state); err != nil {
 			return nil, fmt.Errorf("save state: %w", err)
 		}
@@ -366,7 +426,9 @@ func serviceLoadHandler(op ServiceDeskOperator, store StateStore) ToolHandler {
 
 		state.LoadedServiceID = p.ServiceID
 		state.FieldsHash = detail.FieldsHash
-		state.Stage = "service_loaded"
+		if err := state.TransitionTo("service_loaded"); err != nil {
+			return nil, err
+		}
 		if err := store.SaveState(sid, state); err != nil {
 			return nil, fmt.Errorf("save state: %w", err)
 		}
@@ -429,10 +491,15 @@ func draftPrepareHandler(op ServiceDeskOperator, store StateStore) ToolHandler {
 		}
 
 		// Validate form_data and collect warnings.
+		type resolvedValue struct {
+			Value string `json:"value"`
+			Route string `json:"route"`
+		}
 		type warning struct {
-			Type    string `json:"type"`
-			Field   string `json:"field"`
-			Message string `json:"message"`
+			Type           string          `json:"type"`
+			Field          string          `json:"field"`
+			Message        string          `json:"message"`
+			ResolvedValues []resolvedValue `json:"resolved_values,omitempty"`
 		}
 		var warnings []warning
 
@@ -465,11 +532,25 @@ func draftPrepareHandler(op ServiceDeskOperator, store StateStore) ToolHandler {
 			if (f.Type == "select" || f.Type == "radio") && len(f.Options) > 0 {
 				// Check for comma-separated values in single-select fields.
 				if strings.Contains(strVal, ",") {
-					warnings = append(warnings, warning{
+					w := warning{
 						Type:    "multivalue_on_single_field",
 						Field:   key,
 						Message: fmt.Sprintf("字段 [%s] 为单选，不支持多个值", f.Label),
-					})
+					}
+					// If this is the routing field, resolve each value to its route branch.
+					if hint := detail.RoutingFieldHint; hint != nil && key == hint.FieldKey {
+						parts := strings.Split(strVal, ",")
+						rv := make([]resolvedValue, 0, len(parts))
+						for _, p := range parts {
+							v := strings.TrimSpace(p)
+							if v == "" {
+								continue
+							}
+							rv = append(rv, resolvedValue{Value: v, Route: hint.OptionRouteMap[v]})
+						}
+						w.ResolvedValues = rv
+					}
+					warnings = append(warnings, w)
 					continue
 				}
 				// Check if value is a valid option.
@@ -499,7 +580,9 @@ func draftPrepareHandler(op ServiceDeskOperator, store StateStore) ToolHandler {
 
 		state.DraftSummary = p.Summary
 		state.DraftFormData = p.FormData
-		state.Stage = "awaiting_confirmation"
+		if err := state.TransitionTo("awaiting_confirmation"); err != nil {
+			return nil, err
+		}
 		if err := store.SaveState(sid, state); err != nil {
 			return nil, fmt.Errorf("save state: %w", err)
 		}
@@ -541,7 +624,9 @@ func draftConfirmHandler(op ServiceDeskOperator, store StateStore) ToolHandler {
 		}
 
 		state.ConfirmedDraftVersion = state.DraftVersion
-		state.Stage = "confirmed"
+		if err := state.TransitionTo("confirmed"); err != nil {
+			return nil, err
+		}
 		if err := store.SaveState(sid, state); err != nil {
 			return nil, fmt.Errorf("save state: %w", err)
 		}

@@ -7,6 +7,7 @@ import (
 	"gorm.io/gorm"
 
 	"metis/internal/app"
+	"metis/internal/database"
 	"metis/internal/scheduler"
 )
 
@@ -20,12 +21,21 @@ type OrgApp struct {
 
 func (a *OrgApp) Name() string { return "org" }
 
-func (a *OrgApp) Models() []any {
-	return []any{&Department{}, &Position{}, &UserPosition{}}
+// GetToolRegistry implements app.ToolRegistryProvider.
+func (a *OrgApp) GetToolRegistry() any {
+	resolver := do.MustInvoke[app.OrgResolver](a.injector)
+	return NewOrgToolRegistry(resolver)
 }
 
-func (a *OrgApp) Seed(db *gorm.DB, enforcer *casbin.Enforcer) error {
-	return seedOrg(db, enforcer)
+// Ensure OrgApp implements app.ToolRegistryProvider at compile time.
+var _ app.ToolRegistryProvider = (*OrgApp)(nil)
+
+func (a *OrgApp) Models() []any {
+	return []any{&Department{}, &Position{}, &UserPosition{}, &DepartmentPosition{}}
+}
+
+func (a *OrgApp) Seed(db *gorm.DB, enforcer *casbin.Enforcer, install bool) error {
+	return seedOrg(db, enforcer, install)
 }
 
 func (a *OrgApp) Providers(i do.Injector) {
@@ -42,13 +52,11 @@ func (a *OrgApp) Providers(i do.Injector) {
 	do.Provide(i, NewDepartmentHandler)
 	do.Provide(i, NewPositionHandler)
 	do.Provide(i, NewAssignmentHandler)
-	// OrgScopeResolver — satisfies app.OrgScopeResolver interface for DataScopeMiddleware
-	do.ProvideValue[app.OrgScopeResolver](i, &OrgScopeResolverImpl{
-		svc: do.MustInvoke[*AssignmentService](i),
-	})
-	// OrgUserResolver — satisfies app.OrgUserResolver for multi-dimensional participant matching
-	do.ProvideValue[app.OrgUserResolver](i, &OrgUserResolverImpl{
+	// OrgResolver — unified interface for DataScope, ITSM, and AI tools
+	do.ProvideValue[app.OrgResolver](i, &OrgResolverImpl{
+		svc:  do.MustInvoke[*AssignmentService](i),
 		repo: do.MustInvoke[*AssignmentRepo](i),
+		db:   do.MustInvoke[*database.DB](i).DB,
 	})
 }
 
@@ -66,6 +74,8 @@ func (a *OrgApp) Routes(api *gin.RouterGroup) {
 		org.GET("/departments/:id", deptH.Get)
 		org.PUT("/departments/:id", deptH.Update)
 		org.DELETE("/departments/:id", deptH.Delete)
+		org.GET("/departments/:id/positions", deptH.GetAllowedPositions)
+		org.PUT("/departments/:id/positions", deptH.SetAllowedPositions)
 
 		// Positions
 		org.POST("/positions", posH.Create)
@@ -80,6 +90,7 @@ func (a *OrgApp) Routes(api *gin.RouterGroup) {
 		org.PUT("/users/:id/positions/:assignmentId", assignH.UpdateUserPosition)
 		org.DELETE("/users/:id/positions/:assignmentId", assignH.RemoveUserPosition)
 		org.PUT("/users/:id/positions/:assignmentId/primary", assignH.SetPrimary)
+		org.PUT("/users/:id/departments/:deptId/positions", assignH.SetUserDeptPositions)
 		org.GET("/users", assignH.ListUsers)
 	}
 }

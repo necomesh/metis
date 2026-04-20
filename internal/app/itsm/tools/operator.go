@@ -1,13 +1,16 @@
 package tools
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"gorm.io/gorm"
 
+	"metis/internal/app"
 	"metis/internal/app/itsm/engine"
 	"metis/internal/app/itsm/form"
 )
@@ -15,13 +18,16 @@ import (
 // Operator is the concrete ServiceDeskOperator implementation.
 // It bridges the ITSM tool handlers to the actual ITSM business services.
 type Operator struct {
-	db       *gorm.DB
-	resolver *engine.ParticipantResolver
+	db             *gorm.DB
+	resolver       *engine.ParticipantResolver
+	orgResolver    app.OrgResolver // nil when Org App is not installed
+	withdrawFunc   func(ticketID uint, reason string, operatorID uint) error
+	ticketCreator  TicketCreator // nil-safe: falls back to error if not set
 }
 
 // NewOperator creates a new ServiceDeskOperator.
-func NewOperator(db *gorm.DB, resolver *engine.ParticipantResolver) *Operator {
-	return &Operator{db: db, resolver: resolver}
+func NewOperator(db *gorm.DB, resolver *engine.ParticipantResolver, orgResolver app.OrgResolver, withdrawFunc func(uint, string, uint) error, ticketCreator TicketCreator) *Operator {
+	return &Operator{db: db, resolver: resolver, orgResolver: orgResolver, withdrawFunc: withdrawFunc, ticketCreator: ticketCreator}
 }
 
 // MatchServices searches active ServiceDefinitions by keyword scoring.
@@ -77,7 +83,7 @@ func (o *Operator) LoadService(serviceID uint) (*ServiceDetail, error) {
 		ID                uint
 		Name              string
 		CollaborationSpec string
-		FormID            *uint
+		IntakeFormSchema  string
 		WorkflowJSON      string
 	}
 	var svc svcRow
@@ -93,16 +99,9 @@ func (o *Operator) LoadService(serviceID uint) (*ServiceDetail, error) {
 		CollaborationSpec: svc.CollaborationSpec,
 	}
 
-	// Load form fields.
-	if svc.FormID != nil && *svc.FormID > 0 {
-		var fd struct {
-			Schema string
-		}
-		if err := o.db.Table("itsm_form_definitions").
-			Where("id = ?", *svc.FormID).
-			Select("schema").First(&fd).Error; err == nil && fd.Schema != "" {
-			detail.FormFields = parseFormFields(fd.Schema)
-		}
+	// Load form fields from inline intake form schema.
+	if svc.IntakeFormSchema != "" {
+		detail.FormFields = parseFormFields(svc.IntakeFormSchema)
 	}
 
 	// Load actions.
@@ -132,61 +131,28 @@ func (o *Operator) LoadService(serviceID uint) (*ServiceDetail, error) {
 	return detail, nil
 }
 
-// CreateTicket creates an ITSM ticket via the database.
+// CreateTicket creates an ITSM ticket via the TicketService, ensuring full lifecycle
+// processing (SLA, engine start, timeline) identical to UI-created tickets.
 func (o *Operator) CreateTicket(userID uint, serviceID uint, summary string, formData map[string]any, sessionID uint) (*TicketResult, error) {
-	// Get next ticket code.
-	code, err := o.nextTicketCode()
+	if o.ticketCreator == nil {
+		return nil, fmt.Errorf("ticket creation is not available")
+	}
+
+	result, err := o.ticketCreator.CreateFromAgent(context.Background(), AgentTicketRequest{
+		UserID:    userID,
+		ServiceID: serviceID,
+		Summary:   summary,
+		FormData:  formData,
+		SessionID: sessionID,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("generate ticket code: %w", err)
+		return nil, fmt.Errorf("create ticket: %w", err)
 	}
-
-	formJSON, _ := json.Marshal(formData)
-
-	// Look up default priority.
-	var priorityID uint
-	o.db.Table("itsm_priorities").Where("is_active = ? AND deleted_at IS NULL", true).
-		Order("value ASC").Select("id").Limit(1).Row().Scan(&priorityID)
-	if priorityID == 0 {
-		priorityID = 1
-	}
-
-	// Copy engine type and workflow from service.
-	var svc struct {
-		EngineType   string
-		WorkflowJSON string
-	}
-	o.db.Table("itsm_service_definitions").Where("id = ?", serviceID).
-		Select("engine_type, workflow_json").First(&svc)
-
-	ticket := map[string]any{
-		"code":             code,
-		"title":            summary,
-		"description":      summary,
-		"service_id":       serviceID,
-		"engine_type":      svc.EngineType,
-		"status":           "pending",
-		"priority_id":      priorityID,
-		"requester_id":     userID,
-		"source":           "agent",
-		"agent_session_id": sessionID,
-		"form_data":        string(formJSON),
-		"workflow_json":    svc.WorkflowJSON,
-		"sla_status":       "on_track",
-	}
-
-	result := o.db.Table("itsm_tickets").Create(ticket)
-	if result.Error != nil {
-		return nil, fmt.Errorf("create ticket: %w", result.Error)
-	}
-
-	// Read back the created ticket ID.
-	var created struct{ ID uint }
-	o.db.Table("itsm_tickets").Where("code = ?", code).Select("id").First(&created)
 
 	return &TicketResult{
-		TicketID:   created.ID,
-		TicketCode: code,
-		Status:     "pending",
+		TicketID:   result.TicketID,
+		TicketCode: result.TicketCode,
+		Status:     result.Status,
 	}, nil
 }
 
@@ -235,14 +201,14 @@ func (o *Operator) ListMyTickets(userID uint, status string) ([]TicketSummary, e
 
 	var summaries []TicketSummary
 	for _, r := range rows {
-		// can_withdraw: pending + no completed activities
+		// can_withdraw: non-terminal + no claimed assignments
 		canWithdraw := false
-		if r.Status == "pending" {
-			var completedCount int64
-			o.db.Table("itsm_ticket_activities").
-				Where("ticket_id = ? AND status = ?", r.ID, "completed").
-				Count(&completedCount)
-			canWithdraw = completedCount == 0
+		if r.Status != "completed" && r.Status != "cancelled" && r.Status != "failed" {
+			var claimedCount int64
+			o.db.Table("itsm_ticket_assignments").
+				Where("ticket_id = ? AND claimed_at IS NOT NULL", r.ID).
+				Count(&claimedCount)
+			canWithdraw = claimedCount == 0
 		}
 
 		summaries = append(summaries, TicketSummary{
@@ -259,54 +225,20 @@ func (o *Operator) ListMyTickets(userID uint, status string) ([]TicketSummary, e
 	return summaries, nil
 }
 
-// WithdrawTicket cancels a ticket if the requester owns it and it hasn't been processed.
+// WithdrawTicket cancels a ticket if the requester owns it and it hasn't been claimed.
 func (o *Operator) WithdrawTicket(userID uint, ticketCode string, reason string) error {
+	// Resolve ticket_code → ticket_id.
 	type ticketRow struct {
-		ID          uint
-		RequesterID uint
-		Status      string
+		ID uint
 	}
 	var t ticketRow
 	if err := o.db.Table("itsm_tickets").
 		Where("code = ? AND deleted_at IS NULL", ticketCode).
-		Select("id, requester_id, status").First(&t).Error; err != nil {
+		Select("id").First(&t).Error; err != nil {
 		return fmt.Errorf("工单不存在: %s", ticketCode)
 	}
 
-	if t.RequesterID != userID {
-		return fmt.Errorf("仅工单提交人可撤回")
-	}
-
-	if t.Status == "completed" || t.Status == "cancelled" || t.Status == "failed" {
-		return fmt.Errorf("工单已终结，无法撤回")
-	}
-
-	// Check if any activity has been completed.
-	var completedCount int64
-	o.db.Table("itsm_ticket_activities").
-		Where("ticket_id = ? AND status = ?", t.ID, "completed").
-		Count(&completedCount)
-	if completedCount > 0 {
-		return fmt.Errorf("工单已进入处理流程，无法撤回")
-	}
-
-	// Cancel the ticket.
-	updates := map[string]any{
-		"status": "cancelled",
-	}
-	if err := o.db.Table("itsm_tickets").Where("id = ?", t.ID).Updates(updates).Error; err != nil {
-		return fmt.Errorf("撤回失败: %w", err)
-	}
-
-	// Add timeline entry.
-	o.db.Table("itsm_ticket_timelines").Create(map[string]any{
-		"ticket_id":  t.ID,
-		"operator_id": userID,
-		"event_type": "cancelled",
-		"message":    fmt.Sprintf("工单已撤回：%s", reason),
-	})
-
-	return nil
+	return o.withdrawFunc(t.ID, reason, userID)
 }
 
 // ValidateParticipants checks if workflow participants can be resolved.
@@ -364,18 +296,22 @@ func (o *Operator) ValidateParticipants(serviceID uint, formData map[string]any)
 			}
 		}
 		if d.ParticipantType == "position" && d.PositionCode != "" {
-			// Position-based — check if any active user holds the position.
-			var count int64
-			q := o.db.Table("user_positions").
-				Joins("JOIN positions ON positions.id = user_positions.position_id").
-				Joins("JOIN users ON users.id = user_positions.user_id").
-				Where("positions.code = ? AND users.is_active = ?", d.PositionCode, true)
-			if d.DepartmentCode != "" {
-				q = q.Joins("JOIN departments ON departments.id = user_positions.department_id").
-					Where("departments.code = ?", d.DepartmentCode)
+			if o.orgResolver == nil {
+				// Org App not installed — skip position validation.
+				continue
 			}
-			q.Count(&count)
-			if count == 0 {
+			// Position-based — check if any active user holds the position.
+			var userIDs []uint
+			var err error
+			if d.DepartmentCode != "" {
+				userIDs, err = o.orgResolver.FindUsersByPositionAndDepartment(d.PositionCode, d.DepartmentCode)
+			} else {
+				userIDs, err = o.orgResolver.FindUsersByPositionCode(d.PositionCode)
+			}
+			if err != nil {
+				return nil, fmt.Errorf("validate participants: %w", err)
+			}
+			if len(userIDs) == 0 {
 				reason := fmt.Sprintf("岗位[%s]", d.PositionCode)
 				if d.DepartmentCode != "" {
 					reason += fmt.Sprintf("+部门[%s]", d.DepartmentCode)
@@ -419,37 +355,49 @@ func (o *Operator) buildCatalogPath(catalogID uint) string {
 	return strings.Join(parts, "/")
 }
 
-func (o *Operator) nextTicketCode() (string, error) {
-	// Use a simple counter approach: find max code and increment.
-	var maxCode string
-	o.db.Table("itsm_tickets").Select("code").Order("id DESC").Limit(1).Row().Scan(&maxCode)
-
-	if maxCode == "" {
-		return "ITSM-000001", nil
-	}
-
-	// Parse numeric part.
-	parts := strings.Split(maxCode, "-")
-	if len(parts) < 2 {
-		return "ITSM-000001", nil
-	}
-	var num int
-	fmt.Sscanf(parts[len(parts)-1], "%d", &num)
-	return fmt.Sprintf("ITSM-%06d", num+1), nil
-}
-
 func tokenize(s string) []string {
-	var tokens []string
 	for _, sep := range []string{" ", "，", ",", "、", "·", "/", "\\", "（", "）", "(", ")"} {
 		s = strings.ReplaceAll(s, sep, " ")
 	}
+	var tokens []string
 	for _, t := range strings.Fields(s) {
 		t = strings.TrimSpace(t)
-		if len(t) > 0 {
-			tokens = append(tokens, strings.ToLower(t))
+		if len(t) == 0 {
+			continue
+		}
+		lower := strings.ToLower(t)
+		tokens = append(tokens, lower)
+		// Split on CJK/Latin boundaries so "申请VPN开通" → ["申请","vpn","开通"].
+		if subs := splitCJKBoundaries(lower); len(subs) > 1 {
+			tokens = append(tokens, subs...)
 		}
 	}
 	return tokens
+}
+
+// splitCJKBoundaries splits a string at transitions between CJK and non-CJK characters.
+func splitCJKBoundaries(s string) []string {
+	runes := []rune(s)
+	if len(runes) <= 1 {
+		return nil
+	}
+	var parts []string
+	start := 0
+	for i := 1; i < len(runes); i++ {
+		if isCJK(runes[i-1]) != isCJK(runes[i]) {
+			parts = append(parts, string(runes[start:i]))
+			start = i
+		}
+	}
+	parts = append(parts, string(runes[start:]))
+	if len(parts) <= 1 {
+		return nil
+	}
+	return parts
+}
+
+func isCJK(r rune) bool {
+	return unicode.Is(unicode.Han, r)
 }
 
 func computeScore(queryLower string, keywords []string, name, desc string) float64 {

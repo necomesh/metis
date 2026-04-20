@@ -232,7 +232,7 @@ func (bc *bddContext) thenCurrentActivityAssignedTo(username, deptCode, posCode 
 
 	// Verify user belongs to the expected position+department.
 	orgSvc := &testOrgService{db: bc.db}
-	userIDs, err := orgSvc.FindUsersByPositionCodeAndDepartmentCode(posCode, deptCode)
+	userIDs, err := orgSvc.FindUsersByPositionAndDepartment(posCode, deptCode)
 	if err != nil {
 		return fmt.Errorf("resolve users for %s/%s: %w", deptCode, posCode, err)
 	}
@@ -318,7 +318,7 @@ func (bc *bddContext) whenClaimAndApprove(username string) error {
 	err = bc.engine.Progress(ctx, bc.db, engine.ProgressParams{
 		TicketID:   bc.ticket.ID,
 		ActivityID: activity.ID,
-		Outcome:    "approved",
+		Outcome:    "",
 		OperatorID: user.ID,
 	})
 	if err != nil {

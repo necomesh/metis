@@ -42,7 +42,6 @@ func (a *ITSMApp) Models() []any {
 		&ServiceCatalog{},
 		&ServiceDefinition{},
 		&ServiceAction{},
-		&FormDefinition{},
 		&Priority{},
 		&SLATemplate{},
 		&EscalationRule{},
@@ -64,7 +63,7 @@ func (a *ITSMApp) Models() []any {
 	}
 }
 
-func (a *ITSMApp) Seed(db *gorm.DB, enforcer *casbin.Enforcer) error {
+func (a *ITSMApp) Seed(db *gorm.DB, enforcer *casbin.Enforcer, _ bool) error {
 	return seedITSM(db, enforcer)
 }
 
@@ -74,7 +73,6 @@ func (a *ITSMApp) Providers(i do.Injector) {
 	do.Provide(i, NewCatalogRepo)
 	do.Provide(i, NewServiceDefRepo)
 	do.Provide(i, NewServiceActionRepo)
-	do.Provide(i, NewFormDefRepo)
 	do.Provide(i, NewPriorityRepo)
 	do.Provide(i, NewSLATemplateRepo)
 	do.Provide(i, NewEscalationRuleRepo)
@@ -85,11 +83,9 @@ func (a *ITSMApp) Providers(i do.Injector) {
 
 	// Engine components
 	do.Provide(i, func(i do.Injector) (*engine.ParticipantResolver, error) {
-		// Try to resolve OrgService (optional — nil if Org App not installed)
-		var orgSvc engine.OrgService
-		// Org App provides OrgScopeResolver; we don't have a direct OrgService interface yet,
-		// so for now the resolver starts with nil (user type and requester_manager basic support)
-		return engine.NewParticipantResolver(orgSvc), nil
+		// OrgResolver is optional — nil if Org App not installed
+		orgResolver, _ := do.InvokeAs[app.OrgResolver](i)
+		return engine.NewParticipantResolver(orgResolver), nil
 	})
 
 	do.Provide(i, func(i do.Injector) (*engine.ClassicEngine, error) {
@@ -112,15 +108,15 @@ func (a *ITSMApp) Providers(i do.Injector) {
 		submitter := &schedulerSubmitter{db: db.DB}
 
 		// Try to resolve AI App services (optional)
-		var agentProvider engine.AgentProvider
+		var decisionExecutor app.AIDecisionExecutor
 		var knowledgeSearcher engine.KnowledgeSearcher
 
-		aiAgent, err := do.InvokeAs[app.AIAgentProvider](i)
-		if err == nil && aiAgent != nil {
-			agentProvider = &aiAgentAdapter{provider: aiAgent}
-			slog.Info("ITSM SmartEngine: AI Agent provider available")
+		de, err := do.InvokeAs[app.AIDecisionExecutor](i)
+		if err == nil && de != nil {
+			decisionExecutor = de
+			slog.Info("ITSM SmartEngine: AI DecisionExecutor available")
 		} else {
-			slog.Info("ITSM SmartEngine: AI Agent provider not available, smart engine disabled")
+			slog.Info("ITSM SmartEngine: AI DecisionExecutor not available, smart engine disabled")
 		}
 
 		aiKnowledge, err := do.InvokeAs[app.AIKnowledgeSearcher](i)
@@ -135,14 +131,18 @@ func (a *ITSMApp) Providers(i do.Injector) {
 		// Participant resolver for tool-based participant resolution
 		resolver := do.MustInvoke[*engine.ParticipantResolver](i)
 
-		return engine.NewSmartEngine(agentProvider, knowledgeSearcher, userProvider, resolver, submitter), nil
+		// Engine config provider for fallback assignee
+		configProvider := do.MustInvoke[*EngineConfigService](i)
+
+		se := engine.NewSmartEngine(decisionExecutor, knowledgeSearcher, userProvider, resolver, submitter, configProvider)
+		se.SetActionExecutor(engine.NewActionExecutor(db.DB))
+		return se, nil
 	})
 
 	// Services
 	do.Provide(i, NewCatalogService)
 	do.Provide(i, NewServiceDefService)
 	do.Provide(i, NewServiceActionService)
-	do.Provide(i, NewFormDefService)
 	do.Provide(i, NewPriorityService)
 	do.Provide(i, NewSLATemplateService)
 	do.Provide(i, NewEscalationRuleService)
@@ -159,7 +159,6 @@ func (a *ITSMApp) Providers(i do.Injector) {
 	do.Provide(i, NewCatalogHandler)
 	do.Provide(i, NewServiceDefHandler)
 	do.Provide(i, NewServiceActionHandler)
-	do.Provide(i, NewFormDefHandler)
 	do.Provide(i, NewPriorityHandler)
 	do.Provide(i, NewSLATemplateHandler)
 	do.Provide(i, NewEscalationRuleHandler)
@@ -171,10 +170,22 @@ func (a *ITSMApp) Providers(i do.Injector) {
 	do.Provide(i, NewTokenHandler)
 
 	// ITSM tool chain (Operator, StateStore, Registry)
+	// NOTE: TicketService is resolved lazily inside withdrawFunc to break a circular
+	// dependency: TicketService → SmartEngine → AgentGateway → collectToolRegistries
+	// → tools.Registry → tools.Operator → TicketService.
 	do.Provide(i, func(i do.Injector) (*tools.Operator, error) {
 		db := do.MustInvoke[*database.DB](i)
 		resolver := do.MustInvoke[*engine.ParticipantResolver](i)
-		return tools.NewOperator(db.DB, resolver), nil
+		orgResolver, _ := do.InvokeAs[app.OrgResolver](i)
+		withdrawFunc := func(ticketID uint, reason string, operatorID uint) error {
+			ticketSvc := do.MustInvoke[*TicketService](i)
+			_, err := ticketSvc.Withdraw(ticketID, reason, operatorID)
+			return err
+		}
+		// TicketCreator is resolved lazily (same pattern as withdrawFunc) to break circular dep.
+		var ticketCreator tools.TicketCreator
+		ticketCreator = &lazyTicketCreator{injector: i}
+		return tools.NewOperator(db.DB, resolver, orgResolver, withdrawFunc, ticketCreator), nil
 	})
 	do.Provide(i, func(i do.Injector) (*tools.SessionStateStore, error) {
 		db := do.MustInvoke[*database.DB](i)
@@ -191,7 +202,6 @@ func (a *ITSMApp) Routes(api *gin.RouterGroup) {
 	catalogH := do.MustInvoke[*CatalogHandler](a.injector)
 	serviceH := do.MustInvoke[*ServiceDefHandler](a.injector)
 	actionH := do.MustInvoke[*ServiceActionHandler](a.injector)
-	formDefH := do.MustInvoke[*FormDefHandler](a.injector)
 	priorityH := do.MustInvoke[*PriorityHandler](a.injector)
 	slaH := do.MustInvoke[*SLATemplateHandler](a.injector)
 	escalationH := do.MustInvoke[*EscalationRuleHandler](a.injector)
@@ -204,13 +214,6 @@ func (a *ITSMApp) Routes(api *gin.RouterGroup) {
 
 	g := api.Group("/itsm")
 	{
-		// Form Definitions
-		g.POST("/forms", formDefH.Create)
-		g.GET("/forms", formDefH.List)
-		g.GET("/forms/:id", formDefH.Get)
-		g.PUT("/forms/:id", formDefH.Update)
-		g.DELETE("/forms/:id", formDefH.Delete)
-
 		// Service Catalogs
 		g.POST("/catalogs", catalogH.Create)
 		g.GET("/catalogs/tree", catalogH.Tree)
@@ -272,6 +275,7 @@ func (a *ITSMApp) Routes(api *gin.RouterGroup) {
 		g.PUT("/tickets/:id/assign", ticketH.Assign)
 		g.PUT("/tickets/:id/complete", ticketH.Complete)
 		g.PUT("/tickets/:id/cancel", ticketH.Cancel)
+		g.PUT("/tickets/:id/withdraw", ticketH.Withdraw)
 		g.GET("/tickets/:id/timeline", ticketH.Timeline)
 		// Phase 2: Classic engine routes
 		g.POST("/tickets/:id/progress", ticketH.Progress)
@@ -291,6 +295,13 @@ func (a *ITSMApp) Routes(api *gin.RouterGroup) {
 		// Phase 4: Approval routes
 		g.POST("/tickets/:id/activities/:aid/approve", ticketH.ApproveActivity)
 		g.POST("/tickets/:id/activities/:aid/deny", ticketH.DenyActivity)
+		// SLA pause/resume
+		g.PUT("/tickets/:id/sla/pause", ticketH.SLAPause)
+		g.PUT("/tickets/:id/sla/resume", ticketH.SLAResume)
+		// Task dispatch: transfer, delegate, claim
+		g.POST("/tickets/:id/transfer", ticketH.Transfer)
+		g.POST("/tickets/:id/delegate", ticketH.Delegate)
+		g.POST("/tickets/:id/claim", ticketH.Claim)
 	}
 }
 
@@ -330,6 +341,19 @@ func (a *ITSMApp) Tasks() []scheduler.TaskDef {
 			Type:        scheduler.TypeAsync,
 			Description: "Parse uploaded knowledge documents for ITSM services",
 			Handler:     handleDocParse(knowledgeDocSvc),
+		},
+		{
+			Name:        "itsm-sla-check",
+			Type:        scheduler.TypeScheduled,
+			CronExpr:    "*/1 * * * *",
+			Description: "Check SLA breaches and trigger escalation rules",
+			Handler:     engine.HandleSLACheck(db.DB),
+		},
+		{
+			Name:        "itsm-smart-recovery",
+			Type:        scheduler.TypeStartup,
+			Description: "Recover in_progress smart tickets that lost their decision cycle",
+			Handler:     engine.HandleSmartRecovery(db.DB, smartEngine),
 		},
 	}
 }
@@ -380,32 +404,22 @@ var _ engine.WorkflowEngine = (*engine.SmartEngine)(nil)
 // Ensure ITSMApp implements app.ToolRegistryProvider at compile time
 var _ app.ToolRegistryProvider = (*ITSMApp)(nil)
 
+// lazyTicketCreator defers resolution of TicketService to break circular dependency.
+type lazyTicketCreator struct {
+	injector do.Injector
+}
+
+func (l *lazyTicketCreator) CreateFromAgent(ctx context.Context, req tools.AgentTicketRequest) (*tools.AgentTicketResult, error) {
+	ticketSvc := do.MustInvoke[*TicketService](l.injector)
+	return ticketSvc.CreateFromAgent(ctx, req)
+}
+
+var _ tools.TicketCreator = (*lazyTicketCreator)(nil)
+
 // Placeholder for background context usage
 var _ = context.Background
 
 // --- AI App adapters (bridge app.AI* interfaces to engine.* interfaces) ---
-
-// aiAgentAdapter adapts app.AIAgentProvider to engine.AgentProvider.
-type aiAgentAdapter struct {
-	provider app.AIAgentProvider
-}
-
-func (a *aiAgentAdapter) GetAgentConfig(agentID uint) (*engine.SmartAgentConfig, error) {
-	cfg, err := a.provider.GetAgentConfig(agentID)
-	if err != nil {
-		return nil, err
-	}
-	return &engine.SmartAgentConfig{
-		Name:         cfg.Name,
-		SystemPrompt: cfg.SystemPrompt,
-		Temperature:  cfg.Temperature,
-		MaxTokens:    cfg.MaxTokens,
-		Model:        cfg.Model,
-		Protocol:     cfg.Protocol,
-		BaseURL:      cfg.BaseURL,
-		APIKey:       cfg.APIKey,
-	}, nil
-}
 
 // aiKnowledgeAdapter adapts app.AIKnowledgeSearcher to engine.KnowledgeSearcher.
 type aiKnowledgeAdapter struct {
