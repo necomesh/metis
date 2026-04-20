@@ -96,27 +96,16 @@
 
   .workspace-shell-bg {
     background-color: color-mix(in oklab, var(--color-background) 88%, white);
-    background-image:
-      radial-gradient(circle at top left, oklch(0.93 0.024 264 / 0.18), transparent 24%),
-      linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(247, 249, 252, 0.92));
   }
 
   .workspace-panel {
-    border: 1px solid color-mix(in oklab, white 54%, var(--color-border));
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.62));
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.82),
-      0 22px 54px -36px rgba(15, 23, 42, 0.22);
-    backdrop-filter: blur(18px);
+    border-right: 1px solid oklch(0.905 0.008 252 / 0.5);
+    background: oklch(0.982 0.004 247 / 0.6);
   }
 
   .workspace-surface {
-    border: 1px solid color-mix(in oklab, white 48%, var(--color-border));
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(255, 255, 255, 0.72));
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.86),
-      0 16px 40px -30px rgba(15, 23, 42, 0.16);
-    backdrop-filter: blur(14px);
+    border: 1px solid oklch(0.905 0.008 252 / 0.5);
+    background: oklch(0.982 0.004 247 / 0.4);
   }
 
   .workspace-page {
@@ -124,13 +113,7 @@
   }
 
   .workspace-page-header {
-    @apply flex flex-col gap-3 rounded-[1.5rem] px-5 py-5 sm:px-6 sm:py-6 lg:flex-row lg:items-start lg:justify-between;
-    border: 1px solid color-mix(in oklab, white 52%, var(--color-border));
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(255, 255, 255, 0.54));
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.82),
-      0 20px 48px -34px rgba(15, 23, 42, 0.18);
-    backdrop-filter: blur(16px);
+    @apply flex flex-col gap-3 border-b border-border/50 px-5 pb-5 sm:px-6 sm:pb-6 lg:flex-row lg:items-start lg:justify-between;
   }
 
   .workspace-page-title {
@@ -155,6 +138,20 @@
 
   .workspace-nav-item {
     @apply text-[13px] font-medium tracking-[-0.01em];
+  }
+
+  .workspace-table-card {
+    border: 1px solid oklch(0.905 0.008 252 / 0.5);
+    background: oklch(0.982 0.004 247 / 0.4);
+  }
+
+  .workspace-table-toolbar {
+    border-bottom: 1px solid oklch(0.905 0.008 252 / 0.32);
+  }
+
+  .workspace-toolbar-input {
+    border-color: oklch(0.905 0.008 252 / 0.5);
+    background: transparent;
   }
 
   .install-step-shell {

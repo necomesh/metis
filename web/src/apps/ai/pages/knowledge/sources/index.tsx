@@ -136,7 +136,7 @@ export function Component() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">素材管理</h2>
+        <h2 className="workspace-page-title">知识管理</h2>
         <div className="flex items-center gap-2">
           <Button size="sm" variant="outline" onClick={() => setUploadOpen(true)}>
             <Upload className="mr-1.5 h-4 w-4" />
@@ -154,18 +154,18 @@ export function Component() {
       </div>
 
       <DataTableToolbar>
-        <DataTableToolbarGroup>
-          <form onSubmit={handleSearch} className="flex w-full flex-col gap-2 sm:flex-row sm:items-center">
-            <div className="relative w-full sm:max-w-sm">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+        <DataTableToolbarGroup className="sm:flex-none">
+          <form onSubmit={handleSearch} className="flex w-full flex-col gap-2 sm:w-[min(100%,42rem)] sm:flex-row sm:items-center">
+            <div className="relative w-full sm:flex-1">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/72" />
               <Input
                 placeholder="搜索素材..."
                 value={keyword}
                 onChange={(e) => setKeyword(e.target.value)}
-                className="pl-8"
+                className="workspace-toolbar-input h-9 rounded-[1rem] pl-9 text-[13px]"
               />
             </div>
-            <Button type="submit" variant="outline">
+            <Button type="submit" variant="outline" size="sm" className="h-9 rounded-[1rem] px-4 text-[13px] sm:shrink-0">
               搜索
             </Button>
           </form>

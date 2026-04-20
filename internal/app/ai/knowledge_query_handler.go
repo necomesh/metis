@@ -1,8 +1,9 @@
 package ai
 
 import (
-	"context"
+	"log/slog"
 	"net/http"
+	"sort"
 	"sync"
 
 	"github.com/gin-gonic/gin"
@@ -30,8 +31,8 @@ type knowledgeQueryRequest struct {
 	TopK     int    `json:"topK"`
 }
 
-// Search accepts a list of asset IDs and a query string, routes to the
-// correct engine for each asset, and returns merged RecallResult.
+const maxSearchConcurrency = 8
+
 func (h *KnowledgeQueryHandler) Search(c *gin.Context) {
 	var req knowledgeQueryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -52,24 +53,30 @@ func (h *KnowledgeQueryHandler) Search(c *gin.Context) {
 		return
 	}
 
-	// Search each asset concurrently.
+	ctx := c.Request.Context()
+
 	type result struct {
 		res *RecallResult
 		err error
 	}
 	results := make([]result, len(assets))
+
+	sem := make(chan struct{}, maxSearchConcurrency)
 	var wg sync.WaitGroup
 	for i := range assets {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
 			a := &assets[idx]
 			engine, engineErr := GetEngineForAsset(a)
 			if engineErr != nil {
 				results[idx] = result{err: engineErr}
 				return
 			}
-			rr, searchErr := engine.Search(context.Background(), a, &RecallQuery{
+			rr, searchErr := engine.Search(ctx, a, &RecallQuery{
 				Query: req.Query,
 				Mode:  "hybrid",
 				TopK:  req.TopK,
@@ -79,20 +86,32 @@ func (h *KnowledgeQueryHandler) Search(c *gin.Context) {
 	}
 	wg.Wait()
 
-	// Merge all results.
-	merged := &RecallResult{}
-	for _, r := range results {
-		if r.err != nil || r.res == nil {
+	merged := &RecallResult{Items: []KnowledgeUnit{}}
+	seenSources := make(map[uint]struct{})
+	for i, r := range results {
+		if r.err != nil {
+			slog.Warn("knowledge search failed", "assetID", assets[i].ID, "error", r.err)
+			continue
+		}
+		if r.res == nil {
 			continue
 		}
 		merged.Items = append(merged.Items, r.res.Items...)
 		merged.Relations = append(merged.Relations, r.res.Relations...)
-		merged.Sources = append(merged.Sources, r.res.Sources...)
+		for _, s := range r.res.Sources {
+			if _, dup := seenSources[s.SourceID]; !dup {
+				seenSources[s.SourceID] = struct{}{}
+				merged.Sources = append(merged.Sources, s)
+			}
+		}
 	}
 
-	// Ensure non-nil slices for JSON.
-	if merged.Items == nil {
-		merged.Items = []KnowledgeUnit{}
+	// Enforce TopK on merged results.
+	if len(merged.Items) > req.TopK {
+		sort.Slice(merged.Items, func(i, j int) bool {
+			return merged.Items[i].Score > merged.Items[j].Score
+		})
+		merged.Items = merged.Items[:req.TopK]
 	}
 
 	handler.OK(c, merged)
