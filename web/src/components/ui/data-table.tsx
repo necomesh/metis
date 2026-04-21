@@ -14,7 +14,7 @@ function DataTableCard({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       className={cn(
-        "overflow-hidden rounded-xl border bg-card",
+        "workspace-table-card overflow-hidden rounded-[1.35rem]",
         className
       )}
       {...props}
@@ -26,7 +26,7 @@ function DataTableToolbar({ className, ...props }: React.ComponentProps<"div">) 
   return (
     <div
       className={cn(
-        "flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between",
+        "workspace-table-toolbar flex flex-col gap-3 rounded-[1.2rem] px-4 py-3 lg:flex-row lg:items-center lg:justify-between lg:px-4.5",
         className
       )}
       {...props}
@@ -65,7 +65,7 @@ function DataTableActionsHead({
   return (
     <TableHead
       className={cn(
-        "w-[1%] border-l border-border/50 pl-6 text-center whitespace-nowrap",
+        "w-[1%] pl-5 text-center whitespace-nowrap",
         className
       )}
       {...props}
@@ -80,7 +80,7 @@ function DataTableActionsCell({
   return (
     <TableCell
       className={cn(
-        "border-l border-border/50 pl-6 whitespace-nowrap",
+        "pl-5 whitespace-nowrap",
         className
       )}
       {...props}

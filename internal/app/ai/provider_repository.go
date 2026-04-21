@@ -1,11 +1,21 @@
 package ai
 
 import (
+	"strings"
+
 	"github.com/samber/do/v2"
 	"gorm.io/gorm"
 
 	"metis/internal/database"
 )
+
+// escapeLike escapes SQL LIKE wildcards so user input is treated literally.
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "%", "\\%")
+	s = strings.ReplaceAll(s, "_", "\\_")
+	return s
+}
 
 type ProviderRepo struct {
 	db *database.DB
@@ -43,7 +53,7 @@ func (r *ProviderRepo) List(params ProviderListParams) ([]Provider, int64, error
 
 	query := r.db.Model(&Provider{})
 	if params.Keyword != "" {
-		like := "%" + params.Keyword + "%"
+		like := "%" + escapeLike(params.Keyword) + "%"
 		query = query.Where("name LIKE ?", like)
 	}
 

@@ -45,6 +45,18 @@ func ListAssetTypes(category string) []AssetTypeMeta {
 	return result
 }
 
+// GetAssetType looks up a registered type by category and type. Returns nil if not found.
+func GetAssetType(category, typ string) *AssetTypeMeta {
+	typeMu.RLock()
+	defer typeMu.RUnlock()
+	for i := range typeRegistry {
+		if typeRegistry[i].Category == category && typeRegistry[i].Type == typ {
+			return &typeRegistry[i]
+		}
+	}
+	return nil
+}
+
 // registerBuiltinTypes registers all built-in knowledge asset types.
 // Called during package init.
 func registerBuiltinTypes() {

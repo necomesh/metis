@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -47,6 +48,23 @@ func TestProviderService_Create_Anthropic(t *testing.T) {
 
 	if p.Protocol != "anthropic" {
 		t.Errorf("protocol: expected %q, got %q", "anthropic", p.Protocol)
+	}
+}
+
+func TestProviderService_RejectsInvalidType(t *testing.T) {
+	db := setupTestDB(t)
+	svc := newProviderServiceForTest(t, db)
+
+	if _, err := svc.Create("Bad", "bad-provider", "https://example.com", "key"); !errors.Is(err, ErrInvalidProviderType) {
+		t.Fatalf("expected ErrInvalidProviderType on create, got %v", err)
+	}
+
+	p, err := svc.Create("OpenAI", ProviderTypeOpenAI, "https://api.openai.com/v1", "key")
+	if err != nil {
+		t.Fatalf("create provider: %v", err)
+	}
+	if _, err := svc.Update(p.ID, "Bad", "bad-provider", "https://example.com", ""); !errors.Is(err, ErrInvalidProviderType) {
+		t.Fatalf("expected ErrInvalidProviderType on update, got %v", err)
 	}
 }
 
@@ -148,5 +166,39 @@ func TestProviderService_MaskAPIKey(t *testing.T) {
 	masked2 := svc.MaskAPIKey(p2)
 	if masked2 != "****" {
 		t.Errorf("short key mask: expected %q, got %q", "****", masked2)
+	}
+}
+
+func TestProviderService_Update_PreservesStatusOnNameChange(t *testing.T) {
+	db := setupTestDB(t)
+	svc := newProviderServiceForTest(t, db)
+	repo := &ProviderRepo{db: &database.DB{DB: db}}
+
+	p, err := svc.Create("OpenAI", ProviderTypeOpenAI, "https://api.openai.com/v1", "sk-test")
+	if err != nil {
+		t.Fatalf("create provider: %v", err)
+	}
+
+	// Simulate a successful test that sets status to active.
+	if err := repo.UpdateStatus(p.ID, ProviderStatusActive); err != nil {
+		t.Fatalf("update status: %v", err)
+	}
+
+	// Update only name — status should stay active.
+	updated, err := svc.Update(p.ID, "OpenAI Renamed", ProviderTypeOpenAI, "https://api.openai.com/v1", "")
+	if err != nil {
+		t.Fatalf("update provider: %v", err)
+	}
+	if updated.Status != ProviderStatusActive {
+		t.Errorf("expected status %q preserved, got %q", ProviderStatusActive, updated.Status)
+	}
+
+	// Update baseURL — status should reset to inactive.
+	updated2, err := svc.Update(p.ID, "OpenAI Renamed", ProviderTypeOpenAI, "https://api.openai.com/v2", "")
+	if err != nil {
+		t.Fatalf("update provider: %v", err)
+	}
+	if updated2.Status != ProviderStatusInactive {
+		t.Errorf("expected status %q after URL change, got %q", ProviderStatusInactive, updated2.Status)
 	}
 }

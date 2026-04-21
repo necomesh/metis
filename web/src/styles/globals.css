@@ -6,36 +6,42 @@
  */
 
 @theme {
-  --color-background: oklch(0.985 0.002 247);
-  --color-foreground: oklch(0.145 0.02 250);
+  --color-background: oklch(0.982 0.004 247);
+  --color-foreground: oklch(0.17 0.018 252);
 
-  --color-card: oklch(1 0 0);
-  --color-card-foreground: oklch(0.145 0.02 250);
+  --color-card: oklch(0.992 0.004 248);
+  --color-card-foreground: oklch(0.17 0.018 252);
+
+  --color-surface: oklch(0.988 0.004 248);
+  --color-surface-foreground: oklch(0.17 0.018 252);
+  --color-surface-elevated: oklch(0.996 0.003 248);
+  --color-surface-soft: oklch(0.972 0.007 250);
+  --color-surface-tint: oklch(0.967 0.012 258);
 
   --color-primary: oklch(0.50 0.13 264);
   --color-primary-foreground: oklch(0.985 0.002 247);
 
-  --color-secondary: oklch(0.955 0.008 264);
-  --color-secondary-foreground: oklch(0.205 0.02 250);
+  --color-secondary: oklch(0.962 0.01 258);
+  --color-secondary-foreground: oklch(0.245 0.022 252);
 
-  --color-muted: oklch(0.955 0.008 264);
-  --color-muted-foreground: oklch(0.556 0.02 250);
+  --color-muted: oklch(0.958 0.008 252);
+  --color-muted-foreground: oklch(0.565 0.018 252);
 
-  --color-accent: oklch(0.955 0.008 264);
-  --color-accent-foreground: oklch(0.205 0.02 250);
+  --color-accent: oklch(0.958 0.014 260);
+  --color-accent-foreground: oklch(0.245 0.022 252);
 
   --color-destructive: oklch(0.577 0.245 27.33);
   --color-destructive-foreground: oklch(0.985 0.002 247);
 
-  --color-border: oklch(0.91 0.005 250);
-  --color-input: oklch(0.91 0.005 250);
+  --color-border: oklch(0.905 0.008 252);
+  --color-input: oklch(0.905 0.008 252);
   --color-ring: oklch(0.50 0.13 264);
 
-  --color-sidebar: oklch(0.975 0.002 247);
-  --color-sidebar-foreground: oklch(0.345 0.02 250);
-  --color-sidebar-accent: oklch(0.95 0.02 264);
-  --color-sidebar-accent-foreground: oklch(0.345 0.04 264);
-  --color-sidebar-border: oklch(0.915 0.008 250);
+  --color-sidebar: oklch(0.978 0.005 248);
+  --color-sidebar-foreground: oklch(0.33 0.018 252);
+  --color-sidebar-accent: oklch(0.95 0.02 260);
+  --color-sidebar-accent-foreground: oklch(0.27 0.04 264);
+  --color-sidebar-border: oklch(0.91 0.008 252);
 
   --radius: 0.75rem;
   --radius-xs: calc(var(--radius) * 0.5);
@@ -60,6 +66,11 @@
 
   body {
     @apply bg-background text-foreground font-sans antialiased;
+    background-image:
+      radial-gradient(circle at top left, oklch(0.93 0.022 264 / 0.22), transparent 24%),
+      radial-gradient(circle at bottom right, oklch(0.95 0.015 220 / 0.2), transparent 22%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(247, 249, 252, 0.98));
+    background-attachment: fixed;
   }
 
   /* Breathing interaction: 200ms transitions on interactive elements */
@@ -76,60 +87,232 @@
 
 @layer components {
   .auth-shell-bg {
-    background-color: oklch(0.985 0.004 247);
+    background-color: oklch(0.988 0.003 247);
     background-image:
-      radial-gradient(circle at 50% 0%, rgba(99, 102, 241, 0.06), transparent 26%),
-      radial-gradient(circle at 100% 100%, rgba(56, 189, 248, 0.06), transparent 24%),
-      linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 250, 252, 0.98));
+      radial-gradient(circle at top left, oklch(0.93 0.03 264 / 0.36), transparent 28%),
+      radial-gradient(circle at bottom right, oklch(0.95 0.02 220 / 0.46), transparent 26%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(247, 249, 252, 0.98));
+  }
+
+  .workspace-shell-bg {
+    background-color: color-mix(in oklab, var(--color-background) 88%, white);
+  }
+
+  .workspace-panel {
+    border-right: 1px solid oklch(0.905 0.008 252 / 0.5);
+    background: oklch(0.982 0.004 247 / 0.6);
+  }
+
+  .workspace-surface {
+    border: 1px solid oklch(0.905 0.008 252 / 0.5);
+    background: oklch(0.982 0.004 247 / 0.4);
+  }
+
+  .workspace-page {
+    @apply space-y-5;
+  }
+
+  .workspace-page-header {
+    @apply flex flex-col gap-2 border-b border-border/50 pb-4 lg:flex-row lg:items-start lg:justify-between;
+  }
+
+  .workspace-page-title {
+    @apply text-[1.375rem] font-semibold tracking-[-0.03em] text-foreground sm:text-[1.5rem];
+  }
+
+  .workspace-page-description {
+    @apply mt-1 max-w-2xl text-sm leading-6 text-muted-foreground;
+  }
+
+  .workspace-chrome-brand {
+    @apply text-[15px] font-semibold tracking-[-0.025em] text-foreground;
+  }
+
+  .workspace-chrome-trigger {
+    @apply text-[13px] font-medium tracking-[-0.01em];
+  }
+
+  .workspace-nav-section-title {
+    @apply text-[10px] font-semibold tracking-[0.18em] text-muted-foreground/58 uppercase;
+  }
+
+  .workspace-nav-item {
+    @apply text-[13px] font-medium tracking-[-0.01em];
+  }
+
+  .workspace-table-card {
+    border: 1px solid oklch(0.905 0.008 252 / 0.5);
+    background: oklch(0.982 0.004 247 / 0.4);
+  }
+
+  .workspace-table-toolbar {
+    border-bottom: 1px solid oklch(0.905 0.008 252 / 0.32);
+  }
+
+  .workspace-toolbar-input {
+    border-color: oklch(0.905 0.008 252 / 0.5);
+    background: transparent;
+  }
+
+  .install-step-shell {
+    @apply space-y-5;
+  }
+
+  .install-step-heading {
+    @apply text-center;
+  }
+
+  .install-step-title {
+    @apply text-lg font-semibold tracking-[-0.02em] text-foreground;
+  }
+
+  .install-step-description {
+    @apply mt-1 text-[13px] text-muted-foreground;
+  }
+
+  .install-label {
+    @apply mb-1.5 block text-[13px] font-medium text-foreground/72;
+  }
+
+  .install-option-card {
+    @apply rounded-xl border border-border/70 bg-white/70 transition-all hover:border-border hover:bg-white;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+  }
+
+  .install-option-card[data-active="true"] {
+    @apply border-primary/30 bg-primary/6;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.82),
+      0 0 0 1px hsl(var(--primary) / 0.12);
+  }
+
+  .install-soft-panel {
+    @apply rounded-xl border border-border/65 bg-white/62;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+  }
+
+  .install-divider {
+    @apply border-border/60;
   }
 
   .auth-grid {
     background-image:
-      linear-gradient(to right, rgba(148, 163, 184, 0.08) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(148, 163, 184, 0.08) 1px, transparent 1px);
-    background-size: 64px 64px;
-    mask-image: radial-gradient(circle at center, black, transparent 90%);
+      linear-gradient(to right, rgba(148, 163, 184, 0.06) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(148, 163, 184, 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0));
+    background-size: 96px 96px, 96px 96px, 100% 100%;
+    mask-image: radial-gradient(circle at center, black 25%, transparent 88%);
+    opacity: 0.75;
+  }
+
+  .auth-stage {
+    border: 1px solid rgba(255, 255, 255, 0.82);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.48));
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.82),
+      0 40px 120px -56px rgba(15, 23, 42, 0.34),
+      0 16px 48px -32px rgba(15, 23, 42, 0.18);
+    backdrop-filter: blur(28px);
+  }
+
+  .auth-stage::after {
+    content: "";
+    position: absolute;
+    inset: 3rem 30rem 3rem auto;
+    width: 1px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(148, 163, 184, 0.16), rgba(255, 255, 255, 0));
+    opacity: 0.14;
+    pointer-events: none;
   }
 
   .auth-panel-glass {
-    border: 1px solid rgba(255, 255, 255, 0.72);
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.74));
+    border: 1px solid rgba(255, 255, 255, 0.86);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.78));
     box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.9),
+      inset 0 1px 0 rgba(255, 255, 255, 0.92),
       0 0 0 1px rgba(15, 23, 42, 0.03),
-      0 24px 68px -12px rgba(15, 23, 42, 0.1);
-    backdrop-filter: blur(20px);
+      0 32px 72px -40px rgba(15, 23, 42, 0.38);
+    backdrop-filter: blur(22px);
+  }
+
+  @media (max-width: 1023px) {
+    .auth-shell-bg {
+      background-image:
+        radial-gradient(circle at top center, oklch(0.93 0.03 264 / 0.24), transparent 26%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(247, 249, 252, 0.99));
+    }
+
+    .auth-stage {
+      min-height: calc(100dvh - 1.5rem);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.62));
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.82),
+        0 28px 80px -48px rgba(15, 23, 42, 0.22);
+    }
+
+    .auth-panel-glass {
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 255, 255, 0.82));
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.92),
+        0 24px 64px -44px rgba(15, 23, 42, 0.22);
+    }
   }
 
   .auth-input {
-    height: 2.625rem;
+    height: 2.875rem;
     border-radius: 0.75rem;
-    border-color: oklch(0.91 0.005 250);
-    background-color: white;
+    border-color: color-mix(in oklab, white 55%, oklch(0.91 0.005 250));
+    background-color: rgba(255, 255, 255, 0.84);
     padding-left: 0.875rem;
     padding-right: 0.875rem;
     font-size: 0.875rem;
     color: oklch(0.205 0.02 250);
-    box-shadow: none;
-    transition: border-color 200ms, box-shadow 200ms;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.8),
+      0 1px 2px rgba(15, 23, 42, 0.02);
+    transition: border-color 200ms, box-shadow 200ms, background-color 200ms;
   }
 
   .auth-input::placeholder {
-    color: oklch(0.72 0.01 250);
+    color: oklch(0.64 0.016 250);
   }
 
   .auth-input:focus-visible {
-    border-color: oklch(0.65 0.16 264);
+    background-color: rgba(255, 255, 255, 0.94);
+    border-color: oklch(0.62 0.15 264);
     outline: none;
-    box-shadow: 0 0 0 3px oklch(0.92 0.04 264);
+    box-shadow: 0 0 0 4px oklch(0.93 0.035 264);
   }
 
   .auth-orb-primary {
-    background: radial-gradient(circle, rgba(99, 102, 241, 0.22) 0%, rgba(99, 102, 241, 0) 70%);
+    background: radial-gradient(circle, oklch(0.82 0.09 264 / 0.4) 0%, rgba(99, 102, 241, 0) 72%);
   }
 
   .auth-orb-secondary {
-    background: radial-gradient(circle, rgba(56, 189, 248, 0.18) 0%, rgba(56, 189, 248, 0) 72%);
+    background: radial-gradient(circle, oklch(0.86 0.05 220 / 0.34) 0%, rgba(56, 189, 248, 0) 74%);
+  }
+
+  @media (max-width: 1023px) {
+    .auth-stage::after {
+      display: none;
+    }
+  }
+
+  @media (max-width: 767px) {
+    .auth-grid,
+    .auth-orb-primary,
+    .auth-orb-secondary {
+      opacity: 0.45;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .auth-grid,
+    .auth-orb-primary,
+    .auth-orb-secondary {
+      transition: none;
+    }
   }
 
 }

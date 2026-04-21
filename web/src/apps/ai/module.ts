@@ -10,11 +10,18 @@ registerApp({
   navigation: [
     {
       label: "agents",
-      items: [{ permission: "ai:agent:list" }],
+      items: [
+        { permission: "ai:assistant-agent:list" },
+        { permission: "ai:coding-agent:list" },
+      ],
     },
     {
       label: "knowledge",
-      items: [{ permission: "ai:knowledge:list" }],
+      items: [
+        { permission: "ai:knowledge-source:list" },
+        { permission: "ai:knowledge-base:list" },
+        { permission: "ai:knowledge-graph:list" },
+      ],
     },
     {
       label: "tools",
@@ -48,11 +55,49 @@ registerApp({
       children: [
         {
           index: true,
-          lazy: () => import("./pages/knowledge/index"),
+          lazy: async () => {
+            const { Navigate } = await import("react-router")
+            return { Component: () => Navigate({ to: "/ai/knowledge/sources", replace: true }) }
+          },
         },
         {
-          path: ":id",
-          lazy: () => import("./pages/knowledge/[id]"),
+          path: "sources",
+          children: [
+            {
+              index: true,
+              lazy: () => import("./pages/knowledge/sources/index"),
+            },
+            {
+              path: ":id",
+              lazy: () => import("./pages/knowledge/sources/[id]"),
+            },
+          ],
+        },
+        {
+          path: "bases",
+          children: [
+            {
+              index: true,
+              lazy: () => import("./pages/knowledge/bases/index"),
+            },
+            {
+              path: ":id",
+              lazy: () => import("./pages/knowledge/bases/[id]"),
+            },
+          ],
+        },
+        {
+          path: "graphs",
+          children: [
+            {
+              index: true,
+              lazy: () => import("./pages/knowledge/graphs/index"),
+            },
+            {
+              path: ":id",
+              lazy: () => import("./pages/knowledge/graphs/[id]"),
+            },
+          ],
         },
       ],
     },
@@ -81,23 +126,44 @@ registerApp({
       ],
     },
     {
-      path: "ai/agents",
+      path: "ai/assistant-agents",
       children: [
         {
           index: true,
-          lazy: () => import("./pages/agents/index"),
+          lazy: () => import("./pages/assistant-agents/index"),
         },
         {
           path: "create",
-          lazy: () => import("./pages/agents/create"),
+          lazy: () => import("./pages/assistant-agents/create"),
         },
         {
           path: ":id",
-          lazy: () => import("./pages/agents/[id]"),
+          lazy: () => import("./pages/assistant-agents/[id]"),
         },
         {
           path: ":id/edit",
-          lazy: () => import("./pages/agents/[id]/edit"),
+          lazy: () => import("./pages/assistant-agents/[id]/edit"),
+        },
+      ],
+    },
+    {
+      path: "ai/coding-agents",
+      children: [
+        {
+          index: true,
+          lazy: () => import("./pages/coding-agents/index"),
+        },
+        {
+          path: "create",
+          lazy: () => import("./pages/coding-agents/create"),
+        },
+        {
+          path: ":id",
+          lazy: () => import("./pages/coding-agents/[id]"),
+        },
+        {
+          path: ":id/edit",
+          lazy: () => import("./pages/coding-agents/[id]/edit"),
         },
       ],
     },

@@ -1,8 +1,7 @@
 package ai
 
 import (
-	"errors"
-	"log/slog"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -14,226 +13,291 @@ import (
 	"metis/internal/handler"
 )
 
+// KnowledgeSourceHandler exposes REST endpoints for the independent source pool.
 type KnowledgeSourceHandler struct {
-	svc        *KnowledgeSourceService
-	repo       *KnowledgeSourceRepo
-	kbSvc      *KnowledgeBaseService
-	extractSvc *KnowledgeExtractService
+	svc       *KnowledgeSourceService
+	repo      *KnowledgeSourceRepo
+	assetRepo *KnowledgeAssetRepo
 }
 
 func NewKnowledgeSourceHandler(i do.Injector) (*KnowledgeSourceHandler, error) {
 	return &KnowledgeSourceHandler{
-		svc:        do.MustInvoke[*KnowledgeSourceService](i),
-		repo:       do.MustInvoke[*KnowledgeSourceRepo](i),
-		kbSvc:      do.MustInvoke[*KnowledgeBaseService](i),
-		extractSvc: do.MustInvoke[*KnowledgeExtractService](i),
+		svc:       do.MustInvoke[*KnowledgeSourceService](i),
+		repo:      do.MustInvoke[*KnowledgeSourceRepo](i),
+		assetRepo: do.MustInvoke[*KnowledgeAssetRepo](i),
 	}, nil
 }
 
-type createSourceReq struct {
+// sourceID is a shorthand for parsing the :id path param.
+func sourceID(c *gin.Context) (uint, bool) {
+	return handler.ParseUintParam(c, "id")
+}
+
+// --- Upload file source ---
+
+func (h *KnowledgeSourceHandler) Upload(c *gin.Context) {
+	file, err := c.FormFile("file")
+	if err != nil {
+		handler.Fail(c, http.StatusBadRequest, "file is required")
+		return
+	}
+
+	f, err := file.Open()
+	if err != nil {
+		handler.Fail(c, http.StatusInternalServerError, "failed to open file")
+		return
+	}
+	defer f.Close()
+
+	format := detectFormat(file.Filename)
+	if format == "" {
+		handler.Fail(c, http.StatusBadRequest, "unsupported file format")
+		return
+	}
+
+	// Read content for text-based formats; for binary, leave empty (async extract)
+	var content string
+	if format == SourceFormatMarkdown || format == SourceFormatText {
+		data, err := io.ReadAll(f)
+		if err != nil {
+			handler.Fail(c, http.StatusInternalServerError, "failed to read file")
+			return
+		}
+		content = string(data)
+	}
+
+	title := c.PostForm("title")
+	if title == "" {
+		title = file.Filename
+	}
+
+	src, err := h.svc.CreateFileSource(title, format, file.Filename, file.Size, content)
+	if err != nil {
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	c.Set("audit_action", "knowledge_source.upload")
+	c.Set("audit_resource", "ai_knowledge_source")
+	c.Set("audit_resource_id", strconv.Itoa(int(src.ID)))
+	c.Set("audit_summary", "Uploaded knowledge source: "+src.Title)
+
+	handler.OK(c, src.ToResponse())
+}
+
+// --- Add URL source ---
+
+type addURLReq struct {
 	Title         string `json:"title"`
-	SourceURL     string `json:"sourceUrl"`
+	SourceURL     string `json:"sourceUrl" binding:"required,url"`
 	CrawlDepth    int    `json:"crawlDepth"`
 	URLPattern    string `json:"urlPattern"`
 	CrawlEnabled  bool   `json:"crawlEnabled"`
 	CrawlSchedule string `json:"crawlSchedule"`
-	Content       string `json:"content"`
-	Format        string `json:"format"`
 }
 
-func (h *KnowledgeSourceHandler) Create(c *gin.Context) {
-	kbID, _ := strconv.Atoi(c.Param("id"))
-	if _, err := h.kbSvc.Get(uint(kbID)); err != nil {
-		handler.Fail(c, http.StatusNotFound, "knowledge base not found")
-		return
-	}
-
-	// Check if this is a file upload
-	file, fileHeader, fileErr := c.Request.FormFile("file")
-	if fileErr == nil {
-		defer file.Close()
-		// File upload
-		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(fileHeader.Filename), "."))
-		format := mapExtToFormat(ext)
-		if format == "" {
-			handler.Fail(c, http.StatusBadRequest, "unsupported file format: "+ext)
-			return
-		}
-
-		title := strings.TrimSuffix(fileHeader.Filename, filepath.Ext(fileHeader.Filename))
-
-		// Read file content for text-based formats
-		var content string
-		if format == SourceFormatMarkdown || format == SourceFormatText {
-			buf := make([]byte, fileHeader.Size)
-			if _, err := file.Read(buf); err != nil {
-				handler.Fail(c, http.StatusInternalServerError, "failed to read file")
-				return
-			}
-			content = string(buf)
-		}
-
-		extractStatus := ExtractStatusCompleted
-		if format != SourceFormatMarkdown && format != SourceFormatText {
-			extractStatus = ExtractStatusPending
-		}
-
-		src := &KnowledgeSource{
-			KbID:          uint(kbID),
-			Title:         title,
-			Content:       content,
-			Format:        format,
-			FileName:      fileHeader.Filename,
-			ByteSize:      fileHeader.Size,
-			ExtractStatus: extractStatus,
-		}
-
-		if err := h.svc.Create(src); err != nil {
-			handler.Fail(c, http.StatusInternalServerError, err.Error())
-			return
-		}
-
-		if src.ExtractStatus == ExtractStatusPending {
-			if err := h.extractSvc.EnqueueExtract(src.ID); err != nil {
-				slog.Error("failed to enqueue source extract", "source_id", src.ID, "error", err)
-			}
-		}
-
-		c.Set("audit_action", "knowledgeSource.create")
-		c.Set("audit_resource", "ai_knowledge_source")
-		c.Set("audit_resource_id", strconv.Itoa(int(src.ID)))
-		c.Set("audit_summary", "Uploaded source: "+src.FileName)
-
-		handler.OK(c, src.ToResponse())
-		return
-	}
-
-	// JSON body (URL or text input)
-	var req createSourceReq
+func (h *KnowledgeSourceHandler) AddURL(c *gin.Context) {
+	var req addURLReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		handler.Fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	src := &KnowledgeSource{
-		KbID:          uint(kbID),
-		Title:         req.Title,
-		CrawlDepth:    req.CrawlDepth,
-		URLPattern:    req.URLPattern,
-		ExtractStatus: ExtractStatusPending,
-	}
-
-	if req.SourceURL != "" {
-		// URL source
-		src.Format = SourceFormatURL
-		src.SourceURL = req.SourceURL
-		src.CrawlEnabled = req.CrawlEnabled
-		src.CrawlSchedule = req.CrawlSchedule
-		if src.Title == "" {
-			src.Title = req.SourceURL
-		}
-	} else if req.Content != "" {
-		// Direct text/markdown input
-		src.Format = SourceFormatMarkdown
-		if req.Format != "" {
-			src.Format = req.Format
-		}
-		src.Content = req.Content
-		src.ExtractStatus = ExtractStatusCompleted
-		if src.Title == "" {
-			src.Title = "Text input"
-		}
-	} else {
-		handler.Fail(c, http.StatusBadRequest, "sourceUrl or content is required")
-		return
-	}
-
-	if err := h.svc.Create(src); err != nil {
+	src, err := h.svc.CreateURLSource(req.Title, req.SourceURL, req.CrawlDepth, req.URLPattern, req.CrawlEnabled, req.CrawlSchedule)
+	if err != nil {
 		handler.Fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	if src.ExtractStatus == ExtractStatusPending {
-		if err := h.extractSvc.EnqueueExtract(src.ID); err != nil {
-			slog.Error("failed to enqueue source extract", "source_id", src.ID, "error", err)
-		}
-	}
-
-	c.Set("audit_action", "knowledgeSource.create")
+	c.Set("audit_action", "knowledge_source.add_url")
 	c.Set("audit_resource", "ai_knowledge_source")
 	c.Set("audit_resource_id", strconv.Itoa(int(src.ID)))
+	c.Set("audit_summary", "Added URL source: "+src.SourceURL)
 
 	handler.OK(c, src.ToResponse())
 }
 
+// --- Add text source ---
+
+type addTextReq struct {
+	Title   string `json:"title" binding:"required"`
+	Content string `json:"content" binding:"required"`
+}
+
+func (h *KnowledgeSourceHandler) AddText(c *gin.Context) {
+	var req addTextReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		handler.Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	src, err := h.svc.CreateTextSource(req.Title, req.Content)
+	if err != nil {
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	c.Set("audit_action", "knowledge_source.add_text")
+	c.Set("audit_resource", "ai_knowledge_source")
+	c.Set("audit_resource_id", strconv.Itoa(int(src.ID)))
+	c.Set("audit_summary", "Added text source: "+src.Title)
+
+	handler.OK(c, src.ToResponse())
+}
+
+// --- List sources ---
+
 func (h *KnowledgeSourceHandler) List(c *gin.Context) {
-	kbID, _ := strconv.Atoi(c.Param("id"))
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
 
-	items, total, err := h.repo.List(SourceListParams{
-		KbID:     uint(kbID),
-		Keyword:  c.Query("keyword"),
-		Page:     page,
-		PageSize: pageSize,
-	})
+	params := SourceListParams{
+		Format:        c.Query("format"),
+		ExtractStatus: c.Query("status"),
+		Keyword:       c.Query("keyword"),
+		Page:          page,
+		PageSize:      pageSize,
+	}
+
+	sources, total, err := h.svc.List(params)
 	if err != nil {
 		handler.Fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	resp := make([]KnowledgeSourceResponse, len(items))
-	for i, s := range items {
-		resp[i] = s.ToResponse()
+	// Enrich with ref counts
+	type sourceWithRef struct {
+		KnowledgeSourceResponse
+		RefCount int `json:"refCount"`
 	}
-	handler.OK(c, gin.H{"items": resp, "total": total})
+	items := make([]sourceWithRef, 0, len(sources))
+	for i := range sources {
+		resp := sources[i].ToResponse()
+		refCount, _ := h.svc.GetRefCount(sources[i].ID)
+		items = append(items, sourceWithRef{
+			KnowledgeSourceResponse: resp,
+			RefCount:                int(refCount),
+		})
+	}
+
+	handler.OK(c, gin.H{
+		"items": items,
+		"total": total,
+		"page":  page,
+	})
 }
+
+// --- Get source detail ---
 
 func (h *KnowledgeSourceHandler) Get(c *gin.Context) {
-	sid, _ := strconv.Atoi(c.Param("sid"))
-	src, err := h.svc.Get(uint(sid))
-	if err != nil {
-		if errors.Is(err, ErrSourceNotFound) {
-			handler.Fail(c, http.StatusNotFound, err.Error())
-			return
-		}
-		handler.Fail(c, http.StatusInternalServerError, err.Error())
+	id, ok := sourceID(c)
+	if !ok {
 		return
 	}
-	handler.OK(c, src.ToResponse())
+
+	src, err := h.svc.Get(id)
+	if err != nil {
+		handler.Fail(c, http.StatusNotFound, err.Error())
+		return
+	}
+
+	resp := src.ToResponse()
+	refCount, _ := h.svc.GetRefCount(id)
+	resp.RefCount = int(refCount)
+
+	handler.OK(c, resp)
 }
 
+// --- Get source content ---
+
+func (h *KnowledgeSourceHandler) GetContent(c *gin.Context) {
+	id, ok := sourceID(c)
+	if !ok {
+		return
+	}
+
+	src, err := h.svc.Get(id)
+	if err != nil {
+		handler.Fail(c, http.StatusNotFound, err.Error())
+		return
+	}
+
+	handler.OK(c, gin.H{
+		"id":      src.ID,
+		"title":   src.Title,
+		"content": src.Content,
+	})
+}
+
+// --- Delete source ---
+
 func (h *KnowledgeSourceHandler) Delete(c *gin.Context) {
-	sid, _ := strconv.Atoi(c.Param("sid"))
-	if err := h.svc.Delete(uint(sid)); err != nil {
-		if errors.Is(err, ErrSourceNotFound) {
-			handler.Fail(c, http.StatusNotFound, err.Error())
+	id, ok := sourceID(c)
+	if !ok {
+		return
+	}
+
+	refIDs, err := h.svc.Delete(id)
+	if err != nil {
+		if len(refIDs) > 0 {
+			// 409 Conflict — source is referenced
+			c.JSON(http.StatusConflict, handler.R{
+				Code:    -1,
+				Message: err.Error(),
+				Data:    gin.H{"referencingAssetIds": refIDs},
+			})
 			return
 		}
 		handler.Fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	c.Set("audit_action", "knowledgeSource.delete")
+	c.Set("audit_action", "knowledge_source.delete")
 	c.Set("audit_resource", "ai_knowledge_source")
-	c.Set("audit_resource_id", c.Param("sid"))
+	c.Set("audit_resource_id", strconv.Itoa(int(id)))
 
 	handler.OK(c, nil)
 }
 
-func mapExtToFormat(ext string) string {
+// --- Get referencing assets ---
+
+func (h *KnowledgeSourceHandler) GetReferences(c *gin.Context) {
+	id, ok := sourceID(c)
+	if !ok {
+		return
+	}
+
+	assets, err := h.svc.GetReferencingAssets(id)
+	if err != nil {
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	items := make([]KnowledgeAssetResponse, 0, len(assets))
+	for i := range assets {
+		items = append(items, assets[i].ToResponse())
+	}
+
+	handler.OK(c, items)
+}
+
+// --- Utilities ---
+
+// detectFormat returns the source format based on file extension.
+func detectFormat(filename string) string {
+	ext := strings.ToLower(filepath.Ext(filename))
 	switch ext {
-	case "md", "markdown":
+	case ".md", ".markdown":
 		return SourceFormatMarkdown
-	case "txt":
+	case ".txt":
 		return SourceFormatText
-	case "pdf":
+	case ".pdf":
 		return SourceFormatPDF
-	case "docx":
+	case ".docx":
 		return SourceFormatDocx
-	case "xlsx":
+	case ".xlsx":
 		return SourceFormatXlsx
-	case "pptx":
+	case ".pptx":
 		return SourceFormatPptx
 	default:
 		return ""

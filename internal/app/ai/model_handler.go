@@ -25,6 +25,9 @@ func NewModelHandler(i do.Injector) (*ModelHandler, error) {
 	}, nil
 }
 
+// mid is a shorthand for parsing the :id path parameter as uint.
+func mid(c *gin.Context) (uint, bool) { return handler.ParseUintParam(c, "id") }
+
 type createModelReq struct {
 	ModelID         string          `json:"modelId" binding:"required"`
 	DisplayName     string          `json:"displayName" binding:"required"`
@@ -105,8 +108,11 @@ func (h *ModelHandler) List(c *gin.Context) {
 }
 
 func (h *ModelHandler) Get(c *gin.Context) {
-	id, _ := strconv.Atoi(c.Param("id"))
-	m, err := h.svc.Get(uint(id))
+	id, ok := mid(c)
+	if !ok {
+		return
+	}
+	m, err := h.svc.Get(id)
 	if err != nil {
 		if errors.Is(err, ErrModelNotFound) {
 			handler.Fail(c, http.StatusNotFound, err.Error())
@@ -131,14 +137,17 @@ type updateModelReq struct {
 }
 
 func (h *ModelHandler) Update(c *gin.Context) {
-	id, _ := strconv.Atoi(c.Param("id"))
+	id, ok := mid(c)
+	if !ok {
+		return
+	}
 	var req updateModelReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		handler.Fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	m, err := h.svc.Get(uint(id))
+	m, err := h.svc.Get(id)
 	if err != nil {
 		handler.Fail(c, http.StatusNotFound, err.Error())
 		return
@@ -157,6 +166,10 @@ func (h *ModelHandler) Update(c *gin.Context) {
 	}
 
 	if err := h.svc.Update(m); err != nil {
+		if errors.Is(err, ErrInvalidType) || errors.Is(err, ErrInvalidStatus) {
+			handler.Fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
 		handler.Fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -170,22 +183,28 @@ func (h *ModelHandler) Update(c *gin.Context) {
 }
 
 func (h *ModelHandler) Delete(c *gin.Context) {
-	id, _ := strconv.Atoi(c.Param("id"))
-	if err := h.svc.Delete(uint(id)); err != nil {
+	id, ok := mid(c)
+	if !ok {
+		return
+	}
+	if err := h.svc.Delete(id); err != nil {
 		handler.Fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	c.Set("audit_action", "model.delete")
 	c.Set("audit_resource", "ai_model")
-	c.Set("audit_resource_id", c.Param("id"))
+	c.Set("audit_resource_id", strconv.FormatUint(uint64(id), 10))
 
 	handler.OK(c, nil)
 }
 
 func (h *ModelHandler) SetDefault(c *gin.Context) {
-	id, _ := strconv.Atoi(c.Param("id"))
-	if err := h.svc.SetDefault(uint(id)); err != nil {
+	id, ok := mid(c)
+	if !ok {
+		return
+	}
+	if err := h.svc.SetDefault(id); err != nil {
 		if errors.Is(err, ErrModelNotFound) {
 			handler.Fail(c, http.StatusNotFound, err.Error())
 			return
@@ -196,15 +215,18 @@ func (h *ModelHandler) SetDefault(c *gin.Context) {
 
 	c.Set("audit_action", "model.setDefault")
 	c.Set("audit_resource", "ai_model")
-	c.Set("audit_resource_id", c.Param("id"))
+	c.Set("audit_resource_id", strconv.FormatUint(uint64(id), 10))
 	c.Set("audit_summary", "Set as default model")
 
 	handler.OK(c, nil)
 }
 
 func (h *ModelHandler) SyncModels(c *gin.Context) {
-	id, _ := strconv.Atoi(c.Param("id"))
-	added, err := h.svc.SyncModels(c.Request.Context(), uint(id))
+	id, ok := mid(c)
+	if !ok {
+		return
+	}
+	added, err := h.svc.SyncModels(c.Request.Context(), id)
 	if err != nil {
 		if errors.Is(err, ErrProviderNotFound) {
 			handler.Fail(c, http.StatusNotFound, err.Error())
@@ -216,7 +238,7 @@ func (h *ModelHandler) SyncModels(c *gin.Context) {
 
 	c.Set("audit_action", "model.sync")
 	c.Set("audit_resource", "ai_model")
-	c.Set("audit_resource_id", c.Param("id"))
+	c.Set("audit_resource_id", strconv.FormatUint(uint64(id), 10))
 	c.Set("audit_summary", "Synced models from provider")
 
 	handler.OK(c, gin.H{"added": added})

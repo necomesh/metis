@@ -98,8 +98,8 @@ export function TopNav() {
     <>
       <header
         className={cn(
-          "fixed inset-x-0 top-0 z-30 flex h-14 items-center gap-3 border-b border-border/40 px-4",
-          "bg-background backdrop-blur-2xl",
+          "fixed inset-x-0 top-0 z-30 flex h-14 items-center gap-3 border-b border-border/50 px-4",
+          "bg-white/60 backdrop-blur-2xl",
         )}
       >
         <Button
@@ -116,10 +116,12 @@ export function TopNav() {
             <img
               src="/api/v1/site-info/logo"
               alt="Logo"
+              width={28}
+              height={28}
               className="h-7 w-7 rounded object-contain"
             />
           )}
-          <span className="text-base font-semibold tracking-tight text-foreground">
+          <span className="workspace-chrome-brand">
             {siteInfo?.appName ?? "Metis"}
           </span>
         </div>
@@ -129,7 +131,7 @@ export function TopNav() {
           {user && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+                <button className="workspace-chrome-trigger flex items-center gap-1.5 rounded-full border border-transparent px-2.5 py-1.5 text-muted-foreground transition-colors hover:border-border/70 hover:bg-white/80 hover:text-foreground">
                   <span>{user.username}</span>
                   <ChevronDown className="h-3.5 w-3.5" />
                 </button>

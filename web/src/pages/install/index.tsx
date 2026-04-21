@@ -129,27 +129,29 @@ async function apiPost<T>(url: string, data: unknown): Promise<T> {
 
 function StepIndicator({ steps, current }: { steps: StepDef[]; current: number }) {
   return (
-    <div className="flex items-center justify-center gap-0">
+    <div className="flex w-full items-start">
       {steps.map((step, i) => {
         const isCompleted = i < current
         const isCurrent = i === current
         return (
-          <div key={step.id} className="flex items-center">
-            {i > 0 && (
+          <div key={step.id} className="relative flex min-w-0 flex-1 flex-col items-center gap-1.5">
+            <div className="relative flex h-7 w-full items-center justify-center">
               <div
-                className={`h-px w-6 sm:w-10 transition-colors duration-300 ${
-                  isCompleted ? "bg-slate-900" : "bg-slate-200"
-                }`}
+                className={`absolute top-1/2 h-px -translate-y-1/2 transition-colors duration-300 ${
+                  i === 0
+                    ? "left-1/2 right-0"
+                    : i === steps.length - 1
+                      ? "left-0 right-1/2"
+                      : "inset-x-0"
+                } ${isCompleted ? "bg-primary/80" : "bg-border/80"}`}
               />
-            )}
-            <div className="flex flex-col items-center gap-1.5">
               <div
-                className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold transition-all duration-300 ${
+                className={`relative z-10 flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold transition-all duration-300 ${
                   isCompleted
-                    ? "bg-slate-900 text-white"
+                    ? "bg-primary text-primary-foreground"
                     : isCurrent
-                      ? "border-2 border-slate-900 bg-white text-slate-900"
-                      : "border border-slate-200 bg-white text-slate-400"
+                      ? "border-2 border-primary bg-white text-primary"
+                      : "border border-border/80 bg-white/76 text-muted-foreground"
                 }`}
               >
                 {isCompleted ? (
@@ -160,14 +162,14 @@ function StepIndicator({ steps, current }: { steps: StepDef[]; current: number }
                   i + 1
                 )}
               </div>
-              <span
-                className={`text-[11px] font-medium whitespace-nowrap ${
-                  isCurrent ? "text-slate-700" : isCompleted ? "text-slate-500" : "text-slate-400"
-                }`}
-              >
-                {step.label}
-              </span>
             </div>
+            <span
+              className={`w-full px-1 text-center text-[11px] font-medium whitespace-nowrap ${
+                isCurrent ? "text-foreground/78" : isCompleted ? "text-muted-foreground" : "text-muted-foreground/70"
+              }`}
+            >
+              {step.label}
+            </span>
           </div>
         )
       })}
@@ -201,19 +203,15 @@ function LanguageStep({
   }
 
   return (
-    <div className="space-y-5">
-      <div className="text-center">
-        <h2 className="text-lg font-semibold tracking-[-0.02em] text-slate-900">
-          {t("language.title")}
-        </h2>
-        <p className="mt-1 text-[13px] text-slate-400">
-          {t("language.description")}
-        </p>
+    <div className="install-step-shell">
+      <div className="install-step-heading">
+        <h2 className="install-step-title">{t("language.title")}</h2>
+        <p className="install-step-description">{t("language.description")}</p>
       </div>
 
       {/* Language selection */}
       <div>
-        <Label className="mb-1.5 block text-[13px] font-medium text-slate-500">
+        <Label className="install-label">
           {t("language.selectLanguage")}
         </Label>
         <div className="grid grid-cols-2 gap-3">
@@ -222,14 +220,15 @@ function LanguageStep({
               key={loc.code}
               type="button"
               onClick={() => handleLocaleChange(loc.code)}
-              className={`flex items-center gap-2.5 rounded-xl border p-3.5 transition-all ${
+              data-active={config.locale === loc.code}
+              className={`install-option-card flex items-center gap-2.5 p-3.5 ${
                 config.locale === loc.code
-                  ? "border-slate-900 bg-slate-900/[0.03] shadow-[0_0_0_1px_rgba(15,23,42,0.08)]"
-                  : "border-slate-200/70 bg-white hover:border-slate-300"
+                  ? ""
+                  : ""
               }`}
             >
-              <Globe className="h-4 w-4 text-slate-500" />
-              <span className="text-sm font-medium text-slate-700">{loc.name}</span>
+              <Globe className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-medium text-foreground/88">{loc.name}</span>
             </button>
           ))}
         </div>
@@ -237,11 +236,11 @@ function LanguageStep({
 
       {/* Timezone selection */}
       <div>
-        <Label className="mb-1.5 block text-[13px] font-medium text-slate-500">
+        <Label className="install-label">
           {t("language.selectTimezone")}
         </Label>
         <div className="relative mb-2">
-          <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+          <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder={t("language.timezoneSearch")}
             value={tzSearch}
@@ -249,7 +248,7 @@ function LanguageStep({
             className="auth-input pl-8"
           />
         </div>
-        <div className="max-h-48 overflow-y-auto rounded-xl border border-slate-200/60 bg-white/60">
+        <div className="install-soft-panel max-h-48 overflow-y-auto">
           {filteredTimezones.map((tz) => (
             <button
               key={tz}
@@ -257,8 +256,8 @@ function LanguageStep({
               onClick={() => onChange({ ...config, timezone: tz })}
               className={`w-full px-3.5 py-2 text-left text-[13px] transition-colors ${
                 config.timezone === tz
-                  ? "bg-slate-900/[0.05] font-medium text-slate-900"
-                  : "text-slate-600 hover:bg-slate-50"
+                  ? "bg-primary/8 font-medium text-foreground"
+                  : "text-muted-foreground hover:bg-surface-soft/70"
               }`}
             >
               {tz}
@@ -267,10 +266,7 @@ function LanguageStep({
         </div>
       </div>
 
-      <Button
-        className="h-[2.625rem] w-full rounded-xl border-0 bg-slate-900 text-sm font-medium tracking-[-0.01em] text-white shadow-[0_1px_2px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.06)] hover:bg-slate-800 active:scale-[0.985]"
-        onClick={onNext}
-      >
+      <Button className="h-[2.625rem] w-full rounded-xl" onClick={onNext}>
         {t("language.next")}
       </Button>
     </div>
@@ -439,7 +435,7 @@ function DatabaseStep({
           <Button
             type="button"
             variant="outline"
-            className="h-9 w-full rounded-xl border-slate-200/70 text-[13px] font-medium text-slate-600 hover:bg-slate-50"
+            className="h-9 w-full rounded-xl text-[13px]"
             onClick={handleTestConnection}
             disabled={testing || !config.host || !config.user || !config.dbname}
           >
@@ -460,17 +456,17 @@ function DatabaseStep({
         </div>
       )}
 
-      <div className="flex gap-3">
+      <div className="grid grid-cols-2 gap-3">
         <Button
           type="button"
           variant="outline"
-          className="h-[2.625rem] flex-1 rounded-xl border-slate-200/70 text-sm font-medium text-slate-600 hover:bg-slate-50"
+          className="h-[2.625rem] w-full rounded-xl text-sm"
           onClick={onBack}
         >
           {t("site.prev")}
         </Button>
         <Button
-          className="h-[2.625rem] flex-[2] rounded-xl border-0 bg-slate-900 text-sm font-medium tracking-[-0.01em] text-white shadow-[0_1px_2px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.06)] hover:bg-slate-800 active:scale-[0.985]"
+          className="h-[2.625rem] w-full rounded-xl text-sm tracking-[-0.01em]"
           onClick={onNext}
           disabled={!canProceed}
         >
@@ -706,17 +702,17 @@ function SiteInfoStep({
         </div>
       )}
 
-      <div className="flex gap-3">
+      <div className="grid grid-cols-2 gap-3">
         <Button
           type="button"
           variant="outline"
-          className="h-[2.625rem] flex-1 rounded-xl border-slate-200/70 text-sm font-medium text-slate-600 hover:bg-slate-50"
+          className="h-[2.625rem] w-full rounded-xl text-sm"
           onClick={onBack}
         >
           {t("site.prev")}
         </Button>
         <Button
-          className="h-[2.625rem] flex-[2] rounded-xl border-0 bg-slate-900 text-sm font-medium tracking-[-0.01em] text-white shadow-[0_1px_2px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.06)] hover:bg-slate-800 active:scale-[0.985]"
+          className="h-[2.625rem] w-full rounded-xl text-sm tracking-[-0.01em]"
           onClick={onNext}
           disabled={!config.siteName.trim()}
         >
@@ -843,17 +839,17 @@ function AdminStep({
         </div>
       </div>
 
-      <div className="flex gap-3">
+      <div className="grid grid-cols-2 gap-3">
         <Button
           type="button"
           variant="outline"
-          className="h-[2.625rem] flex-1 rounded-xl border-slate-200/70 text-sm font-medium text-slate-600 hover:bg-slate-50"
+          className="h-[2.625rem] w-full rounded-xl text-sm"
           onClick={onBack}
         >
           {t("admin.prev")}
         </Button>
         <Button
-          className="h-[2.625rem] flex-[2] rounded-xl border-0 bg-slate-900 text-sm font-medium tracking-[-0.01em] text-white shadow-[0_1px_2px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.06)] hover:bg-slate-800 active:scale-[0.985]"
+          className="h-[2.625rem] w-full rounded-xl text-sm tracking-[-0.01em]"
           onClick={onNext}
           disabled={!isValid}
         >
@@ -943,7 +939,7 @@ function CompleteStep({
           </p>
         </div>
         <Button
-          className="h-[2.625rem] w-full rounded-xl border-0 bg-slate-900 text-sm font-medium tracking-[-0.01em] text-white shadow-[0_1px_2px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.06)] hover:bg-slate-800 active:scale-[0.985]"
+          className="h-[2.625rem] w-full rounded-xl text-sm tracking-[-0.01em]"
           onClick={() => { window.location.href = "/login" }}
         >
           {t("done.enter")}
@@ -1031,18 +1027,18 @@ function CompleteStep({
         </div>
       )}
 
-      <div className="flex gap-3">
+      <div className="grid grid-cols-2 gap-3">
         <Button
           type="button"
           variant="outline"
-          className="h-[2.625rem] flex-1 rounded-xl border-slate-200/70 text-sm font-medium text-slate-600 hover:bg-slate-50"
+          className="h-[2.625rem] w-full rounded-xl text-sm"
           onClick={onBack}
           disabled={installing}
         >
           {t("confirm.prev")}
         </Button>
         <Button
-          className="h-[2.625rem] flex-[2] rounded-xl border-0 bg-slate-900 text-sm font-medium tracking-[-0.01em] text-white shadow-[0_1px_2px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.06)] hover:bg-slate-800 active:scale-[0.985]"
+          className="h-[2.625rem] w-full rounded-xl text-sm tracking-[-0.01em]"
           onClick={handleInstall}
           disabled={installing}
         >
@@ -1178,15 +1174,15 @@ export default function InstallPage() {
   }
 
   return (
-    <AuthShell>
-      <div className="w-full max-w-[28rem]">
-        <div className="auth-panel-glass rounded-3xl px-8 py-8 sm:px-10 sm:py-9">
+    <AuthShell fullHeight={false}>
+      <div className="w-full max-w-[30rem]">
+        <div className="auth-panel-glass rounded-[1.75rem] px-6 py-6 sm:px-8 sm:py-8">
           <div className="mb-7">
             <StepIndicator steps={steps} current={step} />
           </div>
           {stepContent}
         </div>
-        <p className="mt-4 text-center text-[11px] text-slate-300">
+        <p className="mt-4 text-center text-[11px] text-muted-foreground/70">
           {t("poweredBy")}
         </p>
       </div>

@@ -6,38 +6,29 @@ import (
 	"metis/internal/database"
 )
 
+// KnowledgeLogRepo provides GORM persistence for KnowledgeLog.
 type KnowledgeLogRepo struct {
 	db *database.DB
 }
 
 func NewKnowledgeLogRepo(i do.Injector) (*KnowledgeLogRepo, error) {
-	return &KnowledgeLogRepo{db: do.MustInvoke[*database.DB](i)}, nil
+	db := do.MustInvoke[*database.DB](i)
+	return &KnowledgeLogRepo{db: db}, nil
 }
 
 func (r *KnowledgeLogRepo) Create(log *KnowledgeLog) error {
 	return r.db.Create(log).Error
 }
 
-func (r *KnowledgeLogRepo) List(kbID uint, page, pageSize int) ([]KnowledgeLog, int64, error) {
-	if page < 1 {
-		page = 1
+func (r *KnowledgeLogRepo) FindByAssetID(assetID uint, limit int) ([]KnowledgeLog, error) {
+	if limit <= 0 {
+		limit = 50
 	}
-	if pageSize < 1 {
-		pageSize = 20
-	}
+	var logs []KnowledgeLog
+	err := r.db.Where("asset_id = ?", assetID).Order("id DESC").Limit(limit).Find(&logs).Error
+	return logs, err
+}
 
-	var total int64
-	if err := r.db.Model(&KnowledgeLog{}).Where("kb_id = ?", kbID).Count(&total).Error; err != nil {
-		return nil, 0, err
-	}
-
-	var items []KnowledgeLog
-	offset := (page - 1) * pageSize
-	if err := r.db.Where("kb_id = ?", kbID).
-		Offset(offset).Limit(pageSize).
-		Order("created_at DESC").
-		Find(&items).Error; err != nil {
-		return nil, 0, err
-	}
-	return items, total, nil
+func (r *KnowledgeLogRepo) DeleteByAssetID(assetID uint) error {
+	return r.db.Where("asset_id = ?", assetID).Delete(&KnowledgeLog{}).Error
 }

@@ -337,12 +337,13 @@ export interface CodingAgentInfo extends AgentBase {
 
 export type AgentInfo = AssistantAgentInfo | CodingAgentInfo;
 
-export interface AgentWithBindings extends AgentInfo {
+export type AgentWithBindings = AgentInfo & {
   toolIds: number[];
   skillIds: number[];
   mcpServerIds: number[];
   knowledgeBaseIds: number[];
-}
+  knowledgeGraphIds: number[];
+};
 
 interface AgentDetailResponse {
   agent: AgentInfo;
@@ -350,6 +351,7 @@ interface AgentDetailResponse {
   skillIds?: number[];
   mcpServerIds?: number[];
   knowledgeBaseIds?: number[];
+  knowledgeGraphIds?: number[];
 }
 
 export interface AgentTemplate {
@@ -394,49 +396,56 @@ export interface AgentMemory {
   updatedAt: string;
 }
 
-export const agentApi = {
-  list: (params?: { page?: number; pageSize?: number; keyword?: string; type?: string }) => {
-    const p = new URLSearchParams();
-    if (params?.page) p.set('page', String(params.page));
-    if (params?.pageSize) p.set('pageSize', String(params.pageSize));
-    if (params?.keyword) p.set('keyword', params.keyword);
-    if (params?.type) p.set('type', params.type);
-    return api.get<PaginatedResponse<AgentInfo>>(`/api/v1/ai/agents?${p}`);
-  },
+function makeTypedAgentApi(basePath: string) {
+  return {
+    list: (params?: { page?: number; pageSize?: number; keyword?: string }) => {
+      const p = new URLSearchParams();
+      if (params?.page) p.set('page', String(params.page));
+      if (params?.pageSize) p.set('pageSize', String(params.pageSize));
+      if (params?.keyword) p.set('keyword', params.keyword);
+      return api.get<PaginatedResponse<AgentInfo>>(`${basePath}?${p}`);
+    },
 
-  get: async (id: number) => {
-    const data = await api.get<AgentWithBindings | AgentDetailResponse>(`/api/v1/ai/agents/${id}`);
-    if ('agent' in data) {
-      return {
-        ...data.agent,
-        toolIds: data.toolIds ?? [],
-        skillIds: data.skillIds ?? [],
-        mcpServerIds: data.mcpServerIds ?? [],
-        knowledgeBaseIds: data.knowledgeBaseIds ?? [],
-      } satisfies AgentWithBindings;
-    }
-    return data;
-  },
+    get: async (id: number) => {
+      const data = await api.get<AgentWithBindings | AgentDetailResponse>(`${basePath}/${id}`);
+      if ('agent' in data) {
+        return {
+          ...data.agent,
+          toolIds: data.toolIds ?? [],
+          skillIds: data.skillIds ?? [],
+          mcpServerIds: data.mcpServerIds ?? [],
+          knowledgeBaseIds: data.knowledgeBaseIds ?? [],
+          knowledgeGraphIds: data.knowledgeGraphIds ?? [],
+        } satisfies AgentWithBindings;
+      }
+      return data;
+    },
 
-  create: (data: Partial<AgentInfo> & {
-    toolIds?: number[];
-    skillIds?: number[];
-    mcpServerIds?: number[];
-    knowledgeBaseIds?: number[];
-    templateId?: number;
-  }) => api.post<AgentInfo>('/api/v1/ai/agents', data),
+    create: (data: Partial<AgentInfo> & {
+      toolIds?: number[];
+      skillIds?: number[];
+      mcpServerIds?: number[];
+      knowledgeBaseIds?: number[];
+      knowledgeGraphIds?: number[];
+      templateId?: number;
+    }) => api.post<AgentInfo>(basePath, data),
 
-  update: (id: number, data: Partial<AgentInfo> & {
-    toolIds?: number[];
-    skillIds?: number[];
-    mcpServerIds?: number[];
-    knowledgeBaseIds?: number[];
-  }) => api.put<AgentInfo>(`/api/v1/ai/agents/${id}`, data),
+    update: (id: number, data: Partial<AgentInfo> & {
+      toolIds?: number[];
+      skillIds?: number[];
+      mcpServerIds?: number[];
+      knowledgeBaseIds?: number[];
+      knowledgeGraphIds?: number[];
+    }) => api.put<AgentInfo>(`${basePath}/${id}`, data),
 
-  delete: (id: number) => api.delete<null>(`/api/v1/ai/agents/${id}`),
+    delete: (id: number) => api.delete<null>(`${basePath}/${id}`),
 
-  templates: () => api.get<AgentTemplate[]>('/api/v1/ai/agents/templates'),
-};
+    templates: () => api.get<AgentTemplate[]>(`${basePath}/templates`),
+  };
+}
+
+export const assistantAgentApi = makeTypedAgentApi('/api/v1/ai/assistant-agents');
+export const codingAgentApi = makeTypedAgentApi('/api/v1/ai/coding-agents');
 
 export const sessionApi = {
   list: (params?: { page?: number; pageSize?: number; agentId?: number }) => {

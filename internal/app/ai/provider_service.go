@@ -11,8 +11,9 @@ import (
 )
 
 var (
-	ErrProviderNotFound   = errors.New("provider not found")
-	ErrProviderNameExists = errors.New("provider name already exists")
+	ErrProviderNotFound    = errors.New("provider not found")
+	ErrProviderNameExists  = errors.New("provider name already exists")
+	ErrInvalidProviderType = errors.New("invalid provider type")
 )
 
 type ProviderService struct {
@@ -28,6 +29,10 @@ func NewProviderService(i do.Injector) (*ProviderService, error) {
 }
 
 func (s *ProviderService) Create(name, providerType, baseURL, apiKey string) (*Provider, error) {
+	if !ValidProviderTypes[providerType] {
+		return nil, ErrInvalidProviderType
+	}
+
 	encrypted, err := crypto.Encrypt([]byte(apiKey), s.encKey)
 	if err != nil {
 		return nil, fmt.Errorf("encrypt api key: %w", err)
@@ -59,16 +64,25 @@ func (s *ProviderService) Get(id uint) (*Provider, error) {
 }
 
 func (s *ProviderService) Update(id uint, name, providerType, baseURL, apiKey string) (*Provider, error) {
+	if !ValidProviderTypes[providerType] {
+		return nil, ErrInvalidProviderType
+	}
+
 	p, err := s.repo.FindByID(id)
 	if err != nil {
 		return nil, ErrProviderNotFound
 	}
 
+	// Only reset status when connection-relevant fields change.
+	connectionChanged := p.BaseURL != baseURL || apiKey != ""
+
 	p.Name = name
 	p.Type = providerType
 	p.Protocol = ProtocolForType(providerType)
 	p.BaseURL = baseURL
-	p.Status = ProviderStatusInactive
+	if connectionChanged {
+		p.Status = ProviderStatusInactive
+	}
 
 	if apiKey != "" {
 		encrypted, err := crypto.Encrypt([]byte(apiKey), s.encKey)

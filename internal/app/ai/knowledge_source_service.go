@@ -2,87 +2,170 @@ package ai
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/samber/do/v2"
-	"gorm.io/gorm"
+
+	"metis/internal/scheduler"
 )
 
-var (
-	ErrSourceNotFound = errors.New("knowledge source not found")
-)
-
-type knowledgeGraphNodeDeleter interface {
-	DeleteNodesBySourceID(kbID uint, sourceID uint) (int64, error)
-}
-
+// KnowledgeSourceService handles business logic for the independent source pool.
 type KnowledgeSourceService struct {
-	repo      *KnowledgeSourceRepo
-	kbRepo    *KnowledgeBaseRepo
-	graphRepo knowledgeGraphNodeDeleter
+	sourceRepo *KnowledgeSourceRepo
+	assetRepo  *KnowledgeAssetRepo
+	engine     *scheduler.Engine
 }
 
 func NewKnowledgeSourceService(i do.Injector) (*KnowledgeSourceService, error) {
 	return &KnowledgeSourceService{
-		repo:      do.MustInvoke[*KnowledgeSourceRepo](i),
-		kbRepo:    do.MustInvoke[*KnowledgeBaseRepo](i),
-		graphRepo: do.MustInvoke[*KnowledgeGraphRepo](i),
+		sourceRepo: do.MustInvoke[*KnowledgeSourceRepo](i),
+		assetRepo:  do.MustInvoke[*KnowledgeAssetRepo](i),
+		engine:     do.MustInvoke[*scheduler.Engine](i),
 	}, nil
 }
 
-func (s *KnowledgeSourceService) Create(src *KnowledgeSource) error {
-	if err := s.repo.Create(src); err != nil {
-		return err
+// CreateFileSource creates a source from an uploaded file with content already extracted.
+// For markdown/text the content is ready immediately; for other formats extraction is async.
+func (s *KnowledgeSourceService) CreateFileSource(title, format, fileName string, byteSize int64, content string) (*KnowledgeSource, error) {
+	extractStatus := ExtractStatusPending
+	if format == SourceFormatMarkdown || format == SourceFormatText {
+		extractStatus = ExtractStatusCompleted
 	}
-	if err := s.kbRepo.UpdateSourceCount(src.KbID); err != nil {
-		slog.Error("failed to update kb counts after source create", "kb_id", src.KbID, "error", err)
+
+	src := &KnowledgeSource{
+		Title:         title,
+		Format:        format,
+		FileName:      fileName,
+		ByteSize:      byteSize,
+		Content:       content,
+		ExtractStatus: extractStatus,
 	}
-	return nil
+	if extractStatus == ExtractStatusCompleted && content != "" {
+		src.ContentHash = hashContent(content)
+	}
+
+	if err := s.sourceRepo.Create(src); err != nil {
+		return nil, fmt.Errorf("create file source: %w", err)
+	}
+
+	// Enqueue async extraction for non-text formats
+	if extractStatus == ExtractStatusPending {
+		if err := s.enqueueExtract(src.ID); err != nil {
+			slog.Error("failed to enqueue source extract", "source_id", src.ID, "error", err)
+		}
+	}
+
+	return src, nil
 }
 
-func (s *KnowledgeSourceService) Get(id uint) (*KnowledgeSource, error) {
-	src, err := s.repo.FindByID(id)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrSourceNotFound
-		}
-		return nil, err
+// CreateURLSource creates a source from a URL with optional crawl settings.
+func (s *KnowledgeSourceService) CreateURLSource(title, sourceURL string, crawlDepth int, urlPattern string, crawlEnabled bool, crawlSchedule string) (*KnowledgeSource, error) {
+	if title == "" {
+		title = sourceURL
+	}
+
+	src := &KnowledgeSource{
+		Title:         title,
+		Format:        SourceFormatURL,
+		SourceURL:     sourceURL,
+		CrawlDepth:    crawlDepth,
+		URLPattern:    urlPattern,
+		CrawlEnabled:  crawlEnabled,
+		CrawlSchedule: crawlSchedule,
+		ExtractStatus: ExtractStatusPending,
+	}
+	if err := s.sourceRepo.Create(src); err != nil {
+		return nil, fmt.Errorf("create url source: %w", err)
+	}
+
+	if err := s.enqueueExtract(src.ID); err != nil {
+		slog.Error("failed to enqueue source extract", "source_id", src.ID, "error", err)
 	}
 	return src, nil
 }
 
-func (s *KnowledgeSourceService) Delete(id uint) error {
-	src, err := s.repo.FindByID(id)
+// CreateTextSource creates a source with inline text content (immediately ready).
+func (s *KnowledgeSourceService) CreateTextSource(title, content string) (*KnowledgeSource, error) {
+	src := &KnowledgeSource{
+		Title:         title,
+		Format:        SourceFormatText,
+		Content:       content,
+		ByteSize:      int64(len(content)),
+		ExtractStatus: ExtractStatusCompleted,
+		ContentHash:   hashContent(content),
+	}
+	if err := s.sourceRepo.Create(src); err != nil {
+		return nil, fmt.Errorf("create text source: %w", err)
+	}
+	return src, nil
+}
+
+// Get returns a source by ID.
+func (s *KnowledgeSourceService) Get(id uint) (*KnowledgeSource, error) {
+	src, err := s.sourceRepo.FindByID(id)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrSourceNotFound
+		return nil, ErrSourceNotFound
+	}
+	return src, nil
+}
+
+// List returns paginated sources with filters.
+func (s *KnowledgeSourceService) List(params SourceListParams) ([]KnowledgeSource, int64, error) {
+	return s.sourceRepo.List(params)
+}
+
+// Delete removes a source if it is not referenced by any asset.
+// Returns a list of referencing asset IDs on conflict.
+func (s *KnowledgeSourceService) Delete(id uint) ([]uint, error) {
+	// Check references
+	refIDs, err := s.assetRepo.ListAssetIDsBySource(id)
+	if err != nil {
+		return nil, fmt.Errorf("check source refs: %w", err)
+	}
+	if len(refIDs) > 0 {
+		return refIDs, errors.New("source is referenced by knowledge assets")
+	}
+
+	if err := s.sourceRepo.Delete(id); err != nil {
+		return nil, fmt.Errorf("delete source: %w", err)
+	}
+	return nil, nil
+}
+
+// GetReferencingAssets returns the assets that reference the given source.
+func (s *KnowledgeSourceService) GetReferencingAssets(sourceID uint) ([]KnowledgeAsset, error) {
+	assetIDs, err := s.assetRepo.ListAssetIDsBySource(sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("list asset refs: %w", err)
+	}
+	if len(assetIDs) == 0 {
+		return nil, nil
+	}
+	return s.assetRepo.FindByIDs(assetIDs)
+}
+
+// GetRefCount returns the number of assets referencing a source.
+func (s *KnowledgeSourceService) GetRefCount(sourceID uint) (int64, error) {
+	return s.assetRepo.CountSourceRefs(sourceID)
+}
+
+// MarkAssetsStale marks all assets referencing this source as stale (needs rebuild).
+func (s *KnowledgeSourceService) MarkAssetsStale(sourceID uint) error {
+	assetIDs, err := s.assetRepo.ListAssetIDsBySource(sourceID)
+	if err != nil {
+		return fmt.Errorf("list asset refs: %w", err)
+	}
+	for _, aid := range assetIDs {
+		if err := s.assetRepo.UpdateStatus(aid, AssetStatusStale); err != nil {
+			slog.Error("failed to mark asset stale", "asset_id", aid, "error", err)
 		}
-		return err
-	}
-
-	// Collect all source IDs to clean up from graph (self + children)
-	sourceIDs := []uint{id}
-	childIDs, _ := s.repo.FindChildIDs(id)
-	sourceIDs = append(sourceIDs, childIDs...)
-
-	// Delete child sources (URL with depth > 0)
-	s.repo.DeleteByParentID(id)
-	if err := s.repo.Delete(id); err != nil {
-		return err
-	}
-
-	// Clean up FalkorDB graph nodes referencing deleted sources
-	for _, sid := range sourceIDs {
-		deleted, err := s.graphRepo.DeleteNodesBySourceID(src.KbID, sid)
-		if err != nil {
-			slog.Error("failed to clean graph nodes for deleted source", "source_id", sid, "kb_id", src.KbID, "error", err)
-		} else if deleted > 0 {
-			slog.Info("cleaned graph nodes for deleted source", "source_id", sid, "kb_id", src.KbID, "deleted_nodes", deleted)
-		}
-	}
-
-	if err := s.kbRepo.UpdateSourceCount(src.KbID); err != nil {
-		slog.Error("failed to update kb counts after source delete", "kb_id", src.KbID, "error", err)
 	}
 	return nil
+}
+
+func (s *KnowledgeSourceService) enqueueExtract(sourceID uint) error {
+	return s.engine.Enqueue("ai-source-extract",
+		[]byte(fmt.Sprintf(`{"sourceId":%d}`, sourceID)),
+	)
 }

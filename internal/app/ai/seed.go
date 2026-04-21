@@ -144,30 +144,81 @@ func seedAI(db *gorm.DB, enforcer *casbin.Enforcer) error {
 	}
 	seedButtons(providerMenu.ID, buttons)
 
-	// 3. 知识库管理菜单
+	// 3. 知识管理菜单（三个子菜单：知识管理、知识库、知识图谱）
+	var sourceMenu model.Menu
+	sourceMenu = model.Menu{
+		ParentID:   &knowledgeDir.ID,
+		Name:       "知识管理",
+		Type:       model.MenuTypeMenu,
+		Path:       "/ai/knowledge/sources",
+		Icon:       "FileText",
+		Permission: "ai:knowledge-source:list",
+		Sort:       0,
+	}
+	if err := upsertMenu(&sourceMenu); err != nil {
+		return err
+	}
+
+	sourceButtons := []model.Menu{
+		{Name: "上传素材", Type: model.MenuTypeButton, Permission: "ai:knowledge-source:create", Sort: 0},
+		{Name: "删除素材", Type: model.MenuTypeButton, Permission: "ai:knowledge-source:delete", Sort: 1},
+	}
+	seedButtons(sourceMenu.ID, sourceButtons)
+
 	var kbMenu model.Menu
 	kbMenu = model.Menu{
 		ParentID:   &knowledgeDir.ID,
 		Name:       "知识库",
 		Type:       model.MenuTypeMenu,
-		Path:       "/ai/knowledge",
+		Path:       "/ai/knowledge/bases",
 		Icon:       "BookOpen",
-		Permission: "ai:knowledge:list",
-		Sort:       0,
+		Permission: "ai:knowledge-base:list",
+		Sort:       1,
 	}
 	if err := upsertMenu(&kbMenu); err != nil {
 		return err
 	}
 
 	kbButtons := []model.Menu{
-		{Name: "新增知识库", Type: model.MenuTypeButton, Permission: "ai:knowledge:create", Sort: 0},
-		{Name: "编辑知识库", Type: model.MenuTypeButton, Permission: "ai:knowledge:update", Sort: 1},
-		{Name: "删除知识库", Type: model.MenuTypeButton, Permission: "ai:knowledge:delete", Sort: 2},
-		{Name: "编译知识库", Type: model.MenuTypeButton, Permission: "ai:knowledge:compile", Sort: 3},
-		{Name: "上传原料", Type: model.MenuTypeButton, Permission: "ai:knowledge:source:create", Sort: 4},
-		{Name: "删除原料", Type: model.MenuTypeButton, Permission: "ai:knowledge:source:delete", Sort: 5},
+		{Name: "新增知识库", Type: model.MenuTypeButton, Permission: "ai:knowledge-base:create", Sort: 0},
+		{Name: "编辑知识库", Type: model.MenuTypeButton, Permission: "ai:knowledge-base:update", Sort: 1},
+		{Name: "删除知识库", Type: model.MenuTypeButton, Permission: "ai:knowledge-base:delete", Sort: 2},
+		{Name: "构建知识库", Type: model.MenuTypeButton, Permission: "ai:knowledge-base:build", Sort: 3},
 	}
 	seedButtons(kbMenu.ID, kbButtons)
+
+	var kgMenu model.Menu
+	kgMenu = model.Menu{
+		ParentID:   &knowledgeDir.ID,
+		Name:       "知识图谱",
+		Type:       model.MenuTypeMenu,
+		Path:       "/ai/knowledge/graphs",
+		Icon:       "GitBranch",
+		Permission: "ai:knowledge-graph:list",
+		Sort:       2,
+	}
+	if err := upsertMenu(&kgMenu); err != nil {
+		return err
+	}
+
+	kgButtons := []model.Menu{
+		{Name: "新增知识图谱", Type: model.MenuTypeButton, Permission: "ai:knowledge-graph:create", Sort: 0},
+		{Name: "编辑知识图谱", Type: model.MenuTypeButton, Permission: "ai:knowledge-graph:update", Sort: 1},
+		{Name: "删除知识图谱", Type: model.MenuTypeButton, Permission: "ai:knowledge-graph:delete", Sort: 2},
+		{Name: "编译知识图谱", Type: model.MenuTypeButton, Permission: "ai:knowledge-graph:build", Sort: 3},
+	}
+	seedButtons(kgMenu.ID, kgButtons)
+
+	// Cleanup old knowledge menu (ai:knowledge:list)
+	for _, oldPerm := range []string{
+		"ai:knowledge:list", "ai:knowledge:create", "ai:knowledge:update",
+		"ai:knowledge:delete", "ai:knowledge:compile",
+		"ai:knowledge:source:create", "ai:knowledge:source:delete",
+	} {
+		if err := db.Where("permission = ?", oldPerm).Delete(&model.Menu{}).Error; err != nil {
+			slog.Warn("seed: failed to cleanup old knowledge menu", "permission", oldPerm, "error", err)
+		}
+	}
 
 	// 4. 工具菜单
 	var builtinToolsMenu model.Menu
@@ -413,14 +464,14 @@ func seedAI(db *gorm.DB, enforcer *casbin.Enforcer) error {
 			Toolkit:     "knowledge",
 			Name:        "search_knowledge",
 			DisplayName: "Search Knowledge",
-			Description: "Search for relevant documents in a knowledge base using full-text search.",
+			Description: "Search for relevant content across knowledge bases and knowledge graphs.",
 			ParametersSchema: model.JSONText(`{
 				"type": "object",
 				"properties": {
-					"knowledge_base_id": {"type": "integer", "description": "The ID of the knowledge base to search"},
+					"asset_ids": {"type": "array", "items": {"type": "integer"}, "description": "The IDs of knowledge assets (bases or graphs) to search"},
 					"query": {"type": "string", "description": "The search query"}
 				},
-				"required": ["knowledge_base_id", "query"]
+				"required": ["asset_ids", "query"]
 			}`),
 			IsActive: true,
 		},
@@ -528,27 +579,50 @@ func seedAI(db *gorm.DB, enforcer *casbin.Enforcer) error {
 		{"admin", "/api/v1/ai/models/:id", "PUT"},
 		{"admin", "/api/v1/ai/models/:id", "DELETE"},
 		{"admin", "/api/v1/ai/models/:id/default", "PATCH"},
-		// Knowledge bases
-		{"admin", "/api/v1/ai/knowledge-bases", "GET"},
-		{"admin", "/api/v1/ai/knowledge-bases", "POST"},
-		{"admin", "/api/v1/ai/knowledge-bases/:id", "GET"},
-		{"admin", "/api/v1/ai/knowledge-bases/:id", "PUT"},
-		{"admin", "/api/v1/ai/knowledge-bases/:id", "DELETE"},
-		{"admin", "/api/v1/ai/knowledge-bases/:id/compile", "POST"},
-		{"admin", "/api/v1/ai/knowledge-bases/:id/recompile", "POST"},
-		{"admin", "/api/v1/ai/knowledge-bases/:id/progress", "GET"},
-		// Knowledge sources
-		{"admin", "/api/v1/ai/knowledge-bases/:id/sources", "GET"},
-		{"admin", "/api/v1/ai/knowledge-bases/:id/sources", "POST"},
-		{"admin", "/api/v1/ai/knowledge-bases/:id/sources/:sid", "GET"},
-		{"admin", "/api/v1/ai/knowledge-bases/:id/sources/:sid", "DELETE"},
-		// Knowledge nodes & logs
-		{"admin", "/api/v1/ai/knowledge-bases/:id/nodes", "GET"},
-		{"admin", "/api/v1/ai/knowledge-bases/:id/nodes/:nid", "GET"},
-		{"admin", "/api/v1/ai/knowledge-bases/:id/nodes/:nid/graph", "GET"},
-		{"admin", "/api/v1/ai/knowledge-bases/:id/logs", "GET"},
-		{"admin", "/api/v1/ai/knowledge-bases/:id/graph", "GET"},
-		{"admin", "/api/v1/ai/knowledge-bases/:id/search", "GET"},
+		// Knowledge — new source pool
+		{"admin", "/api/v1/ai/knowledge/sources", "GET"},
+		{"admin", "/api/v1/ai/knowledge/sources/upload", "POST"},
+		{"admin", "/api/v1/ai/knowledge/sources/url", "POST"},
+		{"admin", "/api/v1/ai/knowledge/sources/text", "POST"},
+		{"admin", "/api/v1/ai/knowledge/sources/:id", "GET"},
+		{"admin", "/api/v1/ai/knowledge/sources/:id/content", "GET"},
+		{"admin", "/api/v1/ai/knowledge/sources/:id/references", "GET"},
+		{"admin", "/api/v1/ai/knowledge/sources/:id", "DELETE"},
+		// Knowledge — type registry
+		{"admin", "/api/v1/ai/knowledge/types", "GET"},
+		// Knowledge — graphs (KG)
+		{"admin", "/api/v1/ai/knowledge/graphs", "GET"},
+		{"admin", "/api/v1/ai/knowledge/graphs", "POST"},
+		{"admin", "/api/v1/ai/knowledge/graphs/:id", "GET"},
+		{"admin", "/api/v1/ai/knowledge/graphs/:id", "PUT"},
+		{"admin", "/api/v1/ai/knowledge/graphs/:id", "DELETE"},
+		{"admin", "/api/v1/ai/knowledge/graphs/:id/sources", "GET"},
+		{"admin", "/api/v1/ai/knowledge/graphs/:id/sources", "POST"},
+		{"admin", "/api/v1/ai/knowledge/graphs/:id/sources/:sourceId", "DELETE"},
+		{"admin", "/api/v1/ai/knowledge/graphs/:id/build", "POST"},
+		{"admin", "/api/v1/ai/knowledge/graphs/:id/rebuild", "POST"},
+		{"admin", "/api/v1/ai/knowledge/graphs/:id/progress", "GET"},
+		{"admin", "/api/v1/ai/knowledge/graphs/:id/logs", "GET"},
+		{"admin", "/api/v1/ai/knowledge/graphs/:id/nodes", "GET"},
+		{"admin", "/api/v1/ai/knowledge/graphs/:id/nodes/:nodeId", "GET"},
+		{"admin", "/api/v1/ai/knowledge/graphs/:id/nodes/:nodeId/subgraph", "GET"},
+		{"admin", "/api/v1/ai/knowledge/graphs/:id/graph", "GET"},
+		{"admin", "/api/v1/ai/knowledge/graphs/:id/search", "POST"},
+		// Knowledge — bases (KB / RAG)
+		{"admin", "/api/v1/ai/knowledge/bases", "GET"},
+		{"admin", "/api/v1/ai/knowledge/bases", "POST"},
+		{"admin", "/api/v1/ai/knowledge/bases/:id", "GET"},
+		{"admin", "/api/v1/ai/knowledge/bases/:id", "PUT"},
+		{"admin", "/api/v1/ai/knowledge/bases/:id", "DELETE"},
+		{"admin", "/api/v1/ai/knowledge/bases/:id/sources", "GET"},
+		{"admin", "/api/v1/ai/knowledge/bases/:id/sources", "POST"},
+		{"admin", "/api/v1/ai/knowledge/bases/:id/sources/:sourceId", "DELETE"},
+		{"admin", "/api/v1/ai/knowledge/bases/:id/build", "POST"},
+		{"admin", "/api/v1/ai/knowledge/bases/:id/rebuild", "POST"},
+		{"admin", "/api/v1/ai/knowledge/bases/:id/progress", "GET"},
+		{"admin", "/api/v1/ai/knowledge/bases/:id/chunks", "GET"},
+		{"admin", "/api/v1/ai/knowledge/bases/:id/logs", "GET"},
+		{"admin", "/api/v1/ai/knowledge/bases/:id/search", "POST"},
 		// Tools
 		{"admin", "/api/v1/ai/tools", "GET"},
 		{"admin", "/api/v1/ai/tools/:id", "PUT"},
@@ -595,10 +669,13 @@ func seedAI(db *gorm.DB, enforcer *casbin.Enforcer) error {
 		{"admin", "/api/v1/ai/sessions", "GET"},
 		{"admin", "/api/v1/ai/sessions", "POST"},
 		{"admin", "/api/v1/ai/sessions/:sid", "GET"},
+		{"admin", "/api/v1/ai/sessions/:sid", "PUT"},
 		{"admin", "/api/v1/ai/sessions/:sid", "DELETE"},
 		{"admin", "/api/v1/ai/sessions/:sid/messages", "POST"},
+		{"admin", "/api/v1/ai/sessions/:sid/messages/:mid", "PUT"},
 		{"admin", "/api/v1/ai/sessions/:sid/stream", "GET"},
 		{"admin", "/api/v1/ai/sessions/:sid/cancel", "POST"},
+		{"admin", "/api/v1/ai/sessions/:sid/continue", "POST"},
 		{"admin", "/api/v1/ai/sessions/:sid/images", "POST"},
 	}
 
@@ -625,6 +702,20 @@ func seedAI(db *gorm.DB, enforcer *casbin.Enforcer) error {
 		{"admin", "ai:knowledge:compile", "read"},
 		{"admin", "ai:knowledge:source:create", "read"},
 		{"admin", "ai:knowledge:source:delete", "read"},
+		// New knowledge menus
+		{"admin", "ai:knowledge-source:list", "read"},
+		{"admin", "ai:knowledge-source:create", "read"},
+		{"admin", "ai:knowledge-source:delete", "read"},
+		{"admin", "ai:knowledge-base:list", "read"},
+		{"admin", "ai:knowledge-base:create", "read"},
+		{"admin", "ai:knowledge-base:update", "read"},
+		{"admin", "ai:knowledge-base:delete", "read"},
+		{"admin", "ai:knowledge-base:build", "read"},
+		{"admin", "ai:knowledge-graph:list", "read"},
+		{"admin", "ai:knowledge-graph:create", "read"},
+		{"admin", "ai:knowledge-graph:update", "read"},
+		{"admin", "ai:knowledge-graph:delete", "read"},
+		{"admin", "ai:knowledge-graph:build", "read"},
 		// Tool registry
 		{"admin", "ai:tool:list", "read"},
 		{"admin", "ai:tool:update", "read"},

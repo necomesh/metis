@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm"
 
 	"metis/internal/database"
+	"metis/internal/model"
 	"metis/internal/pkg/crypto"
 )
 
@@ -23,12 +24,15 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	if err := db.AutoMigrate(
 		// Provider & Model
 		&Provider{}, &AIModel{}, &AILog{},
-		// Knowledge
-		&KnowledgeBase{}, &KnowledgeSource{}, &KnowledgeLog{},
+		// Knowledge (new unified model)
+		&KnowledgeAsset{}, &KnowledgeSource{}, &KnowledgeAssetSource{},
+		&RAGChunk{}, &KnowledgeLog{},
+		// Legacy knowledge table
+		&KnowledgeBase{},
 		// Tool registry
 		&Tool{}, &MCPServer{}, &Skill{},
 		// Agent bindings
-		&AgentTool{}, &AgentMCPServer{}, &AgentSkill{}, &AgentKnowledgeBase{},
+		&AgentTool{}, &AgentMCPServer{}, &AgentSkill{}, &AgentKnowledgeBase{}, &AgentKnowledgeGraph{},
 		// Agent runtime
 		&Agent{}, &AgentTemplate{}, &AgentSession{}, &SessionMessage{}, &AgentMemory{},
 	); err != nil {
@@ -103,28 +107,70 @@ func newSessionServiceForTest(t *testing.T, db *gorm.DB) *SessionService {
 	}
 }
 
-func newKnowledgeBaseServiceForTest(t *testing.T, db *gorm.DB, graphRepo *stubKnowledgeGraphRepo) *KnowledgeBaseService {
+func newKnowledgeSourceServiceForTest(t *testing.T, db *gorm.DB) *KnowledgeSourceService {
 	t.Helper()
-	return &KnowledgeBaseService{
-		repo:       &KnowledgeBaseRepo{db: &database.DB{DB: db}},
+	return &KnowledgeSourceService{
 		sourceRepo: &KnowledgeSourceRepo{db: &database.DB{DB: db}},
-		graphRepo:  graphRepo,
+		assetRepo:  &KnowledgeAssetRepo{db: &database.DB{DB: db}},
 	}
 }
 
-func newKnowledgeSourceServiceForTest(t *testing.T, db *gorm.DB, graphRepo *stubKnowledgeGraphRepo) *KnowledgeSourceService {
+func seedAgentBindingTargets(t *testing.T, db *gorm.DB) (toolIDs, skillIDs, mcpIDs, kbIDs, kgIDs []uint) {
 	t.Helper()
-	return &KnowledgeSourceService{
-		repo:      &KnowledgeSourceRepo{db: &database.DB{DB: db}},
-		kbRepo:    &KnowledgeBaseRepo{db: &database.DB{DB: db}},
-		graphRepo: graphRepo,
+
+	tools := []Tool{
+		{Name: "tool_a", DisplayName: "Tool A", ParametersSchema: model.JSONText("{}"), IsActive: true},
+		{Name: "tool_b", DisplayName: "Tool B", ParametersSchema: model.JSONText("{}"), IsActive: true},
 	}
+	for i := range tools {
+		if err := db.Create(&tools[i]).Error; err != nil {
+			t.Fatalf("seed tool: %v", err)
+		}
+		toolIDs = append(toolIDs, tools[i].ID)
+	}
+
+	skills := []Skill{
+		{Name: "skill_a", DisplayName: "Skill A", SourceType: SkillSourceUpload, IsActive: true},
+	}
+	for i := range skills {
+		if err := db.Create(&skills[i]).Error; err != nil {
+			t.Fatalf("seed skill: %v", err)
+		}
+		skillIDs = append(skillIDs, skills[i].ID)
+	}
+
+	mcps := []MCPServer{
+		{Name: "mcp_a", Transport: MCPTransportSSE, URL: "https://example.com/sse", AuthType: AuthTypeNone, IsActive: true},
+	}
+	for i := range mcps {
+		if err := db.Create(&mcps[i]).Error; err != nil {
+			t.Fatalf("seed mcp: %v", err)
+		}
+		mcpIDs = append(mcpIDs, mcps[i].ID)
+	}
+
+	assets := []KnowledgeAsset{
+		{Name: "kb_a", Category: AssetCategoryKB, Type: KBTypeNaiveChunk, Status: AssetStatusIdle},
+		{Name: "kg_a", Category: AssetCategoryKG, Type: KGTypeConceptMap, Status: AssetStatusIdle},
+	}
+	for i := range assets {
+		if err := db.Create(&assets[i]).Error; err != nil {
+			t.Fatalf("seed knowledge asset: %v", err)
+		}
+		if assets[i].Category == AssetCategoryKB {
+			kbIDs = append(kbIDs, assets[i].ID)
+		} else {
+			kgIDs = append(kgIDs, assets[i].ID)
+		}
+	}
+
+	return toolIDs, skillIDs, mcpIDs, kbIDs, kgIDs
 }
 
 // stubKnowledgeGraphRepo is a minimal stub for KnowledgeGraphRepo used in tests.
 type stubKnowledgeGraphRepo struct {
-	deleteGraphCalls     []uint
-	deleteNodesBySource  []struct{ kbID, sourceID uint }
+	deleteGraphCalls    []uint
+	deleteNodesBySource []struct{ kbID, sourceID uint }
 }
 
 func (s *stubKnowledgeGraphRepo) DeleteGraph(kbID uint) error {

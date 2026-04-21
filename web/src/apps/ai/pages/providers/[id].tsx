@@ -49,7 +49,7 @@ const STATUS_VARIANTS: Record<string, "default" | "secondary" | "outline" | "des
   deprecated: "outline",
 }
 
-const TYPE_ORDER = ["llm", "embed", "rerank", "tts", "stt", "image", ""] as const
+const TYPE_ORDER = ["llm", "embed", "rerank", "tts", "stt", "image", "other", ""] as const
 
 function groupByType(models: ModelItem[]) {
   const groups: Record<string, ModelItem[]> = {}
@@ -158,6 +158,234 @@ function ProviderInfoSection({
   )
 }
 
+// ─── Model Type Panel ───────────────────────────────────────────────────────
+
+function ModelTypePanel({
+  type,
+  rawItems,
+  keyword,
+  onKeywordChange,
+  page,
+  onPageChange,
+  canCreate,
+  canUpdate,
+  canDelete,
+  canSetDefault,
+  onCreateModel,
+  onEditModel,
+  deleteMutation,
+  setDefaultMutation,
+}: {
+  type: string
+  rawItems: ModelItem[]
+  keyword: string
+  onKeywordChange: (keyword: string) => void
+  page: number
+  onPageChange: (page: number) => void
+  canCreate: boolean
+  canUpdate: boolean
+  canDelete: boolean
+  canSetDefault: boolean
+  onCreateModel: (type: string) => void
+  onEditModel: (model: ModelItem) => void
+  deleteMutation: ReturnType<typeof useMutation<unknown, Error, number>>
+  setDefaultMutation: ReturnType<typeof useMutation<unknown, Error, number>>
+}) {
+  const { t } = useTranslation(["ai", "common"])
+
+  const filteredItems = !keyword
+    ? rawItems
+    : rawItems.filter((m) => {
+        const kw = keyword.toLowerCase()
+        return (
+          m.displayName.toLowerCase().includes(kw) ||
+          m.modelId.toLowerCase().includes(kw)
+        )
+      })
+
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / PAGE_SIZE))
+  const safePage = Math.min(page, totalPages)
+  const pageItems = filteredItems.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
+
+  return (
+    <section className="flex h-[420px] flex-col overflow-hidden rounded-2xl border border-border/50 bg-background/40">
+      <div className="flex items-center justify-between px-4 py-3">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium tracking-[0.01em] text-foreground/90">
+            {type ? t(`ai:modelTypes.${type}`) : t("ai:modelTypes.unclassified")}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="relative border-b border-border/50">
+            <Search className="absolute left-0 top-2 h-3.5 w-3.5 text-muted-foreground/70" />
+            <Input
+              placeholder={t("ai:models.searchPlaceholder")}
+              value={keyword}
+              onChange={(e) => {
+                onKeywordChange(e.target.value)
+                onPageChange(1)
+              }}
+              className="h-8 w-40 rounded-none border-0 bg-transparent px-0 pl-7 text-xs shadow-none ring-0 placeholder:text-muted-foreground/70 focus-visible:ring-0 focus-visible:outline-none"
+            />
+          </div>
+          {canCreate && type ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 rounded-full px-2.5 text-xs text-muted-foreground hover:text-foreground"
+              onClick={() => onCreateModel(type)}
+            >
+              <Plus className="mr-1 h-3.5 w-3.5" />
+              {t("ai:models.create")}
+            </Button>
+          ) : null}
+        </div>
+      </div>
+      <div className="mx-4 border-t border-border/50" />
+      {filteredItems.length === 0 ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 py-8 text-center">
+          <Cpu className="h-8 w-8 text-muted-foreground/35" />
+          <p className="text-sm text-muted-foreground">
+            {keyword ? t("ai:models.emptySearch") : t("ai:models.empty")}
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="flex-1 overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="min-w-[148px]">{t("ai:models.displayName")}</TableHead>
+                  <TableHead className="w-[110px]">{t("ai:models.modelId")}</TableHead>
+                  <TableHead className="w-[68px]">{t("ai:models.status")}</TableHead>
+                  <TableHead className="w-[44px] text-center">{t("ai:models.isDefault")}</TableHead>
+                  <DataTableActionsHead className="w-[104px] text-center">{t("common:actions")}</DataTableActionsHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {pageItems.map((m) => (
+                  <TableRow key={m.id}>
+                    <TableCell className="font-medium">{m.displayName}</TableCell>
+                    <TableCell className="font-mono text-xs text-muted-foreground">{m.modelId}</TableCell>
+                    <TableCell>
+                      <Badge variant={STATUS_VARIANTS[m.status] ?? "secondary"}>
+                        {t(`ai:statusLabels.${m.status}`, m.status)}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {m.isDefault && <Star className="mx-auto h-4 w-4 fill-yellow-500 text-yellow-500" />}
+                    </TableCell>
+                    <DataTableActionsCell className="text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        {canSetDefault && !m.isDefault && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            disabled={setDefaultMutation.isPending}
+                            onClick={() => setDefaultMutation.mutate(m.id)}
+                          >
+                            <Star className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        {canUpdate && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => onEditModel(m)}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        {canDelete && (
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-destructive hover:text-destructive"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>{t("ai:models.deleteTitle")}</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  {t("ai:models.deleteDesc", { name: m.displayName })}
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>{t("common:cancel")}</AlertDialogCancel>
+                                <AlertDialogAction
+                                  onClick={() => deleteMutation.mutate(m.id)}
+                                  disabled={deleteMutation.isPending}
+                                >
+                                  {t("ai:models.confirmDelete")}
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        )}
+                      </div>
+                    </DataTableActionsCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          <div className="flex items-center justify-between border-t border-border/50 px-4 py-2.5 text-xs text-muted-foreground">
+            <div className="flex items-center gap-1">
+              {getVisiblePages(safePage, totalPages).map((p, index) => {
+                if (p === "ellipsis") {
+                  return (
+                    <span key={`ellipsis-${safePage}-${index}`} className="px-1 text-muted-foreground/60">
+                      ...
+                    </span>
+                  )
+                }
+
+                return (
+                  <Button
+                    key={p}
+                    variant={p === safePage ? "secondary" : "ghost"}
+                    size="sm"
+                    className="h-7 min-w-7 px-1.5 text-xs"
+                    onClick={() => onPageChange(p)}
+                  >
+                    {p}
+                  </Button>
+                )
+              })}
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                disabled={safePage <= 1}
+                onClick={() => onPageChange(Math.max(1, safePage - 1))}
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                disabled={safePage >= totalPages}
+                onClick={() => onPageChange(Math.min(totalPages, safePage + 1))}
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
+    </section>
+  )
+}
+
 // ─── Model Management Section ───────────────────────────────────────────────
 
 function ModelManagementSection({ provider }: { provider: ProviderItem }) {
@@ -178,7 +406,7 @@ function ModelManagementSection({ provider }: { provider: ProviderItem }) {
     queryKey: ["ai-models", { providerId: provider.id }],
     queryFn: () =>
       api.get<PaginatedResponse<ModelItem>>(
-        `/api/v1/ai/models?providerId=${provider.id}&pageSize=100`,
+        `/api/v1/ai/models?providerId=${provider.id}&pageSize=500`,
       ),
   })
   const allModels = data?.items ?? []
@@ -203,6 +431,18 @@ function ModelManagementSection({ provider }: { provider: ProviderItem }) {
     onError: (err) => toast.error(err.message),
   })
 
+  function handleCreateModel(type: string) {
+    setEditingModel(null)
+    setCreatingType(type)
+    setModelFormOpen(true)
+  }
+
+  function handleEditModel(model: ModelItem) {
+    setEditingModel(model)
+    setCreatingType(null)
+    setModelFormOpen(true)
+  }
+
   return (
     <div className="space-y-4">
       {isLoading ? (
@@ -211,211 +451,25 @@ function ModelManagementSection({ provider }: { provider: ProviderItem }) {
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          {groups.map(({ type, items: rawItems }) => {
-            const keyword = searchByType[type] ?? ""
-            const filteredItems = !keyword
-              ? rawItems
-              : rawItems.filter((m) => {
-                  const kw = keyword.toLowerCase()
-                  return (
-                    m.displayName.toLowerCase().includes(kw) ||
-                    m.modelId.toLowerCase().includes(kw)
-                  )
-                })
-
-            return (
-            <section key={type} className="flex h-[420px] flex-col overflow-hidden rounded-2xl border border-border/50 bg-background/40">
-              <div className="flex items-center justify-between px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium tracking-[0.01em] text-foreground/90">
-                    {type ? t(`ai:modelTypes.${type}`) : t("ai:modelTypes.unclassified")}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="relative border-b border-border/50">
-                    <Search className="absolute left-0 top-2 h-3.5 w-3.5 text-muted-foreground/70" />
-                    <Input
-                      placeholder={t("ai:models.searchPlaceholder")}
-                      value={keyword}
-                      onChange={(e) => {
-                        const nextKeyword = e.target.value
-                        setSearchByType((prev) => ({ ...prev, [type]: nextKeyword }))
-                        setPageByType((prev) => ({ ...prev, [type]: 1 }))
-                      }}
-                      className="h-8 w-40 rounded-none border-0 bg-transparent px-0 pl-7 text-xs shadow-none ring-0 placeholder:text-muted-foreground/70 focus-visible:ring-0 focus-visible:outline-none"
-                    />
-                  </div>
-                  {canCreateModel && type ? (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 rounded-full px-2.5 text-xs text-muted-foreground hover:text-foreground"
-                      onClick={() => {
-                        setEditingModel(null)
-                        setCreatingType(type)
-                        setModelFormOpen(true)
-                      }}
-                    >
-                      <Plus className="mr-1 h-3.5 w-3.5" />
-                      {t("ai:models.create")}
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-              <div className="mx-4 border-t border-border/50" />
-              {filteredItems.length === 0 ? (
-                <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 py-8 text-center">
-                  <Cpu className="h-8 w-8 text-muted-foreground/35" />
-                  <p className="text-sm text-muted-foreground">{keyword ? t("ai:models.empty") : t("ai:models.empty")}</p>
-                </div>
-              ) : (
-                (() => {
-                  const page = pageByType[type] ?? 1
-                  const totalPages = Math.max(1, Math.ceil(filteredItems.length / PAGE_SIZE))
-                  const safePage = Math.min(page, totalPages)
-                  const pageItems = filteredItems.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
-
-                  return (
-                    <>
-                      <div className="flex-1 overflow-hidden">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead className="min-w-[148px]">{t("ai:models.displayName")}</TableHead>
-                              <TableHead className="w-[110px]">{t("ai:models.modelId")}</TableHead>
-                              <TableHead className="w-[68px]">{t("ai:models.status")}</TableHead>
-                              <TableHead className="w-[44px] text-center">{t("ai:models.isDefault")}</TableHead>
-                              <DataTableActionsHead className="w-[104px] text-center">{t("common:actions")}</DataTableActionsHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {pageItems.map((m) => (
-                              <TableRow key={m.id}>
-                                <TableCell className="font-medium">{m.displayName}</TableCell>
-                                <TableCell className="font-mono text-xs text-muted-foreground">{m.modelId}</TableCell>
-                                <TableCell>
-                                  <Badge variant={STATUS_VARIANTS[m.status] ?? "secondary"}>
-                                    {t(`ai:statusLabels.${m.status}`, m.status)}
-                                  </Badge>
-                                </TableCell>
-                                <TableCell className="text-center">
-                                  {m.isDefault && <Star className="mx-auto h-4 w-4 fill-yellow-500 text-yellow-500" />}
-                                </TableCell>
-                                <DataTableActionsCell className="text-center">
-                                  <div className="flex items-center justify-center gap-1">
-                                    {canSetDefault && !m.isDefault && (
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-8 w-8"
-                                        disabled={setDefaultMutation.isPending}
-                                        onClick={() => setDefaultMutation.mutate(m.id)}
-                                      >
-                                        <Star className="h-3.5 w-3.5" />
-                                      </Button>
-                                    )}
-                                    {canUpdateModel && (
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-8 w-8"
-                                        onClick={() => {
-                                          setEditingModel(m)
-                                          setCreatingType(null)
-                                          setModelFormOpen(true)
-                                        }}
-                                      >
-                                        <Pencil className="h-3.5 w-3.5" />
-                                      </Button>
-                                    )}
-                                    {canDeleteModel && (
-                                      <AlertDialog>
-                                        <AlertDialogTrigger asChild>
-                                          <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            className="h-8 w-8 text-destructive hover:text-destructive"
-                                          >
-                                            <Trash2 className="h-3.5 w-3.5" />
-                                          </Button>
-                                        </AlertDialogTrigger>
-                                        <AlertDialogContent>
-                                          <AlertDialogHeader>
-                                            <AlertDialogTitle>{t("ai:models.deleteTitle")}</AlertDialogTitle>
-                                            <AlertDialogDescription>
-                                              {t("ai:models.deleteDesc", { name: m.displayName })}
-                                            </AlertDialogDescription>
-                                          </AlertDialogHeader>
-                                          <AlertDialogFooter>
-                                            <AlertDialogCancel>{t("common:cancel")}</AlertDialogCancel>
-                                            <AlertDialogAction
-                                              onClick={() => deleteMutation.mutate(m.id)}
-                                              disabled={deleteMutation.isPending}
-                                            >
-                                              {t("ai:models.confirmDelete")}
-                                            </AlertDialogAction>
-                                          </AlertDialogFooter>
-                                        </AlertDialogContent>
-                                      </AlertDialog>
-                                    )}
-                                  </div>
-                                </DataTableActionsCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </div>
-                      <div className="flex items-center justify-between border-t border-border/50 px-4 py-2.5 text-xs text-muted-foreground">
-                        <div className="flex items-center gap-1">
-                          {getVisiblePages(safePage, totalPages).map((page, index) => {
-                            if (page === "ellipsis") {
-                              return (
-                                <span key={`ellipsis-${safePage}-${index}`} className="px-1 text-muted-foreground/60">
-                                  ...
-                                </span>
-                              )
-                            }
-
-                            return (
-                              <Button
-                                key={page}
-                                variant={page === safePage ? "secondary" : "ghost"}
-                                size="sm"
-                                className="h-7 min-w-7 px-1.5 text-xs"
-                                onClick={() => setPageByType((prev) => ({ ...prev, [type]: page }))}
-                              >
-                                {page}
-                              </Button>
-                            )
-                          })}
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            disabled={safePage <= 1}
-                            onClick={() => setPageByType((prev) => ({ ...prev, [type]: Math.max(1, safePage - 1) }))}
-                          >
-                            <ChevronLeft className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            disabled={safePage >= totalPages}
-                            onClick={() => setPageByType((prev) => ({ ...prev, [type]: Math.min(totalPages, safePage + 1) }))}
-                          >
-                            <ChevronRight className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                      </div>
-                    </>
-                  )
-                })()
-              )}
-            </section>
-          )})}
+          {groups.map(({ type, items: rawItems }) => (
+            <ModelTypePanel
+              key={type}
+              type={type}
+              rawItems={rawItems}
+              keyword={searchByType[type] ?? ""}
+              onKeywordChange={(kw) => setSearchByType((prev) => ({ ...prev, [type]: kw }))}
+              page={pageByType[type] ?? 1}
+              onPageChange={(p) => setPageByType((prev) => ({ ...prev, [type]: p }))}
+              canCreate={canCreateModel}
+              canUpdate={canUpdateModel}
+              canDelete={canDeleteModel}
+              canSetDefault={canSetDefault}
+              onCreateModel={handleCreateModel}
+              onEditModel={handleEditModel}
+              deleteMutation={deleteMutation}
+              setDefaultMutation={setDefaultMutation}
+            />
+          ))}
         </div>
       )}
 
@@ -500,6 +554,15 @@ export function Component() {
 
   return (
     <div className="space-y-4">
+      <nav className="flex items-center gap-1.5 text-sm text-muted-foreground">
+        <Link to="/ai/providers" className="inline-flex items-center gap-1 transition-colors hover:text-foreground">
+          <ArrowLeft className="h-3.5 w-3.5" />
+          {t("ai:providers.backToList")}
+        </Link>
+        <span className="text-muted-foreground/50">/</span>
+        <span className="text-foreground">{provider.name}</span>
+      </nav>
+
       <ProviderInfoSection
         provider={provider}
         canUpdate={canUpdate}
