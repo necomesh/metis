@@ -17,6 +17,7 @@ import (
 // registerSmartSteps registers all smart engine step definitions.
 func registerSmartSteps(sc *godog.ScenarioContext, bc *bddContext) {
 	sc.Given(`^已基于协作规范发布 VPN 开通服务（智能引擎）$`, bc.givenSmartServicePublished)
+	sc.Given(`^已基于协作规范发布 VPN 服务（智能引擎）$`, bc.givenSmartServicePublished)
 	sc.Given(`^"([^"]*)" 已创建 VPN 工单，访问原因为 "([^"]*)"$`, bc.givenSmartTicketCreated)
 	sc.Given(`^智能引擎置信度阈值设为 ([0-9.]+)$`, bc.givenConfidenceThreshold)
 	sc.Given(`^"([^"]*)" 已创建 VPN 工单（使用缺失参与者的工作流）$`, bc.givenSmartTicketMissingParticipant)

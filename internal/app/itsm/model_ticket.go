@@ -169,7 +169,7 @@ type TicketAssignment struct {
 	model.BaseModel
 	TicketID        uint       `json:"ticketId" gorm:"not null;index"`
 	ActivityID      uint       `json:"activityId" gorm:"not null;index"`
-	ParticipantType string     `json:"participantType" gorm:"size:32;not null"` // user | requester_manager | position | department
+	ParticipantType string     `json:"participantType" gorm:"size:32;not null"` // user | requester_manager | position | department | position_department
 	UserID          *uint      `json:"userId" gorm:"index"`
 	PositionID      *uint      `json:"positionId" gorm:"index"`
 	DepartmentID    *uint      `json:"departmentId" gorm:"index"`

@@ -53,6 +53,57 @@ func (r *TicketRepo) FindByCode(code string) (*Ticket, error) {
 	return &t, nil
 }
 
+func (r *TicketRepo) assignmentOperatorCondition(alias string, userID uint, positionIDs []uint, deptIDs []uint) *gorm.DB {
+	col := func(name string) string {
+		return fmt.Sprintf("%s.%s", alias, name)
+	}
+
+	cond := r.db.Where(fmt.Sprintf("%s = ? OR %s = ?", col("user_id"), col("assignee_id")), userID, userID)
+	if len(positionIDs) > 0 && len(deptIDs) > 0 {
+		cond = cond.Or(
+			r.db.Where(
+				fmt.Sprintf("%s = ? AND %s IN ? AND %s IN ?", col("participant_type"), col("position_id"), col("department_id")),
+				"position_department", positionIDs, deptIDs,
+			),
+		)
+		cond = cond.Or(
+			r.db.Where(
+				fmt.Sprintf("COALESCE(%s, '') = '' AND %s IN ? AND %s IN ?", col("participant_type"), col("position_id"), col("department_id")),
+				positionIDs, deptIDs,
+			),
+		)
+	}
+	if len(positionIDs) > 0 {
+		cond = cond.Or(
+			r.db.Where(
+				fmt.Sprintf("%s = ? AND %s IN ?", col("participant_type"), col("position_id")),
+				"position", positionIDs,
+			),
+		)
+		cond = cond.Or(
+			r.db.Where(
+				fmt.Sprintf("COALESCE(%s, '') = '' AND %s IN ? AND %s IS NULL", col("participant_type"), col("position_id"), col("department_id")),
+				positionIDs,
+			),
+		)
+	}
+	if len(deptIDs) > 0 {
+		cond = cond.Or(
+			r.db.Where(
+				fmt.Sprintf("%s = ? AND %s IN ?", col("participant_type"), col("department_id")),
+				"department", deptIDs,
+			),
+		)
+		cond = cond.Or(
+			r.db.Where(
+				fmt.Sprintf("COALESCE(%s, '') = '' AND %s IN ? AND %s IS NULL", col("participant_type"), col("department_id"), col("position_id")),
+				deptIDs,
+			),
+		)
+	}
+	return cond
+}
+
 func (r *TicketRepo) Update(id uint, updates map[string]any) error {
 	return r.db.Model(&Ticket{}).Where("id = ?", id).Updates(updates).Error
 }
@@ -124,7 +175,6 @@ type TodoListParams struct {
 }
 
 // ListTodo returns active tickets where the user has an assignment on an active activity.
-// Matches by userID, positionIDs, or deptIDs on TicketAssignment.
 func (r *TicketRepo) ListTodo(params TodoListParams) ([]Ticket, int64, error) {
 	activeStatuses := []string{TicketStatusPending, TicketStatusInProgress, TicketStatusWaitingApproval}
 
@@ -141,15 +191,7 @@ func (r *TicketRepo) ListTodo(params TodoListParams) ([]Ticket, int64, error) {
 			q = q.Where("itsm_tickets.status IN ?", activeStatuses)
 		}
 
-		// Multi-dimensional participant matching
-		conditions := r.db.Where("a.user_id = ?", params.UserID)
-		if len(params.PositionIDs) > 0 {
-			conditions = conditions.Or("a.position_id IN ?", params.PositionIDs)
-		}
-		if len(params.DeptIDs) > 0 {
-			conditions = conditions.Or("a.department_id IN ?", params.DeptIDs)
-		}
-		q = q.Where(conditions)
+		q = q.Where(r.assignmentOperatorCondition("a", params.UserID, params.PositionIDs, params.DeptIDs))
 
 		if params.Keyword != "" {
 			like := "%" + params.Keyword + "%"
@@ -268,14 +310,7 @@ type ApprovalItem struct {
 
 // ListApprovals returns pending approval items: workflow approvals (via assignment) and AI decision confirmations (pending_approval status).
 func (r *TicketRepo) ListApprovals(userID uint, positionIDs []uint, deptIDs []uint, page, pageSize int) ([]ApprovalItem, int64, error) {
-	// Build user matching condition for workflow approvals
-	userCond := r.db.Where("a.user_id = ? OR a.assignee_id = ?", userID, userID)
-	if len(positionIDs) > 0 {
-		userCond = userCond.Or("a.position_id IN ?", positionIDs)
-	}
-	if len(deptIDs) > 0 {
-		userCond = userCond.Or("a.department_id IN ?", deptIDs)
-	}
+	userCond := r.assignmentOperatorCondition("a", userID, positionIDs, deptIDs)
 
 	// Single query with OR: workflow approvals via assignment OR AI confirmations via status
 	baseQuery := r.db.Table("itsm_ticket_activities AS act").
@@ -332,13 +367,7 @@ func (r *TicketRepo) ListApprovals(userID uint, positionIDs []uint, deptIDs []ui
 
 // CountApprovals returns the combined count of pending workflow approvals and AI decision confirmations.
 func (r *TicketRepo) CountApprovals(userID uint, positionIDs []uint, deptIDs []uint) (int64, error) {
-	userCond := r.db.Where("a.user_id = ? OR a.assignee_id = ?", userID, userID)
-	if len(positionIDs) > 0 {
-		userCond = userCond.Or("a.position_id IN ?", positionIDs)
-	}
-	if len(deptIDs) > 0 {
-		userCond = userCond.Or("a.department_id IN ?", deptIDs)
-	}
+	userCond := r.assignmentOperatorCondition("a", userID, positionIDs, deptIDs)
 
 	query := r.db.Table("itsm_ticket_activities AS act").
 		Joins("JOIN itsm_tickets AS t ON t.id = act.ticket_id").

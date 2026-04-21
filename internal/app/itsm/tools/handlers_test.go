@@ -33,15 +33,29 @@ func (m *memStateStore) SaveState(sessionID uint, state *ServiceDeskState) error
 // stubOperator implements ServiceDeskOperator for unit tests.
 // Only LoadService is needed for draft_prepare tests.
 type stubOperator struct {
-	detail *ServiceDetail
+	detail             *ServiceDetail
+	details            map[uint]*ServiceDetail
+	createdServiceID   uint
+	createdSummary     string
+	createdFormData    map[string]any
+	validatedServiceID uint
+	validatedFormData  map[string]any
 }
 
 func (s *stubOperator) MatchServices(query string) ([]ServiceMatch, error) { return nil, nil }
 func (s *stubOperator) LoadService(serviceID uint) (*ServiceDetail, error) {
+	if s.details != nil {
+		if detail, ok := s.details[serviceID]; ok {
+			return detail, nil
+		}
+	}
 	return s.detail, nil
 }
 func (s *stubOperator) CreateTicket(userID uint, serviceID uint, summary string, formData map[string]any, sessionID uint) (*TicketResult, error) {
-	return nil, nil
+	s.createdServiceID = serviceID
+	s.createdSummary = summary
+	s.createdFormData = formData
+	return &TicketResult{TicketID: 123, TicketCode: "TICK-000123", Status: "in_progress"}, nil
 }
 func (s *stubOperator) ListMyTickets(userID uint, status string) ([]TicketSummary, error) {
 	return nil, nil
@@ -50,7 +64,258 @@ func (s *stubOperator) WithdrawTicket(userID uint, ticketCode string, reason str
 	return nil
 }
 func (s *stubOperator) ValidateParticipants(serviceID uint, formData map[string]any) (*ParticipantValidation, error) {
+	s.validatedServiceID = serviceID
+	s.validatedFormData = formData
 	return &ParticipantValidation{OK: true}, nil
+}
+
+func vpnServiceDetail(serviceID uint) *ServiceDetail {
+	return &ServiceDetail{
+		ServiceID: serviceID,
+		Name:      "VPN 开通申请",
+		FormFields: []FormField{
+			{Key: "vpn_account", Label: "VPN账号", Type: "text", Required: true},
+			{Key: "device_usage", Label: "设备与用途说明", Type: "textarea", Required: true},
+			{Key: "request_kind", Label: "访问原因", Type: "textarea", Required: true},
+		},
+		FieldsHash: "vpn123",
+	}
+}
+
+func TestServiceDeskFlow_UsesLoadedServiceAndConfirmedDraftWhenModelFallsBackToIndex(t *testing.T) {
+	store := newMemStateStore()
+	op := &stubOperator{details: map[uint]*ServiceDetail{5: vpnServiceDetail(5)}}
+	ctx := context.WithValue(context.Background(), app.SessionIDKey, uint(1))
+
+	store.states[1] = &ServiceDeskState{Stage: "candidates_ready", CandidateServiceIDs: []uint{5}, TopMatchServiceID: 5, ConfirmationRequired: true}
+	if _, err := serviceConfirmHandler(store)(ctx, 1, []byte(`{"service_id":1}`)); err != nil {
+		t.Fatalf("confirm candidate index: %v", err)
+	}
+	if _, err := serviceLoadHandler(op, store)(ctx, 1, []byte(`{"service_id":5}`)); err != nil {
+		t.Fatalf("load resolved service: %v", err)
+	}
+	draftArgs, _ := json.Marshal(map[string]any{
+		"summary": "VPN 开通申请 - 账号：wenhaowu@dev.com，设备：安卓手机，用途：线上支持",
+		"form_data": map[string]any{
+			"VPN账号":   "wenhaowu@dev.com",
+			"设备与用途说明": "安卓手机",
+			"访问原因":    "线上支持",
+		},
+	})
+	result, err := draftPrepareHandler(op, store)(ctx, 1, draftArgs)
+	if err != nil {
+		t.Fatalf("prepare draft: %v", err)
+	}
+	var draftResp struct {
+		OK       bool           `json:"ok"`
+		FormData map[string]any `json:"form_data"`
+	}
+	if err := json.Unmarshal(result, &draftResp); err != nil {
+		t.Fatalf("unmarshal draft response: %v", err)
+	}
+	if !draftResp.OK {
+		t.Fatalf("expected draft to be ok, got %s", string(result))
+	}
+	if draftResp.FormData["vpn_account"] != "wenhaowu@dev.com" ||
+		draftResp.FormData["device_usage"] != "安卓手机" ||
+		draftResp.FormData["request_kind"] != "线上支持" {
+		t.Fatalf("expected label keys to be canonicalized, got %+v", draftResp.FormData)
+	}
+	if _, err := draftConfirmHandler(op, store)(ctx, 1, []byte(`{}`)); err != nil {
+		t.Fatalf("confirm draft: %v", err)
+	}
+	if _, err := validateParticipantsHandler(op, store)(ctx, 1, []byte(`{"service_id":1}`)); err != nil {
+		t.Fatalf("validate participants with candidate index: %v", err)
+	}
+	if op.validatedServiceID != 5 || op.validatedFormData["vpn_account"] != "wenhaowu@dev.com" {
+		t.Fatalf("expected participant validation to use loaded service and draft data, got service=%d data=%+v", op.validatedServiceID, op.validatedFormData)
+	}
+	if _, err := ticketCreateHandler(op, store)(ctx, 1, []byte(`{"service_id":1,"summary":"ignored by confirmed draft"}`)); err != nil {
+		t.Fatalf("create ticket with candidate index: %v", err)
+	}
+	if op.createdServiceID != 5 {
+		t.Fatalf("expected ticket to be created with service 5, got %d", op.createdServiceID)
+	}
+	if op.createdSummary != "VPN 开通申请 - 账号：wenhaowu@dev.com，设备：安卓手机，用途：线上支持" {
+		t.Fatalf("expected confirmed draft summary to be used, got %q", op.createdSummary)
+	}
+	if op.createdFormData["request_kind"] != "线上支持" {
+		t.Fatalf("expected confirmed draft form data to be used, got %+v", op.createdFormData)
+	}
+}
+
+func TestDraftPrepare_MissingRequiredFormDataDoesNotAdvanceState(t *testing.T) {
+	store := newMemStateStore()
+	op := &stubOperator{detail: vpnServiceDetail(5)}
+	store.states[1] = &ServiceDeskState{Stage: "service_loaded", LoadedServiceID: 5, FieldsHash: "vpn123"}
+	ctx := context.WithValue(context.Background(), app.SessionIDKey, uint(1))
+
+	result, err := draftPrepareHandler(op, store)(ctx, 1, []byte(`{"summary":"只有摘要"}`))
+	if err != nil {
+		t.Fatalf("prepare draft without form data: %v", err)
+	}
+	var resp struct {
+		OK       bool `json:"ok"`
+		Warnings []struct {
+			Type  string `json:"type"`
+			Field string `json:"field"`
+		} `json:"warnings"`
+	}
+	if err := json.Unmarshal(result, &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.OK {
+		t.Fatalf("expected missing required fields to block draft, got %s", string(result))
+	}
+	if len(resp.Warnings) != 3 {
+		t.Fatalf("expected 3 missing required warnings, got %+v", resp.Warnings)
+	}
+	if state := store.states[1]; state.Stage != "service_loaded" || state.DraftVersion != 0 {
+		t.Fatalf("state should not advance on blocked draft: %+v", state)
+	}
+}
+
+func TestServiceLoad_IsIdempotentAfterDraftConfirmed(t *testing.T) {
+	store := newMemStateStore()
+	op := &stubOperator{details: map[uint]*ServiceDetail{5: vpnServiceDetail(5)}}
+	store.states[1] = &ServiceDeskState{
+		Stage:                 "confirmed",
+		CandidateServiceIDs:   []uint{5},
+		ConfirmedServiceID:    5,
+		LoadedServiceID:       5,
+		DraftSummary:          "保留草稿",
+		DraftFormData:         map[string]any{"vpn_account": "wenhaowu@dev.com"},
+		DraftVersion:          1,
+		ConfirmedDraftVersion: 1,
+		FieldsHash:            "vpn123",
+	}
+	ctx := context.WithValue(context.Background(), app.SessionIDKey, uint(1))
+
+	if _, err := serviceLoadHandler(op, store)(ctx, 1, []byte(`{"service_id":1}`)); err != nil {
+		t.Fatalf("idempotent load with candidate index: %v", err)
+	}
+	state := store.states[1]
+	if state.Stage != "confirmed" || state.DraftSummary != "保留草稿" || state.DraftVersion != 1 || state.ConfirmedDraftVersion != 1 {
+		t.Fatalf("idempotent load should preserve confirmed draft state, got %+v", state)
+	}
+}
+
+func TestServiceConfirm_AcceptsCandidateIndex(t *testing.T) {
+	store := newMemStateStore()
+	store.states[1] = &ServiceDeskState{
+		Stage:               "candidates_ready",
+		CandidateServiceIDs: []uint{5},
+		TopMatchServiceID:   5,
+	}
+	handler := serviceConfirmHandler(store)
+	ctx := context.WithValue(context.Background(), app.SessionIDKey, uint(1))
+
+	result, err := handler(ctx, 1, []byte(`{"service_id":1}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var resp struct {
+		OK                 bool   `json:"ok"`
+		ServiceID          uint   `json:"service_id"`
+		ConfirmedServiceID uint   `json:"confirmed_service_id"`
+		ResolvedFrom       string `json:"resolved_from"`
+		NextRequiredTool   string `json:"next_required_tool"`
+	}
+	if err := json.Unmarshal(result, &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if !resp.OK || resp.ServiceID != 5 || resp.ConfirmedServiceID != 5 {
+		t.Fatalf("expected candidate index to resolve to service 5, got %+v", resp)
+	}
+	if resp.ResolvedFrom != "candidate_index" {
+		t.Fatalf("expected resolved_from=candidate_index, got %q", resp.ResolvedFrom)
+	}
+	if resp.NextRequiredTool != "itsm.service_load" {
+		t.Fatalf("expected next_required_tool=itsm.service_load, got %q", resp.NextRequiredTool)
+	}
+	state := store.states[1]
+	if state.Stage != "service_selected" || state.ConfirmedServiceID != 5 {
+		t.Fatalf("unexpected state after confirm: %+v", state)
+	}
+}
+
+func TestServiceConfirm_AcceptsCandidateIndexInMultiCandidateList(t *testing.T) {
+	store := newMemStateStore()
+	store.states[1] = &ServiceDeskState{
+		Stage:               "candidates_ready",
+		CandidateServiceIDs: []uint{5, 8},
+		TopMatchServiceID:   5,
+	}
+	handler := serviceConfirmHandler(store)
+	ctx := context.WithValue(context.Background(), app.SessionIDKey, uint(1))
+
+	result, err := handler(ctx, 1, []byte(`{"service_id":2}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var resp struct {
+		ServiceID    uint   `json:"service_id"`
+		ResolvedFrom string `json:"resolved_from"`
+	}
+	if err := json.Unmarshal(result, &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.ServiceID != 8 || resp.ResolvedFrom != "candidate_index" {
+		t.Fatalf("expected second candidate index to resolve to service 8, got %+v", resp)
+	}
+	if got := store.states[1].ConfirmedServiceID; got != 8 {
+		t.Fatalf("expected confirmed service id 8, got %d", got)
+	}
+}
+
+func TestServiceConfirm_AcceptsExactCandidateID(t *testing.T) {
+	store := newMemStateStore()
+	store.states[1] = &ServiceDeskState{
+		Stage:               "candidates_ready",
+		CandidateServiceIDs: []uint{5, 8},
+		TopMatchServiceID:   5,
+	}
+	handler := serviceConfirmHandler(store)
+	ctx := context.WithValue(context.Background(), app.SessionIDKey, uint(1))
+
+	result, err := handler(ctx, 1, []byte(`{"service_id":8}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var resp struct {
+		ServiceID    uint   `json:"service_id"`
+		ResolvedFrom string `json:"resolved_from"`
+	}
+	if err := json.Unmarshal(result, &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.ServiceID != 8 || resp.ResolvedFrom != "service_id" {
+		t.Fatalf("expected exact service id 8, got %+v", resp)
+	}
+	if got := store.states[1].ConfirmedServiceID; got != 8 {
+		t.Fatalf("expected confirmed service id 8, got %d", got)
+	}
+}
+
+func TestServiceConfirm_RejectsUnknownIDOrIndex(t *testing.T) {
+	store := newMemStateStore()
+	store.states[1] = &ServiceDeskState{
+		Stage:               "candidates_ready",
+		CandidateServiceIDs: []uint{5, 8},
+		TopMatchServiceID:   5,
+	}
+	handler := serviceConfirmHandler(store)
+	ctx := context.WithValue(context.Background(), app.SessionIDKey, uint(1))
+
+	if _, err := handler(ctx, 1, []byte(`{"service_id":9}`)); err == nil {
+		t.Fatal("expected unknown service id/index to fail")
+	}
+	if state := store.states[1]; state.Stage != "candidates_ready" || state.ConfirmedServiceID != 0 {
+		t.Fatalf("state should remain unchanged after failed confirm: %+v", state)
+	}
 }
 
 func TestDraftPrepare_MultivalueRoutingField_ResolvedValues(t *testing.T) {

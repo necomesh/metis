@@ -540,17 +540,10 @@ func (s *TicketService) assignmentCanAct(activityID uint, operatorID uint, posit
 	if operatorID == 0 {
 		return false
 	}
-	conditions := s.ticketRepo.DB().Where("user_id = ? OR assignee_id = ?", operatorID, operatorID)
-	if len(positionIDs) > 0 {
-		conditions = conditions.Or("position_id IN ?", positionIDs)
-	}
-	if len(deptIDs) > 0 {
-		conditions = conditions.Or("department_id IN ?", deptIDs)
-	}
 	var count int64
 	s.ticketRepo.DB().Model(&TicketAssignment{}).
 		Where("activity_id = ? AND status = ?", activityID, AssignmentPending).
-		Where(conditions).
+		Where(s.ticketRepo.assignmentOperatorCondition("itsm_ticket_assignments", operatorID, positionIDs, deptIDs)).
 		Count(&count)
 	return count > 0
 }
@@ -1255,9 +1248,14 @@ func (s *TicketService) DenyActivity(ticketID uint, activityID uint, operatorID 
 
 // verifyApprover checks that the operator is assigned to the given activity.
 func (s *TicketService) verifyApprover(activityID uint, operatorID uint) error {
+	if operatorID == 0 {
+		return ErrNotApprover
+	}
+	posIDs, deptIDs := s.resolveUserOrg(operatorID)
 	var count int64
 	s.ticketRepo.DB().Model(&TicketAssignment{}).
-		Where("activity_id = ? AND (user_id = ? OR assignee_id = ?)", activityID, operatorID, operatorID).
+		Where("activity_id = ? AND status = ?", activityID, AssignmentPending).
+		Where(s.ticketRepo.assignmentOperatorCondition("itsm_ticket_assignments", operatorID, posIDs, deptIDs)).
 		Count(&count)
 	if count == 0 {
 		return ErrNotApprover
@@ -1277,11 +1275,15 @@ func (s *TicketService) canActOnPendingApprovalTx(tx *gorm.DB, activity TicketAc
 	if activity.Status != engine.ActivityPendingApproval {
 		return false, nil
 	}
+	if operatorID == 0 {
+		return false, nil
+	}
+	posIDs, deptIDs := s.resolveUserOrg(operatorID)
 
 	var count int64
 	query := tx.Model(&TicketAssignment{}).
 		Where("activity_id = ? AND status = ?", activity.ID, AssignmentPending).
-		Where("user_id = ? OR assignee_id = ?", operatorID, operatorID)
+		Where(s.ticketRepo.assignmentOperatorCondition("itsm_ticket_assignments", operatorID, posIDs, deptIDs))
 
 	if err := query.Count(&count).Error; err != nil {
 		return false, err
@@ -1488,8 +1490,10 @@ func (s *TicketService) Claim(ticketID, activityID, operatorID uint) (*Ticket, e
 
 	// Find the operator's pending assignment for this activity
 	var assignment TicketAssignment
-	if err := db.Where("activity_id = ? AND (user_id = ? OR assignee_id = ?) AND status = ?",
-		activityID, operatorID, operatorID, AssignmentPending).First(&assignment).Error; err != nil {
+	posIDs, deptIDs := s.resolveUserOrg(operatorID)
+	if err := db.Where("activity_id = ? AND status = ?", activityID, AssignmentPending).
+		Where(s.ticketRepo.assignmentOperatorCondition("itsm_ticket_assignments", operatorID, posIDs, deptIDs)).
+		First(&assignment).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNoActiveAssignment
 		}

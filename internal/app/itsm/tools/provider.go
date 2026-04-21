@@ -35,11 +35,11 @@ func AllTools() []ITSMTool {
 		{
 			Name:        "itsm.service_confirm",
 			DisplayName: "服务确认",
-			Description: "当服务匹配返回多个候选且用户明确选择某个候选时，确认并锁定为当前后续操作目标。service_id 是 service_match 返回的 matches 数组中对应项的 id 字段。",
+			Description: "当服务匹配需要用户确认且用户明确选择某个候选时，确认并锁定为当前后续操作目标。service_id 优先使用 service_match 返回的 matches 数组中对应项的 id 字段；如果用户只表达“是的”“第一个”等候选序号，也可以传 1-based 候选序号，工具会解析为真实服务 ID。",
 			ParametersSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
-					"service_id": {"type": "integer", "description": "用户选择的服务 ID（必须在 service_match 返回的候选列表中）"}
+					"service_id": {"type": "integer", "description": "用户选择的真实服务 ID；或 1-based 候选序号（例如第一个候选传 1）"}
 				},
 				"required": ["service_id"]
 			}`),
@@ -47,11 +47,11 @@ func AllTools() []ITSMTool {
 		{
 			Name:        "itsm.service_load",
 			DisplayName: "服务加载",
-			Description: "加载指定服务的协作规范、表单定义和动作配置；协作规范为主，流程图 JSON 仅参考。",
+			Description: "加载指定服务的协作规范、表单定义和动作配置；service_id 可传真实服务 ID 或 1-based 候选序号，工具会以当前已确认/已加载服务为准；协作规范为主，流程图 JSON 仅参考。",
 			ParametersSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
-					"service_id": {"type": "integer", "description": "服务定义 ID"}
+					"service_id": {"type": "integer", "description": "真实服务定义 ID，或 service_match 返回候选的 1-based 序号"}
 				},
 				"required": ["service_id"]
 			}`),
@@ -68,7 +68,7 @@ func AllTools() []ITSMTool {
 		{
 			Name:        "itsm.draft_prepare",
 			DisplayName: "草稿整理",
-			Description: "在向用户展示任何拟提单草稿前必须先调用：登记当前草稿版本，并进入等待用户确认状态。",
+			Description: "在向用户展示任何拟提单草稿前必须先调用：登记当前草稿版本，并进入等待用户确认状态。form_data 必须使用 service_load 返回的字段 key；若误用字段 label，工具会尽量归一化为 key；缺少必填字段时不会进入可确认状态。",
 			ParametersSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
@@ -90,28 +90,28 @@ func AllTools() []ITSMTool {
 		{
 			Name:        "itsm.validate_participants",
 			DisplayName: "参与者预检",
-			Description: "在创建工单前校验审批参与者是否可达。对于有路由分支的服务，需传入 form_data 以定位将被激活的分支并检查其参与者。",
+			Description: "在创建工单前校验审批参与者是否可达。service_id 可传真实服务 ID 或候选序号，但工具会以当前已加载服务为准；form_data 缺省时复用当前草稿表单数据。",
 			ParametersSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
-					"service_id": {"type": "integer", "description": "服务定义 ID"},
-					"form_data": {"type": "object", "description": "表单数据（用于确定路由分支）"}
+					"service_id": {"type": "integer", "description": "真实服务定义 ID，或 service_match 返回候选的 1-based 序号"},
+					"form_data": {"type": "object", "description": "表单数据（用于确定路由分支）；缺省时复用当前草稿"}
 				},
-				"required": ["service_id", "form_data"]
+				"required": ["service_id"]
 			}`),
 		},
 		{
 			Name:        "itsm.ticket_create",
 			DisplayName: "工单创建",
-			Description: "在信息收集完成且草稿已确认后，将服务请求创建为 ITSM 工单。",
+			Description: "在信息收集完成且草稿已确认后，将服务请求创建为 ITSM 工单。service_id 可传真实服务 ID 或候选序号，工具会以当前已加载服务为准；summary/form_data 缺省时优先使用已确认草稿。",
 			ParametersSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
-					"service_id": {"type": "integer", "description": "服务定义 ID"},
+					"service_id": {"type": "integer", "description": "真实服务定义 ID，或 service_match 返回候选的 1-based 序号"},
 					"summary": {"type": "string", "description": "工单摘要"},
 					"form_data": {"type": "object", "description": "完整表单数据"}
 				},
-				"required": ["service_id", "summary"]
+				"required": ["service_id"]
 			}`),
 		},
 		{

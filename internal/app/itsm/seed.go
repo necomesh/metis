@@ -3,6 +3,7 @@ package itsm
 import (
 	"log/slog"
 	"strconv"
+	"strings"
 
 	"github.com/casbin/casbin/v2"
 	"gorm.io/gorm"
@@ -487,6 +488,7 @@ func seedServiceDefinitions(db *gorm.DB) error {
 	}
 
 	serviceRequestFormSchema := `{"version":1,"fields":[{"key":"title","type":"text","label":"请求标题","required":true,"validation":[{"rule":"required","message":"请输入请求标题"}],"width":"full"},{"key":"description","type":"textarea","label":"请求描述","required":true,"validation":[{"rule":"required","message":"请输入请求描述"}],"width":"full","props":{"rows":4}},{"key":"expected_date","type":"date","label":"期望完成日期","width":"half"},{"key":"remarks","type":"textarea","label":"备注","width":"full","props":{"rows":3}}],"layout":{"columns":2,"sections":[{"title":"请求信息","fields":["title","description"]},{"title":"补充信息","fields":["expected_date","remarks"]}]}}`
+	vpnAccessFormSchema := `{"version":1,"fields":[{"key":"vpn_account","type":"text","label":"VPN账号","required":true,"validation":[{"rule":"required","message":"请输入 VPN 账号"}],"width":"half"},{"key":"device_usage","type":"textarea","label":"设备与用途说明","required":true,"validation":[{"rule":"required","message":"请输入设备与用途说明"}],"width":"full","props":{"rows":3}},{"key":"request_kind","type":"textarea","label":"访问原因","required":true,"validation":[{"rule":"required","message":"请输入访问原因"}],"width":"full","props":{"rows":3}}],"layout":{"columns":2,"sections":[{"title":"VPN 开通信息","fields":["vpn_account","device_usage","request_kind"]}]}}`
 
 	seeds := []serviceSeed{
 		{
@@ -542,6 +544,7 @@ func seedServiceDefinitions(db *gorm.DB) error {
 			Description:       "用于验证 VPN 开通申请在服务匹配、拟提单确认与分支审批下的完整闭环。",
 			CatalogCode:       "infra-network:network",
 			SLACode:           "standard",
+			IntakeFormSchema:  vpnAccessFormSchema,
 			CollaborationSpec: `用户通过 IT 服务台提交 VPN 开通申请。服务台需要收集 VPN 账号、设备与用途说明、访问原因。如果访问原因属于线上支持、故障排查、生产应急或网络接入问题，则交给信息部的网络管理员岗位审批，审批参与者类型必须使用 position_department，部门编码使用 it，岗位编码使用 network_admin。如果访问原因属于外部协作、长期远程办公、跨境访问或安全合规事项，则交给信息部的信息安全管理员岗位审批，审批参与者类型必须使用 position_department，部门编码使用 it，岗位编码使用 security_admin。审批通过后直接结束流程，不要生成驳回分支。`,
 		},
 	}
@@ -554,6 +557,13 @@ func seedServiceDefinitions(db *gorm.DB) error {
 					slog.Error("seed: failed to update service collaboration spec", "code", s.Code, "error", err)
 				} else {
 					slog.Info("seed: updated service collaboration spec", "code", s.Code)
+				}
+			}
+			if s.Code == "vpn-access-request" && isEmptyJSONField(existing.IntakeFormSchema) && s.IntakeFormSchema != "" {
+				if err := db.Model(&existing).Update("intake_form_schema", JSONField(s.IntakeFormSchema)).Error; err != nil {
+					slog.Error("seed: failed to update service intake form schema", "code", s.Code, "error", err)
+				} else {
+					slog.Info("seed: updated service intake form schema", "code", s.Code)
 				}
 			}
 			continue
@@ -618,6 +628,11 @@ func seedServiceDefinitions(db *gorm.DB) error {
 	}
 
 	return nil
+}
+
+func isEmptyJSONField(field JSONField) bool {
+	value := strings.TrimSpace(string(field))
+	return value == "" || value == "null" || value == "{}" || value == "[]"
 }
 
 // seedEngineConfig creates internal agents and default SystemConfig for ITSM engine.

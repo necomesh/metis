@@ -124,6 +124,8 @@ type ServiceMatch struct {
 // ServiceDetail is the full definition of a service returned by LoadService.
 type ServiceDetail struct {
 	ServiceID         uint              `json:"service_id"`
+	RequestedID       uint              `json:"requested_service_id,omitempty"`
+	ResolvedFrom      string            `json:"resolved_from,omitempty"`
 	Name              string            `json:"name"`
 	CollaborationSpec string            `json:"collaboration_spec"`
 	FormFields        []FormField       `json:"form_fields"`
@@ -199,7 +201,7 @@ func NewRegistry(op ServiceDeskOperator, store StateStore) *Registry {
 	r.handlers["itsm.new_request"] = newRequestHandler(store)
 	r.handlers["itsm.draft_prepare"] = draftPrepareHandler(op, store)
 	r.handlers["itsm.draft_confirm"] = draftConfirmHandler(op, store)
-	r.handlers["itsm.validate_participants"] = validateParticipantsHandler(op)
+	r.handlers["itsm.validate_participants"] = validateParticipantsHandler(op, store)
 	r.handlers["itsm.ticket_create"] = ticketCreateHandler(op, store)
 	r.handlers["itsm.my_tickets"] = myTicketsHandler(op)
 	r.handlers["itsm.ticket_withdraw"] = ticketWithdrawHandler(op)
@@ -255,6 +257,57 @@ func hashFormData(data map[string]any) string {
 	b, _ := json.Marshal(sorted)
 	h := sha256.Sum256(b)
 	return fmt.Sprintf("%x", h[:8])
+}
+
+func resolveServiceID(state *ServiceDeskState, requested uint) (uint, string, error) {
+	if requested == 0 {
+		if state != nil && state.LoadedServiceID > 0 {
+			return state.LoadedServiceID, "loaded_service", nil
+		}
+		return 0, "", fmt.Errorf("service_id is required")
+	}
+	if state == nil {
+		return requested, "service_id", nil
+	}
+	if requested == state.LoadedServiceID || requested == state.ConfirmedServiceID {
+		return requested, "service_id", nil
+	}
+	for _, cid := range state.CandidateServiceIDs {
+		if cid == requested {
+			return requested, "service_id", nil
+		}
+	}
+	if requested >= 1 && int(requested) <= len(state.CandidateServiceIDs) {
+		return state.CandidateServiceIDs[requested-1], "candidate_index", nil
+	}
+	if len(state.CandidateServiceIDs) > 0 && state.LoadedServiceID == 0 {
+		return 0, "", fmt.Errorf("service_id %d 不在候选列表中，也不是合法候选序号", requested)
+	}
+	if state.LoadedServiceID > 0 {
+		return state.LoadedServiceID, "loaded_service", nil
+	}
+	return requested, "service_id", nil
+}
+
+func normalizeFormDataKeys(data map[string]any, fields []FormField) map[string]any {
+	if len(data) == 0 {
+		return map[string]any{}
+	}
+	byLabel := make(map[string]string, len(fields))
+	for _, f := range fields {
+		if f.Label != "" {
+			byLabel[strings.TrimSpace(f.Label)] = f.Key
+		}
+	}
+	normalized := make(map[string]any, len(data))
+	for key, val := range data {
+		canonicalKey := strings.TrimSpace(key)
+		if mapped, ok := byLabel[canonicalKey]; ok {
+			canonicalKey = mapped
+		}
+		normalized[canonicalKey] = val
+	}
+	return normalized
 }
 
 // ---------------------------------------------------------------------------
@@ -365,19 +418,12 @@ func serviceConfirmHandler(store StateStore) ToolHandler {
 			return nil, fmt.Errorf("当前阶段不允许确认服务，请先调用 service_match")
 		}
 
-		// Verify service_id is among candidates.
-		found := false
-		for _, cid := range state.CandidateServiceIDs {
-			if cid == p.ServiceID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return nil, fmt.Errorf("service_id %d 不在候选列表中", p.ServiceID)
+		resolvedServiceID, resolvedFrom, err := resolveServiceID(state, p.ServiceID)
+		if err != nil || resolvedFrom == "loaded_service" {
+			return nil, fmt.Errorf("service_id %d 不在候选列表中，也不是合法候选序号", p.ServiceID)
 		}
 
-		state.ConfirmedServiceID = p.ServiceID
+		state.ConfirmedServiceID = resolvedServiceID
 		if err := state.TransitionTo("service_selected"); err != nil {
 			return nil, err
 		}
@@ -387,8 +433,11 @@ func serviceConfirmHandler(store StateStore) ToolHandler {
 
 		return mustMarshal(map[string]any{
 			"ok":                   true,
-			"service_id":           p.ServiceID,
-			"confirmed_service_id": p.ServiceID,
+			"service_id":           resolvedServiceID,
+			"confirmed_service_id": resolvedServiceID,
+			"requested_service_id": p.ServiceID,
+			"resolved_from":        resolvedFrom,
+			"next_required_tool":   "itsm.service_load",
 		}), nil
 	}
 }
@@ -423,20 +472,32 @@ func serviceLoadHandler(op ServiceDeskOperator, store StateStore) ToolHandler {
 			return nil, fmt.Errorf("请先调用 service_confirm")
 		}
 
-		detail, err := op.LoadService(p.ServiceID)
+		resolvedServiceID, resolvedFrom, err := resolveServiceID(state, p.ServiceID)
+		if err != nil {
+			return nil, err
+		}
+
+		detail, err := op.LoadService(resolvedServiceID)
 		if err != nil {
 			return nil, fmt.Errorf("load service: %w", err)
 		}
+		detail.RequestedID = p.ServiceID
+		detail.ResolvedFrom = resolvedFrom
+
+		if state.LoadedServiceID == resolvedServiceID &&
+			(state.Stage == "service_loaded" || state.Stage == "awaiting_confirmation" || state.Stage == "confirmed") {
+			return mustMarshal(detail), nil
+		}
 
 		// Reset draft fields when switching to a different service.
-		if state.LoadedServiceID != p.ServiceID {
+		if state.LoadedServiceID != resolvedServiceID {
 			state.DraftSummary = ""
 			state.DraftFormData = nil
 			state.DraftVersion = 0
 			state.ConfirmedDraftVersion = 0
 		}
 
-		state.LoadedServiceID = p.ServiceID
+		state.LoadedServiceID = resolvedServiceID
 		state.FieldsHash = detail.FieldsHash
 		if err := state.TransitionTo("service_loaded"); err != nil {
 			return nil, err
@@ -496,6 +557,8 @@ func draftPrepareHandler(op ServiceDeskOperator, store StateStore) ToolHandler {
 			return nil, fmt.Errorf("load service for validation: %w", err)
 		}
 
+		p.FormData = normalizeFormDataKeys(p.FormData, detail.FormFields)
+
 		// Build field index.
 		fieldMap := make(map[string]FormField, len(detail.FormFields))
 		for _, f := range detail.FormFields {
@@ -514,6 +577,7 @@ func draftPrepareHandler(op ServiceDeskOperator, store StateStore) ToolHandler {
 			ResolvedValues []resolvedValue `json:"resolved_values,omitempty"`
 		}
 		var warnings []warning
+		blocking := false
 
 		// Check for missing required fields.
 		for _, f := range detail.FormFields {
@@ -527,6 +591,7 @@ func draftPrepareHandler(op ServiceDeskOperator, store StateStore) ToolHandler {
 					Field:   f.Key,
 					Message: fmt.Sprintf("必填字段 [%s] 未填写", f.Label),
 				})
+				blocking = true
 			}
 		}
 
@@ -579,8 +644,18 @@ func draftPrepareHandler(op ServiceDeskOperator, store StateStore) ToolHandler {
 						Field:   key,
 						Message: fmt.Sprintf("字段 [%s] 的值 [%s] 不在可选项中", f.Label, strVal),
 					})
+					blocking = true
 				}
 			}
+		}
+
+		if blocking {
+			return mustMarshal(map[string]any{
+				"ok":        false,
+				"summary":   p.Summary,
+				"form_data": p.FormData,
+				"warnings":  warnings,
+			}), nil
 		}
 
 		// Determine if content changed; if so, bump draft version and reset confirmation.
@@ -655,7 +730,7 @@ func draftConfirmHandler(op ServiceDeskOperator, store StateStore) ToolHandler {
 // 7. itsm.validate_participants
 // ---------------------------------------------------------------------------
 
-func validateParticipantsHandler(op ServiceDeskOperator) ToolHandler {
+func validateParticipantsHandler(op ServiceDeskOperator, store StateStore) ToolHandler {
 	return func(ctx context.Context, userID uint, args json.RawMessage) (json.RawMessage, error) {
 		var p struct {
 			ServiceID uint           `json:"service_id"`
@@ -668,7 +743,23 @@ func validateParticipantsHandler(op ServiceDeskOperator) ToolHandler {
 			return nil, fmt.Errorf("service_id is required")
 		}
 
-		result, err := op.ValidateParticipants(p.ServiceID, p.FormData)
+		sid := sessionID(ctx)
+		state, err := store.GetState(sid)
+		if err != nil {
+			return nil, fmt.Errorf("get state: %w", err)
+		}
+		if state == nil {
+			state = defaultState()
+		}
+		resolvedServiceID, _, err := resolveServiceID(state, p.ServiceID)
+		if err != nil {
+			return nil, err
+		}
+		if len(p.FormData) == 0 && len(state.DraftFormData) > 0 {
+			p.FormData = state.DraftFormData
+		}
+
+		result, err := op.ValidateParticipants(resolvedServiceID, p.FormData)
 		if err != nil {
 			return nil, fmt.Errorf("validate participants: %w", err)
 		}
@@ -704,8 +795,13 @@ func ticketCreateHandler(op ServiceDeskOperator, store StateStore) ToolHandler {
 			state = defaultState()
 		}
 
+		resolvedServiceID, _, err := resolveServiceID(state, p.ServiceID)
+		if err != nil {
+			return nil, err
+		}
+
 		// Guard: loaded service must match.
-		if state.LoadedServiceID != p.ServiceID {
+		if state.LoadedServiceID != resolvedServiceID {
 			return nil, fmt.Errorf("service_id %d 与已加载的服务 %d 不一致，请先调用 service_load", p.ServiceID, state.LoadedServiceID)
 		}
 
@@ -717,7 +813,16 @@ func ticketCreateHandler(op ServiceDeskOperator, store StateStore) ToolHandler {
 			return nil, fmt.Errorf("草稿已变更（当前版本 %d，已确认版本 %d），请重新调用 draft_confirm", state.DraftVersion, state.ConfirmedDraftVersion)
 		}
 
-		result, err := op.CreateTicket(userID, p.ServiceID, p.Summary, p.FormData, sid)
+		if state.ConfirmedDraftVersion > 0 {
+			if state.DraftSummary != "" {
+				p.Summary = state.DraftSummary
+			}
+			if len(state.DraftFormData) > 0 {
+				p.FormData = state.DraftFormData
+			}
+		}
+
+		result, err := op.CreateTicket(userID, resolvedServiceID, p.Summary, p.FormData, sid)
 		if err != nil {
 			return nil, fmt.Errorf("create ticket: %w", err)
 		}
