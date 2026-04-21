@@ -343,7 +343,13 @@ export type AgentWithBindings = AgentInfo & {
   mcpServerIds: number[];
   knowledgeBaseIds: number[];
   knowledgeGraphIds: number[];
+  capabilitySetBindings: AgentCapabilitySetBinding[];
 };
+
+export interface AgentCapabilitySetBinding {
+  setId: number;
+  itemIds: number[];
+}
 
 interface AgentDetailResponse {
   agent: AgentInfo;
@@ -352,6 +358,7 @@ interface AgentDetailResponse {
   mcpServerIds?: number[];
   knowledgeBaseIds?: number[];
   knowledgeGraphIds?: number[];
+  capabilitySetBindings?: AgentCapabilitySetBinding[];
 }
 
 export interface AgentTemplate {
@@ -375,12 +382,22 @@ export interface AgentSession {
   updatedAt: string;
 }
 
+export interface SessionMessageMetadata {
+  images?: string[];
+  tool_name?: string;
+  tool_args?: unknown;
+  tool_call_id?: string;
+  duration_ms?: number;
+  status?: 'running' | 'completed' | 'error';
+  [key: string]: unknown;
+}
+
 export interface SessionMessage {
   id: number;
   sessionId: number;
   role: 'user' | 'assistant' | 'tool_call' | 'tool_result';
   content: string;
-  metadata?: Record<string, unknown>;
+  metadata?: SessionMessageMetadata;
   tokenCount: number;
   sequence: number;
   createdAt: string;
@@ -416,9 +433,18 @@ function makeTypedAgentApi(basePath: string) {
           mcpServerIds: data.mcpServerIds ?? [],
           knowledgeBaseIds: data.knowledgeBaseIds ?? [],
           knowledgeGraphIds: data.knowledgeGraphIds ?? [],
+          capabilitySetBindings: data.capabilitySetBindings ?? [],
         } satisfies AgentWithBindings;
       }
-      return data;
+      return {
+        ...data,
+        toolIds: data.toolIds ?? [],
+        skillIds: data.skillIds ?? [],
+        mcpServerIds: data.mcpServerIds ?? [],
+        knowledgeBaseIds: data.knowledgeBaseIds ?? [],
+        knowledgeGraphIds: data.knowledgeGraphIds ?? [],
+        capabilitySetBindings: data.capabilitySetBindings ?? [],
+      };
     },
 
     create: (data: Partial<AgentInfo> & {
@@ -427,6 +453,7 @@ function makeTypedAgentApi(basePath: string) {
       mcpServerIds?: number[];
       knowledgeBaseIds?: number[];
       knowledgeGraphIds?: number[];
+      capabilitySetBindings?: AgentCapabilitySetBinding[];
       templateId?: number;
     }) => api.post<AgentInfo>(basePath, data),
 
@@ -436,6 +463,7 @@ function makeTypedAgentApi(basePath: string) {
       mcpServerIds?: number[];
       knowledgeBaseIds?: number[];
       knowledgeGraphIds?: number[];
+      capabilitySetBindings?: AgentCapabilitySetBinding[];
     }) => api.put<AgentInfo>(`${basePath}/${id}`, data),
 
     delete: (id: number) => api.delete<null>(`${basePath}/${id}`),

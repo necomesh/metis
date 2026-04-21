@@ -195,19 +195,15 @@ export function useAiChat(
     const chat = new Chat<UIMessage>({
       id: String(sessionId),
       transport,
+      onFinish: options?.onFinish,
+      onError: options?.onError,
     })
     // Override expensive structuredClone with fast shallow clone
     // to eliminate per-chunk cloning bottleneck during streaming.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ;(chat as any).state.snapshot = fastSnapshot
     return chat
-  }, [sessionId, transport])
-
-  // Sync dynamic callbacks without recreating the Chat instance
-  useEffect(() => {
-    ;(chatInstance as any).onFinish = options?.onFinish
-    ;(chatInstance as any).onError = options?.onError
-  }, [chatInstance, options?.onFinish, options?.onError])
+  }, [sessionId, transport, options?.onFinish, options?.onError])
 
   const chat = useChat({
     chat: chatInstance,

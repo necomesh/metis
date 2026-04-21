@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -96,6 +97,74 @@ func TestReactExecutor_ToolCallRoundTrip(t *testing.T) {
 	}
 	if !hasDone {
 		t.Error("expected done event")
+	}
+}
+
+func TestReactExecutor_UnknownToolReturnsToolResult(t *testing.T) {
+	mockLLM := newMockLLMClient([]llm.StreamEvent{
+		{Type: "tool_call", ToolCall: &llm.ToolCall{ID: "call_1", Name: "missing_tool", Arguments: `{}`}},
+		{Type: "done", Usage: &llm.Usage{}},
+		{Type: "content_delta", Content: "Handled"},
+		{Type: "done", Usage: &llm.Usage{}},
+	}, nil)
+
+	exec := NewReactExecutor(mockLLM, NewCompositeToolExecutor(nil, 0, 0))
+	ch, err := exec.Execute(context.Background(), ExecuteRequest{
+		Messages: []ExecuteMessage{{Role: MessageRoleUser, Content: "Use a tool"}},
+		Tools:    []ToolDefinition{{Name: "missing_tool"}},
+		MaxTurns: 2,
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	events := collectEvents(ch)
+	var found bool
+	for _, evt := range events {
+		if evt.Type == EventTypeToolResult {
+			found = true
+			if !strings.Contains(evt.ToolOutput, "unknown tool: missing_tool") {
+				t.Fatalf("expected unknown tool output, got %q", evt.ToolOutput)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected tool_result event, got %#v", events)
+	}
+}
+
+func TestReactExecutor_ToolExecutionErrorReturnsToolResult(t *testing.T) {
+	mockExec := newMockToolExecutor()
+	mockExec.SetError("search", errors.New("backend offline"))
+	mockLLM := newMockLLMClient([]llm.StreamEvent{
+		{Type: "tool_call", ToolCall: &llm.ToolCall{ID: "call_1", Name: "search", Arguments: `{}`}},
+		{Type: "done", Usage: &llm.Usage{}},
+		{Type: "content_delta", Content: "Handled"},
+		{Type: "done", Usage: &llm.Usage{}},
+	}, nil)
+
+	exec := NewReactExecutor(mockLLM, mockExec)
+	ch, err := exec.Execute(context.Background(), ExecuteRequest{
+		Messages: []ExecuteMessage{{Role: MessageRoleUser, Content: "Search"}},
+		Tools:    []ToolDefinition{{Name: "search"}},
+		MaxTurns: 2,
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	events := collectEvents(ch)
+	var found bool
+	for _, evt := range events {
+		if evt.Type == EventTypeToolResult {
+			found = true
+			if !strings.Contains(evt.ToolOutput, "Error: backend offline") {
+				t.Fatalf("expected execution error output, got %q", evt.ToolOutput)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected tool_result event, got %#v", events)
 	}
 }
 

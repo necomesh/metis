@@ -35,8 +35,10 @@ func (a *AIApp) Models() []any {
 		&KnowledgeBase{},
 		// Tool registry
 		&Tool{}, &MCPServer{}, &Skill{},
+		&CapabilitySet{}, &CapabilitySetItem{},
 		&AgentTool{}, &AgentMCPServer{}, &AgentSkill{},
 		// Agent runtime
+		&AgentCapabilitySet{}, &AgentCapabilitySetItem{},
 		&Agent{}, &AgentTemplate{}, &AgentKnowledgeBase{}, &AgentKnowledgeGraph{},
 		&AgentSession{}, &SessionMessage{}, &AgentMemory{},
 	}
@@ -68,6 +70,10 @@ func (a *AIApp) Providers(i do.Injector) {
 	do.Provide(i, NewKnowledgeSourceHandler)
 	do.Provide(i, NewKnowledgeLogRepo)
 	do.Provide(i, NewKnowledgeAssetService)
+	do.Provide(i, NewKnowledgeSearchService)
+	do.Provide(i, func(i do.Injector) (app.AIKnowledgeSearcher, error) {
+		return do.MustInvoke[*KnowledgeSearchService](i), nil
+	})
 	// Knowledge — graph engine
 	do.Provide(i, NewConceptMapEngine)
 	do.Provide(i, NewKnowledgeGraphHandler)
@@ -86,11 +92,15 @@ func (a *AIApp) Providers(i do.Injector) {
 	do.Provide(i, NewToolService)
 	do.Provide(i, NewToolHandler)
 	do.Provide(i, NewMCPServerRepo)
+	do.Provide(i, NewDefaultMCPRuntimeClient)
 	do.Provide(i, NewMCPServerService)
 	do.Provide(i, NewMCPServerHandler)
 	do.Provide(i, NewSkillRepo)
 	do.Provide(i, NewSkillService)
 	do.Provide(i, NewSkillHandler)
+	do.Provide(i, NewCapabilitySetRepo)
+	do.Provide(i, NewCapabilitySetService)
+	do.Provide(i, NewCapabilitySetHandler)
 	// Tool bindings & assembly
 	do.Provide(i, NewAgentToolRepo)
 	do.Provide(i, NewAgentMCPServerRepo)
@@ -234,6 +244,12 @@ func (a *AIApp) Routes(api *gin.RouterGroup) {
 	{
 		tools.GET("", toolH.List)
 		tools.PUT("/:id", toolH.Update)
+	}
+
+	capabilitySetH := do.MustInvoke[*CapabilitySetHandler](a.injector)
+	capabilitySets := api.Group("/ai/capability-sets")
+	{
+		capabilitySets.GET("", capabilitySetH.List)
 	}
 
 	mcpH := do.MustInvoke[*MCPServerHandler](a.injector)

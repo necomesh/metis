@@ -48,6 +48,7 @@ type AgentBindings struct {
 	MCPServerIDs      []uint
 	KnowledgeBaseIDs  []uint
 	KnowledgeGraphIDs []uint
+	CapabilitySets    []AgentCapabilitySetBinding
 }
 
 func NewAgentService(i do.Injector) (*AgentService, error) {
@@ -315,23 +316,50 @@ func (s *AgentService) normalizeBindings(bindings AgentBindings) (AgentBindings,
 	}
 
 	db := s.repo.DB()
-	if err := ensureIDsExist(db, &Tool{}, normalized.ToolIDs, ""); err != nil {
-		return AgentBindings{}, err
+	if len(bindings.CapabilitySets) > 0 {
+		var derived map[string][]uint
+		normalized.CapabilitySets, derived, err = validateCapabilitySetBindings(db, bindings.CapabilitySets)
+		if err != nil {
+			return AgentBindings{}, err
+		}
+		normalized.ToolIDs = derived[CapabilityTypeTool]
+		normalized.SkillIDs = derived[CapabilityTypeSkill]
+		normalized.MCPServerIDs = derived[CapabilityTypeMCP]
+		normalized.KnowledgeBaseIDs = derived[CapabilityTypeKnowledgeBase]
+		normalized.KnowledgeGraphIDs = derived[CapabilityTypeKnowledgeGraph]
+	} else if normalized.hasAnyFlatBinding() {
+		normalized.CapabilitySets, err = capabilitySetBindingsFromFlat(db, normalized)
+		if err != nil {
+			return AgentBindings{}, err
+		}
 	}
-	if err := ensureIDsExist(db, &Skill{}, normalized.SkillIDs, ""); err != nil {
-		return AgentBindings{}, err
-	}
-	if err := ensureIDsExist(db, &MCPServer{}, normalized.MCPServerIDs, ""); err != nil {
-		return AgentBindings{}, err
-	}
-	if err := ensureIDsExist(db, &KnowledgeAsset{}, normalized.KnowledgeBaseIDs, AssetCategoryKB); err != nil {
-		return AgentBindings{}, err
-	}
-	if err := ensureIDsExist(db, &KnowledgeAsset{}, normalized.KnowledgeGraphIDs, AssetCategoryKG); err != nil {
+
+	if err := normalized.validateFlatIDs(db); err != nil {
 		return AgentBindings{}, err
 	}
 
 	return normalized, nil
+}
+
+func (b AgentBindings) hasAnyFlatBinding() bool {
+	return len(b.ToolIDs) > 0 || len(b.SkillIDs) > 0 || len(b.MCPServerIDs) > 0 ||
+		len(b.KnowledgeBaseIDs) > 0 || len(b.KnowledgeGraphIDs) > 0
+}
+
+func (b AgentBindings) validateFlatIDs(db *gorm.DB) error {
+	if err := ensureIDsExist(db, &Tool{}, b.ToolIDs, ""); err != nil {
+		return err
+	}
+	if err := ensureIDsExist(db, &Skill{}, b.SkillIDs, ""); err != nil {
+		return err
+	}
+	if err := ensureIDsExist(db, &MCPServer{}, b.MCPServerIDs, ""); err != nil {
+		return err
+	}
+	if err := ensureIDsExist(db, &KnowledgeAsset{}, b.KnowledgeBaseIDs, AssetCategoryKB); err != nil {
+		return err
+	}
+	return ensureIDsExist(db, &KnowledgeAsset{}, b.KnowledgeGraphIDs, AssetCategoryKG)
 }
 
 func uniqueUintIDs(ids []uint) ([]uint, error) {

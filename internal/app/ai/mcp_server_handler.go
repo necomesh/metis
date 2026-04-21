@@ -200,6 +200,16 @@ func (h *MCPServerHandler) TestConnection(c *gin.Context) {
 		return
 	}
 
-	// TODO: implement actual MCP SSE connection test
-	handler.Fail(c, http.StatusNotImplemented, "MCP SSE connection test is not yet implemented")
+	tools, err := h.svc.TestConnection(c.Request.Context(), m.ID)
+	if err != nil {
+		handler.OK(c, gin.H{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+	handler.OK(c, gin.H{
+		"success": true,
+		"tools":   tools,
+	})
 }

@@ -4,12 +4,12 @@ import "encoding/json"
 
 // Event types emitted by executors
 const (
-	EventTypeLLMStart     = "llm_start"
-	EventTypeContentDelta = "content_delta"
-	EventTypeToolCall     = "tool_call"
-	EventTypeToolResult   = "tool_result"
-	EventTypePlan         = "plan"
-	EventTypeStepStart    = "step_start"
+	EventTypeLLMStart      = "llm_start"
+	EventTypeContentDelta  = "content_delta"
+	EventTypeToolCall      = "tool_call"
+	EventTypeToolResult    = "tool_result"
+	EventTypePlan          = "plan"
+	EventTypeStepStart     = "step_start"
 	EventTypeThinkingDelta = "thinking_delta"
 	EventTypeThinkingDone  = "thinking_done"
 	EventTypeStepDone      = "step_done"
@@ -37,8 +37,9 @@ type Event struct {
 	ToolArgs   json.RawMessage `json:"args,omitempty"`
 
 	// tool_result
-	ToolOutput   string `json:"output,omitempty"`
-	DurationMs   int    `json:"duration_ms,omitempty"`
+	ToolOutput  string `json:"output,omitempty"`
+	DurationMs  int    `json:"duration_ms,omitempty"`
+	ToolIsError bool   `json:"is_error,omitempty"`
 
 	// plan
 	Steps []PlanStep `json:"steps,omitempty"`

@@ -1,0 +1,114 @@
+## ADDED Requirements
+
+### Requirement: Assistant runtime capability assembly
+The Agent Gateway SHALL assemble assistant runtime capabilities from the Agent's selected active leaf resources before executor dispatch. The assembly SHALL include builtin tool definitions, MCP-discovered tool definitions, skill tool definitions, skill prompt instructions, and selected knowledge assets. The assembly SHALL ignore unselected items, inactive sets, inactive resources, deleted resources, and resources whose runtime schema cannot be validated.
+
+#### Scenario: Assemble selected active resources
+- **WHEN** an assistant Agent has selected active builtin tools, MCP servers, skills, and knowledge assets
+- **THEN** the Gateway SHALL include only those selected active resources in the runtime assembly
+
+#### Scenario: Ignore unavailable resources
+- **WHEN** an assistant Agent has selected resources that are inactive, deleted, or invalid for runtime use
+- **THEN** the Gateway SHALL omit those resources from the runtime assembly without exposing them to the LLM
+
+#### Scenario: Reject ambiguous tool names
+- **WHEN** two assembled runtime tools would expose the same LLM tool name
+- **THEN** the Gateway SHALL avoid ambiguous dispatch by using deterministic namespacing or by failing runtime assembly with a clear error
+
+### Requirement: Assistant knowledge context loading
+The Agent Gateway SHALL query selected active knowledge base and knowledge graph assets using the latest user message before assistant execution. The Gateway SHALL inject a bounded knowledge context block into the system prompt when recall returns results.
+
+#### Scenario: Inject recalled knowledge
+- **WHEN** an assistant Agent has selected knowledge assets and the latest user message has searchable content
+- **THEN** the Gateway SHALL query those assets and append relevant snippets with source labels to the system prompt before executor dispatch
+
+#### Scenario: Continue when knowledge is empty
+- **WHEN** selected knowledge assets return no recall results
+- **THEN** the Gateway SHALL continue execution without adding a knowledge context block
+
+#### Scenario: Continue when one knowledge asset fails
+- **WHEN** one selected knowledge asset fails during recall and other selected assets can still be queried
+- **THEN** the Gateway SHALL log the failed recall and continue with successful recall results
+
+## MODIFIED Requirements
+
+### Requirement: Gateway request orchestration
+The Agent Gateway SHALL be the single entry point for all agent execution. Upon receiving a user message, the Gateway SHALL: (1) validate the session and agent, (2) store or load the pending user message for the session, (3) load message history with truncation, (4) load user memories for this agent, (5) resolve selected active capability resources, (6) query selected knowledge resources for relevant context, (7) assemble the full ExecuteRequest with system prompt, skill instructions, recalled knowledge, messages, and tool definitions, (8) dispatch to the appropriate Executor, (9) consume the event stream, (10) store results to DB, (11) translate events to Data Stream lines, (12) forward lines to browser via flushed SSE.
+
+#### Scenario: Full orchestration flow
+- **WHEN** user sends a message to a session
+- **THEN** Gateway SHALL execute all steps in order and stream Data Stream lines to the browser in real-time
+
+#### Scenario: Agent not found or inactive
+- **WHEN** session references an agent that is deleted or inactive
+- **THEN** Gateway SHALL return 404 and not attempt execution
+
+#### Scenario: Runtime assembly precedes executor dispatch
+- **WHEN** Gateway starts an assistant execution
+- **THEN** Gateway SHALL complete runtime capability assembly before constructing the Executor's ExecuteRequest
+
+### Requirement: ReactExecutor
+The ReactExecutor SHALL implement the ReAct loop: (1) call LLM via ai-llm-client ChatStream with the assembled messages and tool definitions, (2) if response contains tool calls, execute each exposed tool through the runtime tool executor, emit tool_call + tool_result events, add results to messages, loop back to step 1, (3) if response is text-only, emit content_delta events, emit done event, exit loop. The loop SHALL NOT exceed the agent's max_turns setting. Tool execution errors SHALL be returned to the LLM as tool results and SHALL be emitted as tool_result events. All emitted events SHALL be translatable by the Gateway into Data Stream chunks.
+
+#### Scenario: Simple text response
+- **WHEN** LLM returns text without tool calls
+- **THEN** executor SHALL emit content_delta events and a done event with token counts, and Gateway SHALL translate them to Data Stream text-delta and finish-message chunks
+
+#### Scenario: Tool call loop
+- **WHEN** LLM returns a tool call for an exposed runtime tool
+- **THEN** executor SHALL emit tool_call event, execute the tool, emit tool_result event, then call LLM again with the result, and Gateway SHALL translate both to Data Stream tool-invocation chunks
+
+#### Scenario: Unknown tool call
+- **WHEN** LLM returns a tool call that is not executable by the runtime tool executor
+- **THEN** executor SHALL emit a tool_result event containing a tool-not-found error and continue the ReAct loop until completion or max_turns
+
+#### Scenario: Max turns exceeded
+- **WHEN** LLM loop reaches max_turns without completing
+- **THEN** executor SHALL emit an error event with message "max turns exceeded" and stop
+
+### Requirement: PlanAndExecuteExecutor
+The PlanAndExecuteExecutor SHALL implement two-phase execution: (1) Plan phase: call LLM with a planning prompt, parse response into numbered steps, emit a `plan` event, (2) Execute phase: for each step, call LLM with the original conversation, step context, prior completed step summaries/results, and assembled tool access, execute tool calls as needed, emit `step_start`, content/tool events, and `step_done` per step, (3) emit done event after all steps complete. Plan and step events SHALL be encoded as custom Data Stream annotations or forwarded through a side channel, and text/tool events within steps SHALL follow standard Data Stream translation.
+
+#### Scenario: Plan generation
+- **WHEN** executor starts
+- **THEN** it SHALL first call LLM to generate a plan and emit a `plan` event with the step list
+
+#### Scenario: Step execution with tools
+- **WHEN** executing a step that requires tool usage
+- **THEN** executor SHALL emit `step_start`, then execute the ReAct loop within that step's scope
+
+#### Scenario: Step completion is emitted
+- **WHEN** a step finishes without exceeding its turn budget
+- **THEN** executor SHALL emit `step_done` with the step index before starting the next step
+
+#### Scenario: Prior step context is preserved
+- **WHEN** a later step is executed after an earlier step produced text or tool results
+- **THEN** executor SHALL include the earlier step outcome in the later step's LLM context
+
+#### Scenario: Step turn budget exceeded
+- **WHEN** a step reaches its configured ReAct turn budget without completing
+- **THEN** executor SHALL emit an error event and stop execution instead of silently continuing
+
+### Requirement: Tool execution
+The Gateway SHALL support executing three types of tools during assistant Agent runs:
+- **Builtin Tool**: invoke the tool's registered handler function directly within the Server process.
+- **MCP Server Tool**: send the tool call to the MCP server that owns the discovered tool and await result.
+- **Skill Tool**: execute the endpoint tool declared by a bound active skill when the skill tool schema includes an executable endpoint contract.
+
+The Gateway SHALL expose only tools that have a matching executable handler. Prompt-only skills SHALL contribute prompt instructions and SHALL NOT create function calling tool definitions.
+
+#### Scenario: Execute builtin tool
+- **WHEN** LLM emits a tool_call for a registered builtin tool
+- **THEN** system SHALL execute the tool handler and return the result
+
+#### Scenario: Execute MCP tool
+- **WHEN** LLM emits a tool_call matching a tool from a bound MCP server
+- **THEN** system SHALL forward the call to the MCP server and return the result
+
+#### Scenario: Execute skill endpoint tool
+- **WHEN** LLM emits a tool_call matching an endpoint tool from a bound active skill
+- **THEN** system SHALL execute the skill endpoint contract and return the result
+
+#### Scenario: Unknown tool call
+- **WHEN** LLM emits a tool_call for an unregistered tool name
+- **THEN** system SHALL return a tool_result with error "tool not found" and let the LLM retry

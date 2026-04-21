@@ -77,7 +77,7 @@ export function AIDecisionPanel({ ticketId, activity }: AIDecisionPanelProps) {
 
   return (
     <Card>
-      <CardHeader className="pb-3">
+      <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <Bot className="h-4 w-4" />
           {t("smart.aiDecision")}

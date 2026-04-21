@@ -24,6 +24,7 @@ export interface BindingItem {
 
 export interface BindingGroup {
   key: string
+  id?: number
   title: string
   description: string
   items: BindingItem[]
@@ -37,6 +38,8 @@ interface BindingSelectorSectionProps {
   isLoading: boolean
   value: number[]
   onChange: (ids: number[]) => void
+  groupValues?: Record<string, number[]>
+  onGroupItemsChange?: (group: BindingGroup, ids: number[]) => void
   sheetTitle?: string
   sheetDescription?: string
   emphasize?: boolean
@@ -50,6 +53,7 @@ interface ResolvedBindingItem {
 
 interface ResolvedBindingGroup {
   key: string
+  id?: number
   title: string
   description: string
   items: ResolvedBindingItem[]
@@ -69,12 +73,15 @@ export function BindingSelectorSection({
   isLoading,
   value,
   onChange,
+  groupValues,
+  onGroupItemsChange,
   sheetTitle,
   sheetDescription,
   emphasize = false,
 }: BindingSelectorSectionProps) {
   const { t } = useTranslation(["ai", "common"])
   const [open, setOpen] = useState(false)
+  const [activeGroupKey, setActiveGroupKey] = useState<string | null>(null)
   const [query, setQuery] = useState("")
 
   const resolvedItems = useMemo<ResolvedBindingItem[]>(() => {
@@ -90,6 +97,7 @@ export function BindingSelectorSection({
   const resolvedGroups = useMemo<ResolvedBindingGroup[]>(() => {
     return (groups ?? []).map((group) => ({
       key: group.key,
+      id: group.id,
       title: group.title,
       description: group.description,
       items: group.items.map((item) => ({
@@ -114,17 +122,45 @@ export function BindingSelectorSection({
   }, [query, resolvedItems])
 
   const filteredGroups = useMemo(() => {
+    const sourceGroups = activeGroupKey
+      ? resolvedGroups.filter((group) => group.key === activeGroupKey)
+      : resolvedGroups
     const trimmed = query.trim().toLowerCase()
-    if (!trimmed) return resolvedGroups
-    return resolvedGroups
+    if (!trimmed) return sourceGroups
+    return sourceGroups
       .map((group) => ({
         ...group,
         items: group.items.filter((item) => `${item.name} ${item.description || ""}`.toLowerCase().includes(trimmed)),
       }))
       .filter((group) => group.items.length > 0)
-  }, [query, resolvedGroups])
+  }, [activeGroupKey, query, resolvedGroups])
+
+  const activeResolvedGroup = useMemo(() => {
+    if (!activeGroupKey) return undefined
+    return resolvedGroups.find((group) => group.key === activeGroupKey)
+  }, [activeGroupKey, resolvedGroups])
+
+  const activeOriginalGroup = useMemo(() => {
+    if (!activeGroupKey) return undefined
+    return (groups ?? []).find((group) => group.key === activeGroupKey)
+  }, [activeGroupKey, groups])
+
+  function selectedIDsForGroup(group: ResolvedBindingGroup) {
+    return groupValues?.[group.key] ?? group.items.filter((item) => value.includes(item.id)).map((item) => item.id)
+  }
 
   function toggle(id: number) {
+    if (activeResolvedGroup) {
+      const current = selectedIDsForGroup(activeResolvedGroup)
+      const next = current.includes(id) ? current.filter((itemId) => itemId !== id) : [...current, id]
+      const groupItemIDs = activeResolvedGroup.items.map((item) => item.id)
+      const nextFlat = [...value.filter((itemId) => !groupItemIDs.includes(itemId)), ...next]
+      onChange(Array.from(new Set(nextFlat)))
+      if (activeOriginalGroup) {
+        onGroupItemsChange?.(activeOriginalGroup, next)
+      }
+      return
+    }
     if (value.includes(id)) {
       onChange(value.filter((itemId) => itemId !== id))
       return
@@ -133,6 +169,14 @@ export function BindingSelectorSection({
   }
 
   function clearSelection() {
+    if (activeResolvedGroup) {
+      const groupItemIDs = activeResolvedGroup.items.map((item) => item.id)
+      onChange(value.filter((itemId) => !groupItemIDs.includes(itemId)))
+      if (activeOriginalGroup) {
+        onGroupItemsChange?.(activeOriginalGroup, [])
+      }
+      return
+    }
     onChange([])
   }
 
@@ -164,13 +208,17 @@ export function BindingSelectorSection({
         ) : resolvedGroups.length > 0 ? (
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
             {resolvedGroups.map((group) => {
-              const groupSelected = group.items.filter((item) => value.includes(item.id))
+              const groupSelectedIDs = selectedIDsForGroup(group)
+              const groupSelected = group.items.filter((item) => groupSelectedIDs.includes(item.id))
               const Icon = TOOLKIT_ICONS[group.key] ?? Wrench
               return (
                 <button
                   key={group.key}
                   type="button"
-                  onClick={() => setOpen(true)}
+                  onClick={() => {
+                    setActiveGroupKey(group.key)
+                    setOpen(true)
+                  }}
                   className={cn(
                     "group rounded-[1.1rem] border border-border/60 bg-background/30 px-4 py-4 text-left transition-colors hover:border-border/90 hover:bg-accent/20",
                     emphasize && "first:border-primary/25 first:bg-primary/[0.035]"
@@ -222,7 +270,10 @@ export function BindingSelectorSection({
         ) : (
           <button
             type="button"
-            onClick={() => setOpen(true)}
+            onClick={() => {
+              setActiveGroupKey(null)
+              setOpen(true)
+            }}
             className={cn(
               "group w-full rounded-[1.1rem] border border-border/60 bg-background/30 px-4 py-4 text-left transition-colors hover:border-border/90 hover:bg-accent/20",
               emphasize && "border-primary/25 bg-primary/[0.04]"
@@ -251,11 +302,20 @@ export function BindingSelectorSection({
         )}
       </section>
 
-      <Sheet open={open} onOpenChange={setOpen}>
+      <Sheet
+        open={open}
+        onOpenChange={(nextOpen) => {
+          setOpen(nextOpen)
+          if (!nextOpen) {
+            setActiveGroupKey(null)
+            setQuery("")
+          }
+        }}
+      >
         <SheetContent side="right" className="w-full sm:max-w-xl">
           <SheetHeader className="border-b border-border/50 pb-4">
-            <SheetTitle>{sheetTitle || title}</SheetTitle>
-            <SheetDescription>{sheetDescription || description}</SheetDescription>
+            <SheetTitle>{activeResolvedGroup?.title || sheetTitle || title}</SheetTitle>
+            <SheetDescription>{activeResolvedGroup?.description || sheetDescription || description}</SheetDescription>
           </SheetHeader>
 
           <div className="flex min-h-0 flex-1 flex-col gap-4 px-4 pb-4">
@@ -272,9 +332,19 @@ export function BindingSelectorSection({
             <div className="flex items-center justify-between gap-3 rounded-xl border border-border/55 bg-background/30 px-4 py-3">
               <div>
                 <p className="text-sm font-medium">{t("ai:agents.currentSelection")}</p>
-                <p className="text-xs text-muted-foreground">{t("ai:agents.selectedCount", { count: value.length })}</p>
+                <p className="text-xs text-muted-foreground">
+                  {t("ai:agents.selectedCount", {
+                    count: activeResolvedGroup ? selectedIDsForGroup(activeResolvedGroup).length : value.length,
+                  })}
+                </p>
               </div>
-              <Button type="button" variant="ghost" size="sm" onClick={clearSelection} disabled={value.length === 0}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={clearSelection}
+                disabled={activeResolvedGroup ? selectedIDsForGroup(activeResolvedGroup).length === 0 : value.length === 0}
+              >
                 {t("ai:agents.clearSelection")}
               </Button>
             </div>
@@ -294,7 +364,7 @@ export function BindingSelectorSection({
                       </div>
                       <div className="space-y-3">
                         {group.items.map((item) => {
-                          const checked = value.includes(item.id)
+                          const checked = selectedIDsForGroup(group).includes(item.id)
                           return (
                             <label
                               key={item.id}

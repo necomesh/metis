@@ -26,30 +26,31 @@ func NewAgentHandler(i do.Injector) (*AgentHandler, error) {
 }
 
 type createAgentReq struct {
-	Name              string          `json:"name" binding:"required"`
-	Code              *string         `json:"code"`
-	Description       string          `json:"description"`
-	Avatar            string          `json:"avatar"`
-	Type              string          `json:"type" binding:"required"`
-	Visibility        string          `json:"visibility"`
-	Strategy          string          `json:"strategy"`
-	ModelID           *uint           `json:"modelId"`
-	SystemPrompt      string          `json:"systemPrompt"`
-	Temperature       float64         `json:"temperature"`
-	MaxTokens         int             `json:"maxTokens"`
-	MaxTurns          int             `json:"maxTurns"`
-	Runtime           string          `json:"runtime"`
-	RuntimeConfig     json.RawMessage `json:"runtimeConfig"`
-	ExecMode          string          `json:"execMode"`
-	NodeID            *uint           `json:"nodeId"`
-	Workspace         string          `json:"workspace"`
-	Instructions      string          `json:"instructions"`
-	ToolIDs           []uint          `json:"toolIds"`
-	SkillIDs          []uint          `json:"skillIds"`
-	MCPServerIDs      []uint          `json:"mcpServerIds"`
-	KnowledgeBaseIDs  []uint          `json:"knowledgeBaseIds"`
-	KnowledgeGraphIDs []uint          `json:"knowledgeGraphIds"`
-	TemplateID        *uint           `json:"templateId"`
+	Name              string                      `json:"name" binding:"required"`
+	Code              *string                     `json:"code"`
+	Description       string                      `json:"description"`
+	Avatar            string                      `json:"avatar"`
+	Type              string                      `json:"type" binding:"required"`
+	Visibility        string                      `json:"visibility"`
+	Strategy          string                      `json:"strategy"`
+	ModelID           *uint                       `json:"modelId"`
+	SystemPrompt      string                      `json:"systemPrompt"`
+	Temperature       float64                     `json:"temperature"`
+	MaxTokens         int                         `json:"maxTokens"`
+	MaxTurns          int                         `json:"maxTurns"`
+	Runtime           string                      `json:"runtime"`
+	RuntimeConfig     json.RawMessage             `json:"runtimeConfig"`
+	ExecMode          string                      `json:"execMode"`
+	NodeID            *uint                       `json:"nodeId"`
+	Workspace         string                      `json:"workspace"`
+	Instructions      string                      `json:"instructions"`
+	ToolIDs           []uint                      `json:"toolIds"`
+	SkillIDs          []uint                      `json:"skillIds"`
+	MCPServerIDs      []uint                      `json:"mcpServerIds"`
+	KnowledgeBaseIDs  []uint                      `json:"knowledgeBaseIds"`
+	KnowledgeGraphIDs []uint                      `json:"knowledgeGraphIds"`
+	CapabilitySets    []AgentCapabilitySetBinding `json:"capabilitySetBindings"`
+	TemplateID        *uint                       `json:"templateId"`
 }
 
 func (h *AgentHandler) Create(c *gin.Context) {
@@ -164,28 +165,29 @@ func (h *AgentHandler) Get(c *gin.Context) {
 }
 
 type updateAgentReq struct {
-	Name              string          `json:"name" binding:"required"`
-	Description       string          `json:"description"`
-	Avatar            string          `json:"avatar"`
-	Visibility        string          `json:"visibility"`
-	IsActive          *bool           `json:"isActive"`
-	Strategy          string          `json:"strategy"`
-	ModelID           *uint           `json:"modelId"`
-	SystemPrompt      string          `json:"systemPrompt"`
-	Temperature       float64         `json:"temperature"`
-	MaxTokens         int             `json:"maxTokens"`
-	MaxTurns          int             `json:"maxTurns"`
-	Runtime           string          `json:"runtime"`
-	RuntimeConfig     json.RawMessage `json:"runtimeConfig"`
-	ExecMode          string          `json:"execMode"`
-	NodeID            *uint           `json:"nodeId"`
-	Workspace         string          `json:"workspace"`
-	Instructions      string          `json:"instructions"`
-	ToolIDs           []uint          `json:"toolIds"`
-	SkillIDs          []uint          `json:"skillIds"`
-	MCPServerIDs      []uint          `json:"mcpServerIds"`
-	KnowledgeBaseIDs  []uint          `json:"knowledgeBaseIds"`
-	KnowledgeGraphIDs []uint          `json:"knowledgeGraphIds"`
+	Name              string                      `json:"name" binding:"required"`
+	Description       string                      `json:"description"`
+	Avatar            string                      `json:"avatar"`
+	Visibility        string                      `json:"visibility"`
+	IsActive          *bool                       `json:"isActive"`
+	Strategy          string                      `json:"strategy"`
+	ModelID           *uint                       `json:"modelId"`
+	SystemPrompt      string                      `json:"systemPrompt"`
+	Temperature       float64                     `json:"temperature"`
+	MaxTokens         int                         `json:"maxTokens"`
+	MaxTurns          int                         `json:"maxTurns"`
+	Runtime           string                      `json:"runtime"`
+	RuntimeConfig     json.RawMessage             `json:"runtimeConfig"`
+	ExecMode          string                      `json:"execMode"`
+	NodeID            *uint                       `json:"nodeId"`
+	Workspace         string                      `json:"workspace"`
+	Instructions      string                      `json:"instructions"`
+	ToolIDs           []uint                      `json:"toolIds"`
+	SkillIDs          []uint                      `json:"skillIds"`
+	MCPServerIDs      []uint                      `json:"mcpServerIds"`
+	KnowledgeBaseIDs  []uint                      `json:"knowledgeBaseIds"`
+	KnowledgeGraphIDs []uint                      `json:"knowledgeGraphIds"`
+	CapabilitySets    []AgentCapabilitySetBinding `json:"capabilitySetBindings"`
 }
 
 func (h *AgentHandler) Update(c *gin.Context) {
@@ -299,14 +301,16 @@ func (h *AgentHandler) agentWithBindings(a *Agent) gin.H {
 	mcpIDs, _ := h.repo.GetMCPServerIDs(a.ID)
 	kbIDs, _ := h.repo.GetKnowledgeBaseIDs(a.ID)
 	kgIDs, _ := h.repo.GetKnowledgeGraphIDs(a.ID)
+	capabilitySetBindings, _ := h.repo.GetCapabilitySetBindings(a.ID)
 
 	return gin.H{
-		"agent":             resp,
-		"toolIds":           toolIDs,
-		"skillIds":          skillIDs,
-		"mcpServerIds":      mcpIDs,
-		"knowledgeBaseIds":  kbIDs,
-		"knowledgeGraphIds": kgIDs,
+		"agent":                 resp,
+		"toolIds":               toolIDs,
+		"skillIds":              skillIDs,
+		"mcpServerIds":          mcpIDs,
+		"knowledgeBaseIds":      kbIDs,
+		"knowledgeGraphIds":     kgIDs,
+		"capabilitySetBindings": capabilitySetBindings,
 	}
 }
 
@@ -317,6 +321,7 @@ func agentBindingsFromCreateReq(req createAgentReq) AgentBindings {
 		MCPServerIDs:      req.MCPServerIDs,
 		KnowledgeBaseIDs:  req.KnowledgeBaseIDs,
 		KnowledgeGraphIDs: req.KnowledgeGraphIDs,
+		CapabilitySets:    req.CapabilitySets,
 	}
 }
 
@@ -327,5 +332,6 @@ func agentBindingsFromUpdateReq(req updateAgentReq) AgentBindings {
 		MCPServerIDs:      req.MCPServerIDs,
 		KnowledgeBaseIDs:  req.KnowledgeBaseIDs,
 		KnowledgeGraphIDs: req.KnowledgeGraphIDs,
+		CapabilitySets:    req.CapabilitySets,
 	}
 }

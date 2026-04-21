@@ -13,6 +13,10 @@ type StreamEncoder interface {
 	Close() error
 }
 
+type heartbeatStreamEncoder interface {
+	Heartbeat() error
+}
+
 // StreamEncoderFactory creates a new encoder bound to the provided writer.
 type StreamEncoderFactory func(w io.Writer) StreamEncoder
 
@@ -234,6 +238,16 @@ func (enc *UIMessageStreamEncoder) Close() error {
 	}
 
 	_, err := fmt.Fprintf(enc.w, "data: [DONE]\n\n")
+	return err
+}
+
+// Heartbeat writes an SSE comment frame. UI Message Stream clients ignore it,
+// while proxies and browsers still see activity on otherwise idle streams.
+func (enc *UIMessageStreamEncoder) Heartbeat() error {
+	enc.mu.Lock()
+	defer enc.mu.Unlock()
+
+	_, err := fmt.Fprintf(enc.w, ": heartbeat\n\n")
 	return err
 }
 

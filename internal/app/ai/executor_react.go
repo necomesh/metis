@@ -141,15 +141,18 @@ func (e *ReactExecutor) Execute(ctx context.Context, req ExecuteRequest) (<-chan
 				durationMs := int(time.Since(start).Milliseconds())
 
 				output := result.Output
+				isError := result.IsError
 				if execErr != nil {
 					output = fmt.Sprintf("Error: %v", execErr)
+					isError = true
 				}
 
 				emit(Event{
-					Type:       EventTypeToolResult,
-					ToolCallID: tc.ID,
-					ToolOutput: output,
-					DurationMs: durationMs,
+					Type:        EventTypeToolResult,
+					ToolCallID:  tc.ID,
+					ToolOutput:  output,
+					DurationMs:  durationMs,
+					ToolIsError: isError,
 				})
 
 				// Add tool result to messages

@@ -561,6 +561,11 @@ func seedAI(db *gorm.DB, enforcer *casbin.Enforcer) error {
 			slog.Info("seed: updated toolkit for builtin tool", "name", tool.Name, "toolkit", tool.Toolkit)
 		}
 	}
+	if err := ensureDefaultCapabilitySets(db); err != nil {
+		slog.Error("seed: failed to ensure capability sets", "error", err)
+	} else if err := migrateAgentCapabilitySetBindings(db); err != nil {
+		slog.Error("seed: failed to migrate agent capability set bindings", "error", err)
+	}
 
 	// 6. Casbin policies
 	policies := [][]string{
@@ -626,6 +631,7 @@ func seedAI(db *gorm.DB, enforcer *casbin.Enforcer) error {
 		// Tools
 		{"admin", "/api/v1/ai/tools", "GET"},
 		{"admin", "/api/v1/ai/tools/:id", "PUT"},
+		{"admin", "/api/v1/ai/capability-sets", "GET"},
 		// MCP Servers
 		{"admin", "/api/v1/ai/mcp-servers", "GET"},
 		{"admin", "/api/v1/ai/mcp-servers", "POST"},

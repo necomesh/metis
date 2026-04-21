@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,14 +19,16 @@ var (
 )
 
 type MCPServerService struct {
-	repo   *MCPServerRepo
-	encKey crypto.EncryptionKey
+	repo      *MCPServerRepo
+	encKey    crypto.EncryptionKey
+	mcpClient MCPRuntimeClient
 }
 
 func NewMCPServerService(i do.Injector) (*MCPServerService, error) {
 	return &MCPServerService{
-		repo:   do.MustInvoke[*MCPServerRepo](i),
-		encKey: do.MustInvoke[crypto.EncryptionKey](i),
+		repo:      do.MustInvoke[*MCPServerRepo](i),
+		encKey:    do.MustInvoke[crypto.EncryptionKey](i),
+		mcpClient: do.MustInvoke[MCPRuntimeClient](i),
 	}, nil
 }
 
@@ -129,6 +132,20 @@ func (s *MCPServerService) DecryptAuthConfig(m *MCPServer) (string, error) {
 		return "", fmt.Errorf("decrypt auth config: %w", err)
 	}
 	return string(plain), nil
+}
+
+func (s *MCPServerService) TestConnection(ctx context.Context, id uint) ([]MCPRuntimeTool, error) {
+	m, err := s.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	if m.Transport != MCPTransportSSE {
+		return nil, fmt.Errorf("test connection is only available for SSE transport")
+	}
+	if s.mcpClient == nil {
+		return nil, fmt.Errorf("MCP runtime client unavailable")
+	}
+	return s.mcpClient.DiscoverTools(ctx, *m)
 }
 
 func (s *MCPServerService) validateTransport(m *MCPServer) error {

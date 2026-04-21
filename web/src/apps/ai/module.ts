@@ -171,6 +171,10 @@ registerApp({
       path: "ai/chat",
       children: [
         {
+          index: true,
+          lazy: () => import("./pages/chat/index"),
+        },
+        {
           path: ":sid",
           lazy: () => import("./pages/chat/[sid]"),
         },

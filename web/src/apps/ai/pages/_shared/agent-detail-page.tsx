@@ -2,8 +2,8 @@ import { useState, useMemo } from "react"
 import { useParams, useNavigate, Link } from "react-router"
 import { useTranslation } from "react-i18next"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { ArrowLeft, BookOpen, Bot, BrainCircuit, ChevronRight, Code2, Loader2, MessageSquare, Package, Pencil, Plug, Share2, Trash2, Wrench } from "lucide-react"
-import { sessionApi, api, type AgentWithBindings, type AgentSession, type PaginatedResponse } from "@/lib/api"
+import { ArrowLeft, BookOpen, Bot, BrainCircuit, ChevronRight, Code2, MessageSquare, Package, Pencil, Plug, Share2, Trash2, Wrench } from "lucide-react"
+import { sessionApi, api, type AgentWithBindings, type AgentSession } from "@/lib/api"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -19,7 +19,7 @@ import {
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle,
 } from "@/components/ui/sheet"
-import { cn, formatDateTime } from "@/lib/utils"
+import { formatDateTime } from "@/lib/utils"
 
 const TYPE_ICON: Record<string, typeof Bot> = {
   assistant: BrainCircuit,
@@ -50,51 +50,57 @@ interface NamedItem {
   description?: string
 }
 
-interface ToolkitGroup {
-  toolkit: string
-  tools: NamedItem[]
+interface CapabilitySetItem extends NamedItem {
+  isActive: boolean
 }
 
-const BINDING_ROWS = [
-  { key: "tools", icon: Wrench, labelKey: "ai:agents.tools" },
-  { key: "mcp", icon: Plug, labelKey: "ai:agents.mcpServers" },
-  { key: "skills", icon: Package, labelKey: "ai:agents.skills" },
-  { key: "kb", icon: BookOpen, labelKey: "ai:agents.knowledgeBases" },
-  { key: "kg", icon: Share2, labelKey: "ai:agents.knowledgeGraphs" },
-] as const
+interface CapabilitySet {
+  id: number
+  type: "tool" | "mcp" | "skill" | "knowledge_base" | "knowledge_graph"
+  name: string
+  description: string
+  icon?: string
+  itemCount: number
+  items: CapabilitySetItem[]
+}
+
+function capabilitySetIcon(type: CapabilitySet["type"]) {
+  const iconMap = {
+    tool: Wrench,
+    mcp: Plug,
+    skill: Package,
+    knowledge_base: BookOpen,
+    knowledge_graph: Share2,
+  }
+  return iconMap[type]
+}
+
+function capabilitySetTitle(set: CapabilitySet, t: (key: string, options?: { defaultValue?: string }) => string) {
+  if (set.type === "tool") {
+    return t(`ai:tools.toolkits.${set.name}.name`, { defaultValue: set.name })
+  }
+  return set.name
+}
+
+function capabilityItemName(
+  type: CapabilitySet["type"],
+  item: CapabilitySetItem,
+  t: (key: string, options?: { defaultValue?: string }) => string
+) {
+  if (type === "tool") {
+    return t(`ai:tools.toolDefs.${item.name}.name`, { defaultValue: item.displayName || item.name })
+  }
+  return item.displayName || item.name
+}
 
 function AgentBindingsCard({ agent }: { agent: AgentWithBindings }) {
   const { t } = useTranslation(["ai"])
-  const [openType, setOpenType] = useState<string | null>(null)
+  const [openSetId, setOpenSetId] = useState<number | null>(null)
 
-  const { data: toolGroups = [] } = useQuery({
-    queryKey: ["ai-agent-binding-tools"],
+  const { data: capabilitySets = [] } = useQuery({
+    queryKey: ["ai-capability-sets"],
     queryFn: () =>
-      api.get<{ items: ToolkitGroup[] }>("/api/v1/ai/tools").then((r) => r?.items ?? []),
-  })
-
-  const { data: mcpItems = [] } = useQuery({
-    queryKey: ["ai-binding-mcp-servers"],
-    queryFn: () =>
-      api.get<PaginatedResponse<NamedItem>>("/api/v1/ai/mcp-servers?pageSize=100").then((r) => r?.items ?? []),
-  })
-
-  const { data: skillItems = [] } = useQuery({
-    queryKey: ["ai-binding-skills"],
-    queryFn: () =>
-      api.get<PaginatedResponse<NamedItem>>("/api/v1/ai/skills?pageSize=100").then((r) => r?.items ?? []),
-  })
-
-  const { data: kbItems = [] } = useQuery({
-    queryKey: ["ai-binding-knowledge-bases"],
-    queryFn: () =>
-      api.get<PaginatedResponse<NamedItem>>("/api/v1/ai/knowledge-bases?pageSize=100").then((r) => r?.items ?? []),
-  })
-
-  const { data: kgItems = [] } = useQuery({
-    queryKey: ["ai-binding-knowledge-graphs"],
-    queryFn: () =>
-      api.get<PaginatedResponse<NamedItem>>("/api/v1/ai/knowledge/graphs?pageSize=100").then((r) => r?.items ?? []),
+      api.get<{ items: CapabilitySet[] }>("/api/v1/ai/capability-sets").then((r) => r?.items ?? []),
   })
 
   const idsMap = useMemo<Record<string, number[]>>(() => ({
@@ -105,109 +111,115 @@ function AgentBindingsCard({ agent }: { agent: AgentWithBindings }) {
     kg: agent.knowledgeGraphIds,
   }), [agent.toolIds, agent.mcpServerIds, agent.skillIds, agent.knowledgeBaseIds, agent.knowledgeGraphIds])
 
-  const sheetData = useMemo(() => {
-    if (!openType) return { title: "", groups: null as { title: string; items: { name: string; description?: string }[] }[] | null, items: [] as { name: string; description?: string }[] }
-
-    const row = BINDING_ROWS.find((r) => r.key === openType)!
-    const ids = idsMap[openType] ?? []
-    const label = t(row.labelKey)
-    const title = `${label}（${ids.length}）`
-
-    if (openType === "tools") {
-      const boundGroups = toolGroups
-        .map((g) => ({
-          title: t(`ai:tools.toolkits.${g.toolkit}.name`),
-          items: g.tools
-            .filter((tool) => ids.includes(tool.id))
-            .map((tool) => ({
-              name: t(`ai:tools.toolDefs.${tool.name}.name`, { defaultValue: tool.displayName || tool.name }),
-              description: tool.description
-                ? t(`ai:tools.toolDefs.${tool.name}.description`, { defaultValue: tool.description })
-                : undefined,
-            })),
-        }))
-        .filter((g) => g.items.length > 0)
-      return { title, groups: boundGroups, items: [] }
+  const selectedBySet = useMemo(() => {
+    const map: Record<number, number[]> = {}
+    if (agent.capabilitySetBindings?.length) {
+      for (const binding of agent.capabilitySetBindings) {
+        map[binding.setId] = binding.itemIds ?? []
+      }
+      return map
     }
+    const legacyKeyByType: Record<CapabilitySet["type"], keyof typeof idsMap> = {
+      tool: "tools",
+      mcp: "mcp",
+      skill: "skills",
+      knowledge_base: "kb",
+      knowledge_graph: "kg",
+    }
+    for (const set of capabilitySets) {
+      const ids = idsMap[legacyKeyByType[set.type]] ?? []
+      const selected = set.items.filter((item) => ids.includes(item.id)).map((item) => item.id)
+      if (selected.length > 0) {
+        map[set.id] = selected
+      }
+    }
+    return map
+  }, [agent.capabilitySetBindings, capabilitySets, idsMap])
 
-    const sourceMap: Record<string, NamedItem[]> = { mcp: mcpItems, skills: skillItems, kb: kbItems, kg: kgItems }
-    const source = sourceMap[openType] ?? []
-    const items = source
-      .filter((item) => ids.includes(item.id))
-      .map((item) => ({ name: item.displayName || item.name, description: item.description }))
-    return { title, groups: null, items }
-  }, [openType, toolGroups, mcpItems, skillItems, kbItems, kgItems, idsMap, t])
+  const boundSets = useMemo(() => {
+    return capabilitySets
+      .map((set) => ({ set, selectedIds: selectedBySet[set.id] ?? [] }))
+      .filter((entry) => entry.selectedIds.length > 0)
+  }, [capabilitySets, selectedBySet])
+
+  const sheetData = useMemo(() => {
+    const entry = boundSets.find((item) => item.set.id === openSetId)
+    if (!entry) return { title: "", description: "", items: [] as { name: string; description?: string; isActive: boolean }[] }
+    return {
+      title: capabilitySetTitle(entry.set, t),
+      description: entry.set.description,
+      items: entry.set.items
+        .filter((item) => entry.selectedIds.includes(item.id))
+        .map((item) => ({
+          name: capabilityItemName(entry.set.type, item, t),
+          description: item.description,
+          isActive: item.isActive,
+        })),
+    }
+  }, [boundSets, openSetId, t])
 
   return (
     <>
       <Card>
-        <CardHeader className="pb-4">
+        <CardHeader>
           <CardTitle className="text-base">{t("ai:agents.bindings")}</CardTitle>
         </CardHeader>
         <CardContent className="divide-y divide-border/45">
-          {BINDING_ROWS.map((row) => {
-            const Icon = row.icon
-            const ids = idsMap[row.key]
-            return (
-              <button
-                key={row.key}
-                type="button"
-                onClick={() => ids.length > 0 && setOpenType(row.key)}
-                className={cn(
-                  "flex w-full items-center gap-3 py-3.5 text-left transition-colors first:pt-0 last:pb-0",
-                  ids.length > 0 ? "cursor-pointer hover:text-foreground" : "cursor-default opacity-50"
-                )}
-              >
-                <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border/55 bg-background/70 text-primary">
-                  <Icon className="size-4" />
-                </div>
-                <span className="flex-1 text-sm font-medium">{t(row.labelKey)}</span>
-                <span className="text-sm tabular-nums text-muted-foreground">
-                  {t("ai:agents.itemCount", { count: ids.length })}
-                </span>
-                <ChevronRight className="size-4 text-muted-foreground" />
-              </button>
-            )
-          })}
+          {boundSets.length === 0 ? (
+            <p className="py-3 text-sm text-muted-foreground">{t("ai:agents.noCapabilitySets")}</p>
+          ) : (
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              {boundSets.map(({ set, selectedIds }) => {
+                const Icon = capabilitySetIcon(set.type)
+                return (
+                  <button
+                    key={set.id}
+                    type="button"
+                    onClick={() => setOpenSetId(set.id)}
+                    className="group rounded-xl border border-border/55 bg-background/30 px-4 py-3 text-left transition-colors hover:border-border/90 hover:bg-accent/20"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex min-w-0 items-start gap-3">
+                        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border/55 bg-background/70 text-primary">
+                          <Icon className="size-4" />
+                        </div>
+                        <div className="min-w-0 space-y-1">
+                          <div className="flex items-center gap-2">
+                            <p className="truncate text-sm font-medium text-foreground">{capabilitySetTitle(set, t)}</p>
+                            <Badge variant="outline">{selectedIds.length}/{set.itemCount}</Badge>
+                          </div>
+                          <p className="line-clamp-2 text-xs leading-5 text-muted-foreground">{set.description}</p>
+                        </div>
+                      </div>
+                      <ChevronRight className="mt-2 size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          )}
         </CardContent>
       </Card>
 
-      <Sheet open={openType !== null} onOpenChange={(open) => { if (!open) setOpenType(null) }}>
+      <Sheet open={openSetId !== null} onOpenChange={(open) => { if (!open) setOpenSetId(null) }}>
         <SheetContent side="right" className="w-full sm:max-w-md">
           <SheetHeader className="border-b border-border/50 pb-4">
             <SheetTitle>{sheetData.title}</SheetTitle>
           </SheetHeader>
           <div className="flex-1 overflow-y-auto px-4 py-4">
-            {sheetData.groups ? (
-              <div className="space-y-6">
-                {sheetData.groups.map((group) => (
-                  <div key={group.title} className="space-y-3">
-                    <h4 className="text-sm font-semibold text-foreground">{group.title}</h4>
-                    <div className="space-y-2">
-                      {group.items.map((item, i) => (
-                        <div key={i} className="rounded-xl border border-border/55 bg-background/30 px-4 py-3">
-                          <p className="text-sm font-medium text-foreground">{item.name}</p>
-                          {item.description && (
-                            <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{item.description}</p>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {sheetData.items.map((item, i) => (
-                  <div key={i} className="rounded-xl border border-border/55 bg-background/30 px-4 py-3">
+            <div className="space-y-2">
+              {sheetData.items.map((item, i) => (
+                <div key={i} className="rounded-xl border border-border/55 bg-background/30 px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
                     <p className="text-sm font-medium text-foreground">{item.name}</p>
-                    {item.description && (
-                      <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{item.description}</p>
-                    )}
+                    {!item.isActive && <Badge variant="secondary">{t("ai:agents.unavailable")}</Badge>}
                   </div>
-                ))}
-              </div>
-            )}
+                  {item.description && (
+                    <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{item.description}</p>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         </SheetContent>
       </Sheet>
@@ -222,7 +234,7 @@ function AgentConfiguration({ agent }: { agent: AgentWithBindings }) {
     <div className="space-y-6">
       {/* Basic Info */}
       <Card>
-        <CardHeader className="pb-4">
+        <CardHeader>
           <CardTitle className="text-base">{t("ai:agents.sections.basic")}</CardTitle>
         </CardHeader>
         <CardContent>
@@ -244,7 +256,7 @@ function AgentConfiguration({ agent }: { agent: AgentWithBindings }) {
       {/* Model Config (assistant) */}
       {agent.type === "assistant" && (
         <Card>
-          <CardHeader className="pb-4">
+          <CardHeader>
             <CardTitle className="text-base">{t("ai:agents.sections.modelConfig")}</CardTitle>
           </CardHeader>
           <CardContent>
@@ -279,7 +291,7 @@ function AgentConfiguration({ agent }: { agent: AgentWithBindings }) {
       {/* Runtime Config (coding) */}
       {agent.type === "coding" && (
         <Card>
-          <CardHeader className="pb-4">
+          <CardHeader>
             <CardTitle className="text-base">{t("ai:agents.sections.execution")}</CardTitle>
           </CardHeader>
           <CardContent>
@@ -308,7 +320,7 @@ function AgentConfiguration({ agent }: { agent: AgentWithBindings }) {
       {/* Instructions */}
       {agent.instructions && (
         <Card>
-          <CardHeader className="pb-4">
+          <CardHeader>
             <CardTitle className="text-base">{t("ai:agents.sections.instructions")}</CardTitle>
           </CardHeader>
           <CardContent>
@@ -419,12 +431,6 @@ export function AgentDetailPage({ config }: { config: AgentDetailPageConfig }) {
     onError: (err) => toast.error(err.message),
   })
 
-  const createSessionMutation = useMutation({
-    mutationFn: () => sessionApi.create(Number(id)),
-    onSuccess: (session) => navigate(`/ai/chat/${session.id}`),
-    onError: (err) => toast.error(err.message),
-  })
-
   if (isLoading || !agent) {
     return <div className="py-8 text-center text-muted-foreground">{t("common:loading")}</div>
   }
@@ -462,14 +468,10 @@ export function AgentDetailPage({ config }: { config: AgentDetailPageConfig }) {
           <Button
             variant="outline"
             size="sm"
-            disabled={!agent.isActive || createSessionMutation.isPending}
-            onClick={() => createSessionMutation.mutate()}
+            disabled={!agent.isActive}
+            onClick={() => navigate(`/ai/chat?agentId=${agent.id}&autostart=1`)}
           >
-            {createSessionMutation.isPending ? (
-              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
-            )}
+            <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
             {t("ai:chat.startChat")}
           </Button>
           <Button variant="outline" size="sm" onClick={() => navigate(`${config.basePath}/${id}/edit`)}>

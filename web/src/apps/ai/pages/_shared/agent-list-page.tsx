@@ -8,7 +8,7 @@ import {
 } from "lucide-react"
 import { usePermission } from "@/hooks/use-permission"
 import { useListPage } from "@/hooks/use-list-page"
-import { sessionApi, type AgentInfo } from "@/lib/api"
+import type { AgentInfo } from "@/lib/api"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -177,12 +177,6 @@ export function AgentListPage({ config }: { config: AgentListPageConfig }) {
     onError: (err) => toast.error(err.message),
   })
 
-  const createSessionMutation = useMutation({
-    mutationFn: (agentId: number) => sessionApi.create(agentId),
-    onSuccess: (session) => navigate(`/ai/chat/${session.id}`),
-    onError: (err) => toast.error(err.message),
-  })
-
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -233,8 +227,8 @@ export function AgentListPage({ config }: { config: AgentListPageConfig }) {
               key={agent.id}
               agent={agent}
               basePath={config.basePath}
-              onChat={() => createSessionMutation.mutate(agent.id)}
-              chattingId={createSessionMutation.isPending ? (createSessionMutation.variables ?? null) : null}
+              onChat={() => navigate(`/ai/chat?agentId=${agent.id}&autostart=1`)}
+              chattingId={null}
               canUpdate={canUpdate}
               canDelete={canDelete}
               onDelete={() => setDeleteTarget(agent)}

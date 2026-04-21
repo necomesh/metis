@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/samber/do/v2"
 
@@ -16,15 +16,19 @@ import (
 	"metis/internal/pkg/crypto"
 )
 
+const streamHeartbeatInterval = 15 * time.Second
+
 // AgentGateway orchestrates the full agent execution flow.
 type AgentGateway struct {
-	agentSvc     *AgentService
-	sessionSvc   *SessionService
-	memorySvc    *MemoryService
-	agentRepo    *AgentRepo
-	modelRepo    *ModelRepo
-	providerRepo *ProviderRepo
-	encKey       crypto.EncryptionKey
+	agentSvc          *AgentService
+	sessionSvc        *SessionService
+	memorySvc         *MemoryService
+	agentRepo         *AgentRepo
+	modelRepo         *ModelRepo
+	providerRepo      *ProviderRepo
+	knowledgeSearcher *KnowledgeSearchService
+	mcpClient         MCPRuntimeClient
+	encKey            crypto.EncryptionKey
 
 	// Tool registries for building CompositeToolExecutor per session
 	toolRegistries []ToolHandlerRegistry
@@ -40,15 +44,17 @@ type AgentGateway struct {
 
 func NewAgentGateway(i do.Injector) (*AgentGateway, error) {
 	return &AgentGateway{
-		agentSvc:       do.MustInvoke[*AgentService](i),
-		sessionSvc:     do.MustInvoke[*SessionService](i),
-		memorySvc:      do.MustInvoke[*MemoryService](i),
-		agentRepo:      do.MustInvoke[*AgentRepo](i),
-		modelRepo:      do.MustInvoke[*ModelRepo](i),
-		providerRepo:   do.MustInvoke[*ProviderRepo](i),
-		encKey:         do.MustInvoke[crypto.EncryptionKey](i),
-		toolRegistries: collectToolRegistries(i),
-		executions:     make(map[uint]context.CancelFunc),
+		agentSvc:          do.MustInvoke[*AgentService](i),
+		sessionSvc:        do.MustInvoke[*SessionService](i),
+		memorySvc:         do.MustInvoke[*MemoryService](i),
+		agentRepo:         do.MustInvoke[*AgentRepo](i),
+		modelRepo:         do.MustInvoke[*ModelRepo](i),
+		providerRepo:      do.MustInvoke[*ProviderRepo](i),
+		knowledgeSearcher: do.MustInvoke[*KnowledgeSearchService](i),
+		mcpClient:         do.MustInvoke[MCPRuntimeClient](i),
+		encKey:            do.MustInvoke[crypto.EncryptionKey](i),
+		toolRegistries:    collectToolRegistries(i),
+		executions:        make(map[uint]context.CancelFunc),
 		streamEncoderFactory: func(w io.Writer) StreamEncoder {
 			return NewUIMessageStreamEncoder(w)
 		},
@@ -101,10 +107,13 @@ func (gw *AgentGateway) Run(ctx context.Context, sessionID, userID uint) (io.Rea
 		}
 	}
 
-	// Build tool definitions from bindings
-	tools, err := gw.buildToolDefinitions(agent.ID)
-	if err != nil {
-		return nil, fmt.Errorf("build tools: %w", err)
+	var runtime *assistantRuntimeAssembly
+	if agent.Type == AgentTypeAssistant {
+		runtime, err = gw.buildAssistantRuntime(ctx, agent, session, execMessages, systemPrompt)
+		if err != nil {
+			return nil, fmt.Errorf("build assistant runtime: %w", err)
+		}
+		systemPrompt = runtime.SystemPrompt
 	}
 
 	// Fetch model info for ModelName
@@ -143,12 +152,18 @@ func (gw *AgentGateway) Run(ctx context.Context, sessionID, userID uint) (io.Rea
 		},
 		Messages:     execMessages,
 		SystemPrompt: systemPrompt,
-		Tools:        tools,
 		MaxTurns:     agent.MaxTurns,
+	}
+	if runtime != nil {
+		execReq.Tools = runtime.Tools
 	}
 
 	// Select executor
-	executor, err := gw.selectExecutor(agent, sessionID, session.UserID)
+	var runtimeRegistries []ToolHandlerRegistry
+	if runtime != nil {
+		runtimeRegistries = runtime.ToolRegistries
+	}
+	executor, err := gw.selectExecutor(agent, sessionID, session.UserID, runtimeRegistries)
 	if err != nil {
 		return nil, err
 	}
@@ -174,26 +189,73 @@ func (gw *AgentGateway) Run(ctx context.Context, sessionID, userID uint) (io.Rea
 	encoder := gw.streamEncoderFactory(pw)
 
 	go func() {
+		var closeErr error
 		defer func() {
 			gw.mu.Lock()
 			delete(gw.executions, sessionID)
 			gw.mu.Unlock()
 		}()
-		defer encoder.Close()
-		defer pw.Close()
+		defer func() {
+			if closeErr != nil {
+				_ = pw.CloseWithError(closeErr)
+				return
+			}
+			if err := encoder.Close(); err != nil {
+				_ = pw.CloseWithError(err)
+				return
+			}
+			_ = pw.Close()
+		}()
 
 		var assistantContent string
+		finalized := false
+		idleTimer := time.NewTimer(streamHeartbeatInterval)
+		defer idleTimer.Stop()
+
+		resetIdleTimer := func() {
+			if !idleTimer.Stop() {
+				select {
+				case <-idleTimer.C:
+				default:
+				}
+			}
+			idleTimer.Reset(streamHeartbeatInterval)
+		}
+
+		persistPartialAssistant := func(tokens int) {
+			if assistantContent != "" {
+				_, _ = gw.sessionSvc.StoreMessage(sessionID, MessageRoleAssistant, assistantContent, nil, tokens)
+				assistantContent = ""
+			}
+		}
+
+		finalizeCancelled := func() {
+			if finalized {
+				return
+			}
+			finalized = true
+			persistPartialAssistant(0)
+			_ = gw.sessionSvc.UpdateStatus(sessionID, SessionStatusCancelled)
+		}
 
 		for {
 			select {
 			case evt, ok := <-eventCh:
 				if !ok {
+					if execCtx.Err() != nil {
+						if err := encoder.Encode(Event{Type: EventTypeCancelled, Message: execCtx.Err().Error()}); err != nil {
+							closeErr = err
+							return
+						}
+						finalizeCancelled()
+					}
 					return
 				}
 				if err := encoder.Encode(evt); err != nil {
-					pw.CloseWithError(err)
+					closeErr = err
 					return
 				}
+				resetIdleTimer()
 
 				// Post-process: store results
 				switch evt.Type {
@@ -202,15 +264,22 @@ func (gw *AgentGateway) Run(ctx context.Context, sessionID, userID uint) (io.Rea
 
 				case EventTypeToolCall:
 					meta, _ := json.Marshal(map[string]any{
-						"tool_name": evt.ToolName,
-						"tool_args": evt.ToolArgs,
+						"tool_call_id": evt.ToolCallID,
+						"tool_name":    evt.ToolName,
+						"tool_args":    evt.ToolArgs,
+						"status":       "running",
 					})
 					_, _ = gw.sessionSvc.StoreMessage(sessionID, MessageRoleToolCall, "", meta, 0)
 
 				case EventTypeToolResult:
+					status := "completed"
+					if evt.ToolIsError {
+						status = "error"
+					}
 					meta, _ := json.Marshal(map[string]any{
 						"tool_call_id": evt.ToolCallID,
 						"duration_ms":  evt.DurationMs,
+						"status":       status,
 					})
 					_, _ = gw.sessionSvc.StoreMessage(sessionID, MessageRoleToolResult, evt.ToolOutput, meta, 0)
 
@@ -224,31 +293,35 @@ func (gw *AgentGateway) Run(ctx context.Context, sessionID, userID uint) (io.Rea
 					})
 
 				case EventTypeDone:
-					if assistantContent != "" {
-						_, _ = gw.sessionSvc.StoreMessage(sessionID, MessageRoleAssistant, assistantContent, nil, evt.OutputTokens)
-					}
+					finalized = true
+					persistPartialAssistant(evt.OutputTokens)
 					_ = gw.sessionSvc.UpdateStatus(sessionID, SessionStatusCompleted)
 
 				case EventTypeError:
-					if assistantContent != "" {
-						_, _ = gw.sessionSvc.StoreMessage(sessionID, MessageRoleAssistant, assistantContent, nil, 0)
-					}
+					finalized = true
+					persistPartialAssistant(0)
 					_ = gw.sessionSvc.UpdateStatus(sessionID, SessionStatusError)
 
 				case EventTypeCancelled:
-					if assistantContent != "" {
-						_, _ = gw.sessionSvc.StoreMessage(sessionID, MessageRoleAssistant, assistantContent, nil, 0)
-					}
-					_ = gw.sessionSvc.UpdateStatus(sessionID, SessionStatusCancelled)
+					finalizeCancelled()
 				}
 
 			case <-execCtx.Done():
-				if assistantContent != "" {
-					_, _ = gw.sessionSvc.StoreMessage(sessionID, MessageRoleAssistant, assistantContent, nil, 0)
+				if err := encoder.Encode(Event{Type: EventTypeCancelled, Message: execCtx.Err().Error()}); err != nil {
+					closeErr = err
+					return
 				}
-				_ = gw.sessionSvc.UpdateStatus(sessionID, SessionStatusCancelled)
-				pw.CloseWithError(context.Canceled)
+				finalizeCancelled()
 				return
+
+			case <-idleTimer.C:
+				if hb, ok := encoder.(heartbeatStreamEncoder); ok {
+					if err := hb.Heartbeat(); err != nil {
+						closeErr = err
+						return
+					}
+				}
+				idleTimer.Reset(streamHeartbeatInterval)
 			}
 		}
 	}()
@@ -269,14 +342,17 @@ func (gw *AgentGateway) Cancel(sessionID, userID uint) {
 	}
 }
 
-func (gw *AgentGateway) selectExecutor(agent *Agent, sessionID, userID uint) (Executor, error) {
+func (gw *AgentGateway) selectExecutor(agent *Agent, sessionID, userID uint, runtimeRegistries []ToolHandlerRegistry) (Executor, error) {
 	switch agent.Type {
 	case AgentTypeAssistant:
 		client, err := gw.buildLLMClient(agent)
 		if err != nil {
 			return nil, fmt.Errorf("build LLM client: %w", err)
 		}
-		toolExec := NewCompositeToolExecutor(gw.toolRegistries, sessionID, userID)
+		if len(runtimeRegistries) == 0 {
+			runtimeRegistries = gw.toolRegistries
+		}
+		toolExec := NewCompositeToolExecutor(runtimeRegistries, sessionID, userID)
 		switch agent.Strategy {
 		case AgentStrategyPlanAndExecute:
 			return NewPlanAndExecuteExecutor(client, toolExec), nil
@@ -331,55 +407,11 @@ func (gw *AgentGateway) buildLLMClient(agent *Agent) (llm.Client, error) {
 }
 
 func (gw *AgentGateway) buildToolDefinitions(agentID uint) ([]ToolDefinition, error) {
-	var defs []ToolDefinition
-
-	// Builtin tools
-	toolIDs, err := gw.agentRepo.GetToolIDs(agentID)
-	if err != nil {
+	assembly := &assistantRuntimeAssembly{ToolRegistries: append([]ToolHandlerRegistry(nil), gw.toolRegistries...)}
+	if err := gw.addBuiltinRuntimeTools(agentID, assembly, map[string]struct{}{}); err != nil {
 		return nil, err
 	}
-	for _, tid := range toolIDs {
-		var tool Tool
-		if err := gw.agentRepo.db.First(&tool, tid).Error; err != nil {
-			slog.Warn("tool not found for binding", "toolId", tid)
-			continue
-		}
-		if !tool.IsActive {
-			continue
-		}
-		defs = append(defs, ToolDefinition{
-			Type:        "builtin",
-			Name:        tool.Name,
-			Description: tool.Description,
-			Parameters:  json.RawMessage(tool.ParametersSchema),
-			SourceID:    tool.ID,
-		})
-	}
-
-	// MCP servers — add all tools from each server
-	mcpIDs, err := gw.agentRepo.GetMCPServerIDs(agentID)
-	if err != nil {
-		return nil, err
-	}
-	for _, mid := range mcpIDs {
-		var mcp MCPServer
-		if err := gw.agentRepo.db.First(&mcp, mid).Error; err != nil {
-			continue
-		}
-		if !mcp.IsActive {
-			continue
-		}
-		// MCP tools are discovered at runtime from the server
-		// For now, register the server as a single meta-tool
-		defs = append(defs, ToolDefinition{
-			Type:        "mcp",
-			Name:        "mcp_" + mcp.Name,
-			Description: mcp.Description,
-			SourceID:    mcp.ID,
-		})
-	}
-
-	return defs, nil
+	return assembly.Tools, nil
 }
 
 // --- app.AIAgentProvider implementation ---

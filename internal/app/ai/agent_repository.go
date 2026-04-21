@@ -159,6 +159,12 @@ func (r *AgentRepo) ReplaceKnowledgeBaseBindings(agentID uint, kbIDs []uint) err
 }
 
 func (r *AgentRepo) GetToolIDs(agentID uint) ([]uint, error) {
+	return legacyFallbackOrSelectedIDs(r.db.DB, agentID, CapabilityTypeTool, func() ([]uint, error) {
+		return r.getLegacyToolIDs(agentID)
+	})
+}
+
+func (r *AgentRepo) getLegacyToolIDs(agentID uint) ([]uint, error) {
 	var bindings []AgentTool
 	if err := r.db.Where("agent_id = ?", agentID).Find(&bindings).Error; err != nil {
 		return nil, err
@@ -171,6 +177,12 @@ func (r *AgentRepo) GetToolIDs(agentID uint) ([]uint, error) {
 }
 
 func (r *AgentRepo) GetSkillIDs(agentID uint) ([]uint, error) {
+	return legacyFallbackOrSelectedIDs(r.db.DB, agentID, CapabilityTypeSkill, func() ([]uint, error) {
+		return r.getLegacySkillIDs(agentID)
+	})
+}
+
+func (r *AgentRepo) getLegacySkillIDs(agentID uint) ([]uint, error) {
 	var bindings []AgentSkill
 	if err := r.db.Where("agent_id = ?", agentID).Find(&bindings).Error; err != nil {
 		return nil, err
@@ -183,6 +195,12 @@ func (r *AgentRepo) GetSkillIDs(agentID uint) ([]uint, error) {
 }
 
 func (r *AgentRepo) GetMCPServerIDs(agentID uint) ([]uint, error) {
+	return legacyFallbackOrSelectedIDs(r.db.DB, agentID, CapabilityTypeMCP, func() ([]uint, error) {
+		return r.getLegacyMCPServerIDs(agentID)
+	})
+}
+
+func (r *AgentRepo) getLegacyMCPServerIDs(agentID uint) ([]uint, error) {
 	var bindings []AgentMCPServer
 	if err := r.db.Where("agent_id = ?", agentID).Find(&bindings).Error; err != nil {
 		return nil, err
@@ -195,6 +213,12 @@ func (r *AgentRepo) GetMCPServerIDs(agentID uint) ([]uint, error) {
 }
 
 func (r *AgentRepo) GetKnowledgeBaseIDs(agentID uint) ([]uint, error) {
+	return legacyFallbackOrSelectedIDs(r.db.DB, agentID, CapabilityTypeKnowledgeBase, func() ([]uint, error) {
+		return r.getLegacyKnowledgeBaseIDs(agentID)
+	})
+}
+
+func (r *AgentRepo) getLegacyKnowledgeBaseIDs(agentID uint) ([]uint, error) {
 	var bindings []AgentKnowledgeBase
 	if err := r.db.Where("agent_id = ?", agentID).Find(&bindings).Error; err != nil {
 		return nil, err
@@ -213,6 +237,12 @@ func (r *AgentRepo) ReplaceKnowledgeGraphBindings(agentID uint, kgIDs []uint) er
 }
 
 func (r *AgentRepo) GetKnowledgeGraphIDs(agentID uint) ([]uint, error) {
+	return legacyFallbackOrSelectedIDs(r.db.DB, agentID, CapabilityTypeKnowledgeGraph, func() ([]uint, error) {
+		return r.getLegacyKnowledgeGraphIDs(agentID)
+	})
+}
+
+func (r *AgentRepo) getLegacyKnowledgeGraphIDs(agentID uint) ([]uint, error) {
 	var bindings []AgentKnowledgeGraph
 	if err := r.db.Where("agent_id = ?", agentID).Find(&bindings).Error; err != nil {
 		return nil, err
@@ -278,7 +308,49 @@ func (r *AgentRepo) replaceBindingsInTx(tx *gorm.DB, agentID uint, bindings Agen
 	if err := r.replaceKnowledgeBaseBindingsInTx(tx, agentID, bindings.KnowledgeBaseIDs); err != nil {
 		return err
 	}
-	return r.replaceKnowledgeGraphBindingsInTx(tx, agentID, bindings.KnowledgeGraphIDs)
+	if err := r.replaceKnowledgeGraphBindingsInTx(tx, agentID, bindings.KnowledgeGraphIDs); err != nil {
+		return err
+	}
+	return replaceCapabilityBindingsInTx(tx, agentID, bindings.CapabilitySets)
+}
+
+func (r *AgentRepo) GetCapabilitySetBindings(agentID uint) ([]AgentCapabilitySetBinding, error) {
+	hasSetBindings, err := agentHasCapabilitySetBindings(r.db.DB, agentID)
+	if err != nil {
+		return nil, err
+	}
+	if hasSetBindings {
+		return getAgentCapabilitySetBindings(r.db.DB, agentID)
+	}
+	flat, err := r.getLegacyBindings(agentID)
+	if err != nil {
+		return nil, err
+	}
+	if !flat.hasAnyFlatBinding() {
+		return nil, nil
+	}
+	return capabilitySetBindingsFromFlat(r.db.DB, flat)
+}
+
+func (r *AgentRepo) getLegacyBindings(agentID uint) (AgentBindings, error) {
+	var result AgentBindings
+	var err error
+	if result.ToolIDs, err = r.getLegacyToolIDs(agentID); err != nil {
+		return AgentBindings{}, err
+	}
+	if result.SkillIDs, err = r.getLegacySkillIDs(agentID); err != nil {
+		return AgentBindings{}, err
+	}
+	if result.MCPServerIDs, err = r.getLegacyMCPServerIDs(agentID); err != nil {
+		return AgentBindings{}, err
+	}
+	if result.KnowledgeBaseIDs, err = r.getLegacyKnowledgeBaseIDs(agentID); err != nil {
+		return AgentBindings{}, err
+	}
+	if result.KnowledgeGraphIDs, err = r.getLegacyKnowledgeGraphIDs(agentID); err != nil {
+		return AgentBindings{}, err
+	}
+	return result, nil
 }
 
 func (r *AgentRepo) replaceToolBindingsInTx(tx *gorm.DB, agentID uint, toolIDs []uint) error {

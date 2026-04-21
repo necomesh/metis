@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 
 	"metis/internal/llm"
@@ -13,6 +14,36 @@ type mockLLMClient struct {
 	err    error
 	mu     sync.Mutex
 	cursor int
+}
+
+type fakeMCPRuntimeClient struct {
+	toolsByServer map[uint][]MCPRuntimeTool
+	results       map[string]json.RawMessage
+	discoverErr   error
+	callErr       error
+}
+
+func (f *fakeMCPRuntimeClient) DiscoverTools(ctx context.Context, server MCPServer) ([]MCPRuntimeTool, error) {
+	if f.discoverErr != nil {
+		return nil, f.discoverErr
+	}
+	if f.toolsByServer != nil {
+		return f.toolsByServer[server.ID], nil
+	}
+	return nil, nil
+}
+
+func (f *fakeMCPRuntimeClient) CallTool(ctx context.Context, server MCPServer, toolName string, args json.RawMessage) (json.RawMessage, error) {
+	if f.callErr != nil {
+		return nil, f.callErr
+	}
+	key := server.Name + ":" + toolName
+	if f.results != nil {
+		if raw, ok := f.results[key]; ok {
+			return raw, nil
+		}
+	}
+	return json.RawMessage(`{"ok":true}`), nil
 }
 
 func newMockLLMClient(events []llm.StreamEvent, err error) *mockLLMClient {

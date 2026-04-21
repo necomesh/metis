@@ -117,7 +117,7 @@ export function SmartCurrentActivityCard({ ticket, activities, currentUserId }: 
       : null
     return (
       <Card>
-        <CardHeader className="pb-3">
+        <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             {ticket.status === "completed" ? (
               <CheckCircle2 className="h-4 w-4 text-green-600" />
@@ -152,7 +152,7 @@ export function SmartCurrentActivityCard({ ticket, activities, currentUserId }: 
     )
     return (
       <Card className="border-amber-200">
-        <CardHeader className="pb-3">
+        <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base text-amber-700">
             <AlertTriangle className="h-4 w-4" />
             {t("smart.aiDisabled")}
@@ -186,8 +186,8 @@ export function SmartCurrentActivityCard({ ticket, activities, currentUserId }: 
 
   if (currentActivity?.status === "pending_approval") {
 	return (
-	  <Card>
-	    <CardHeader className="pb-3">
+		  <Card>
+		    <CardHeader>
 	      <CardTitle className="flex items-center gap-2 text-base">
 	        <Bot className="h-4 w-4" />
 	        {t("smart.aiDecision")}
@@ -209,7 +209,7 @@ export function SmartCurrentActivityCard({ ticket, activities, currentUserId }: 
   if (state === "human_activity" && activeHumanActivity) {
     return (
       <Card>
-        <CardHeader className="pb-3">
+        <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <FileText className="h-4 w-4" />
             {activeHumanActivity.name}
@@ -254,7 +254,7 @@ export function SmartCurrentActivityCard({ ticket, activities, currentUserId }: 
   if (state === "ai_reasoning") {
     return (
       <Card>
-        <CardHeader className="pb-3">
+        <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Bot className="h-4 w-4" />
             {t("smart.aiReasoning")}
@@ -290,7 +290,7 @@ export function SmartCurrentActivityCard({ ticket, activities, currentUserId }: 
 
   return (
     <Card>
-      <CardHeader className="pb-3">
+      <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base text-muted-foreground">
           <Clock className="h-4 w-4" />
           {t("smart.idleState", { defaultValue: "AI 正在准备下一步" })}

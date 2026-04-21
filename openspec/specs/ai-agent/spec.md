@@ -42,15 +42,20 @@ An assistant-type Agent SHALL have: strategy (`react` | `plan_and_execute`, defa
 - **THEN** system SHALL return a 400 error
 
 ### Requirement: Assistant agent tool binding
-An assistant-type Agent SHALL support binding to: Tool IDs (M2M via ai_agent_tools), Skill IDs (M2M via ai_agent_skills), MCP Server IDs (M2M via ai_agent_mcp_servers), Knowledge Base IDs (M2M via ai_agent_knowledge_bases). All bindings are optional.
+An assistant-type Agent SHALL support binding to capability sets for builtin tools, skills, MCP servers, knowledge bases, and knowledge graphs. Each bound capability set SHALL include explicit selected item IDs scoped to that set. All bindings are optional. Legacy flat binding ID arrays MAY be returned as derived compatibility fields, but set-scoped bindings SHALL be canonical for create and update operations.
 
-#### Scenario: Bind tools to agent
-- **WHEN** admin updates an assistant agent with tool_ids, skill_ids, mcp_server_ids, and knowledge_base_ids
-- **THEN** system SHALL replace the existing bindings with the new set
+#### Scenario: Bind capability sets to agent
+- **WHEN** admin updates an assistant agent with selected capability sets and selected item IDs inside each set
+- **THEN** system SHALL replace the existing set-scoped bindings with the new set selections
+- **AND** system SHALL expose derived flat selected IDs for compatibility consumers
 
 #### Scenario: Bound resource deleted
-- **WHEN** a Tool/Skill/MCP Server/Knowledge Base bound to an agent is deleted
-- **THEN** the binding record SHALL be cascade-deleted
+- **WHEN** a Tool/Skill/MCP Server/Knowledge Base/Knowledge Graph selected by an agent is deleted
+- **THEN** the selected item reference SHALL no longer be included in the Agent's effective runtime bindings
+
+#### Scenario: Reject item outside selected set
+- **WHEN** admin updates an assistant agent with a selected item ID that is not a member of the referenced capability set
+- **THEN** system SHALL return a 400 error
 
 ### Requirement: Coding agent configuration
 A coding-type Agent SHALL have: runtime (`claude-code` | `codex` | `opencode` | `aider`, required), runtime_config (JSON, schema varies by runtime), exec_mode (`local` | `remote`, default `local`), node_id (FK → Node, required when exec_mode=`remote`), workspace (string, project directory path).
@@ -68,7 +73,7 @@ A coding-type Agent SHALL have: runtime (`claude-code` | `codex` | `opencode` | 
 - **THEN** system SHALL return a 400 error with field-level validation details
 
 ### Requirement: Common agent fields
-Both agent types SHALL support an `instructions` text field for injecting contextual guidance. Both types SHALL support `knowledge_base_ids` binding for knowledge context injection.
+Both agent types SHALL support an `instructions` text field for injecting contextual guidance. Both types SHALL support capability set bindings for knowledge context injection where the selected set items resolve to knowledge base or knowledge graph resources.
 
 #### Scenario: Instructions on assistant agent
 - **WHEN** an assistant agent has instructions set
@@ -77,6 +82,10 @@ Both agent types SHALL support an `instructions` text field for injecting contex
 #### Scenario: Instructions on coding agent
 - **WHEN** a coding agent has instructions set
 - **THEN** instructions SHALL be injected into the coding tool's instruction mechanism (e.g., CLAUDE.md for claude-code)
+
+#### Scenario: Knowledge set bindings on agent
+- **WHEN** an Agent has selected knowledge base or knowledge graph items through capability set bindings
+- **THEN** those selected knowledge resources SHALL be available as the Agent's knowledge context
 
 ### Requirement: Agent CRUD API
 The system SHALL provide REST endpoints under `/api/v1/ai/agents` with JWT + Casbin auth:

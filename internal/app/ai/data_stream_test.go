@@ -152,6 +152,19 @@ func TestUIMessageStreamEncoder_CancelledClosesBlocks(t *testing.T) {
 	assertJSONField(t, lines[4], "finishReason", "other")
 }
 
+func TestUIMessageStreamEncoder_Heartbeat(t *testing.T) {
+	var buf bytes.Buffer
+	enc := NewUIMessageStreamEncoder(&buf)
+
+	if err := enc.Heartbeat(); err != nil {
+		t.Fatalf("heartbeat: %v", err)
+	}
+
+	if got := buf.String(); got != ": heartbeat\n\n" {
+		t.Fatalf("expected heartbeat comment frame, got %q", got)
+	}
+}
+
 func assertJSONField(t *testing.T, line, key, expected string) {
 	t.Helper()
 	if line == "[DONE]" {
