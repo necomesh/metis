@@ -67,18 +67,14 @@ func (h *PositionHandler) List(c *gin.Context) {
 		PageSize: pageSize,
 	}
 
-	items, total, err := h.svc.List(params)
+	items, total, err := h.svc.ListWithUsage(params)
 	if err != nil {
 		handler.Fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	result := make([]PositionResponse, len(items))
-	for i, p := range items {
-		result[i] = p.ToResponse()
-	}
 	handler.OK(c, gin.H{
-		"items":    result,
+		"items":    items,
 		"total":    total,
 		"page":     page,
 		"pageSize": pageSize,

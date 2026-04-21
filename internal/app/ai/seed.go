@@ -58,7 +58,7 @@ func seedAI(db *gorm.DB, enforcer *casbin.Enforcer) error {
 		aiDir = model.Menu{
 			Name:       "AI 管理",
 			Type:       model.MenuTypeDirectory,
-			Icon:       "Brain",
+			Icon:       "BrainCircuit",
 			Permission: "ai",
 			Sort:       100,
 		}
@@ -66,6 +66,11 @@ func seedAI(db *gorm.DB, enforcer *casbin.Enforcer) error {
 			return err
 		}
 		slog.Info("seed: created menu", "name", aiDir.Name, "permission", aiDir.Permission)
+	} else if aiDir.Icon != "BrainCircuit" {
+		if err := db.Model(&aiDir).Update("icon", "BrainCircuit").Error; err != nil {
+			return err
+		}
+		aiDir.Icon = "BrainCircuit"
 	}
 
 	agentDir := model.Menu{

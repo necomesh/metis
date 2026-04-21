@@ -32,6 +32,13 @@ export interface PositionItem {
   code: string
   description: string
   isActive: boolean
+  departmentCount?: number
+  memberCount?: number
+  departments?: Array<{
+    id: number
+    name: string
+    code: string
+  }>
   createdAt: string
   updatedAt: string
 }

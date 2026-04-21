@@ -42,6 +42,7 @@ export function OverrideActions({ ticketId, currentActivityId, aiFailureCount }:
   const [jumpOpen, setJumpOpen] = useState(false)
   const [reassignOpen, setReassignOpen] = useState(false)
   const [retryDialogOpen, setRetryDialogOpen] = useState(false)
+  const [retryReason, setRetryReason] = useState("")
 
   const { data: users = [] } = useQuery({
     queryKey: ["users-for-override"],
@@ -91,8 +92,8 @@ export function OverrideActions({ ticketId, currentActivityId, aiFailureCount }:
 
   // Retry AI
   const retryMut = useMutation({
-    mutationFn: () => retryAI(ticketId),
-    onSuccess: () => { invalidateAll(); toast.success(t("smart.retrySuccess")) },
+    mutationFn: () => retryAI(ticketId, retryReason.trim()),
+    onSuccess: () => { invalidateAll(); setRetryDialogOpen(false); setRetryReason(""); toast.success(t("smart.retrySuccess")) },
     onError: (err) => toast.error(err.message),
   })
 
@@ -118,7 +119,7 @@ export function OverrideActions({ ticketId, currentActivityId, aiFailureCount }:
             {t("smart.reassign")}
           </DropdownMenuItem>
           {(aiFailureCount ?? 0) > 0 && (
-            <DropdownMenuItem onClick={() => setRetryDialogOpen(true)} disabled={retryMut.isPending}>
+            <DropdownMenuItem onClick={() => { setRetryReason(""); setRetryDialogOpen(true) }} disabled={retryMut.isPending}>
               <RotateCcw className="mr-2 h-4 w-4" />
               {t("smart.retryAI")}
             </DropdownMenuItem>
@@ -226,12 +227,20 @@ export function OverrideActions({ ticketId, currentActivityId, aiFailureCount }:
           <AlertDialogHeader>
             <AlertDialogTitle>{t("smart.retryAI")}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t("smart.retryAIConfirmDesc", { defaultValue: "将重置 AI 失败计数并重新触发决策" })}
+              {t("smart.retryAIConfirmDesc", { defaultValue: "将重置 AI 失败计数并重新触发决策，请填写重试原因。" })}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <Textarea
+            value={retryReason}
+            onChange={(event) => setRetryReason(event.target.value)}
+            rows={3}
+            placeholder={t("smart.overrideReasonPlaceholder")}
+          />
           <AlertDialogFooter>
             <AlertDialogCancel>{t("common:cancel")}</AlertDialogCancel>
-            <AlertDialogAction onClick={() => retryMut.mutate()}>{t("smart.retryAI")}</AlertDialogAction>
+            <AlertDialogAction onClick={() => retryMut.mutate()} disabled={!retryReason.trim() || retryMut.isPending}>
+              {t("smart.retryAI")}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

@@ -1,6 +1,7 @@
 package org
 
 import (
+	"errors"
 	"log/slog"
 
 	"github.com/casbin/casbin/v2"
@@ -180,6 +181,9 @@ func seedOrg(db *gorm.DB, enforcer *casbin.Enforcer, install bool) error {
 		if err := seedDepartmentPositions(db); err != nil {
 			return err
 		}
+		if err := seedAdminOrgIdentity(db); err != nil {
+			return err
+		}
 	}
 
 	// Seed org_context builtin tool into ai_tools (if AI App tables exist)
@@ -203,6 +207,113 @@ func seedOrg(db *gorm.DB, enforcer *casbin.Enforcer, install bool) error {
 	}
 
 	return nil
+}
+
+type adminOrgIdentitySeed struct {
+	DepartmentCode string
+	PositionCode   string
+	Primary        bool
+}
+
+var builtinAdminOrgIdentity = []adminOrgIdentitySeed{
+	{DepartmentCode: "it", PositionCode: "it_admin", Primary: true},
+	{DepartmentCode: "it", PositionCode: "db_admin"},
+	{DepartmentCode: "it", PositionCode: "network_admin"},
+	{DepartmentCode: "it", PositionCode: "security_admin"},
+	{DepartmentCode: "it", PositionCode: "ops_admin"},
+	{DepartmentCode: "headquarters", PositionCode: "serial_reviewer"},
+}
+
+func seedAdminOrgIdentity(db *gorm.DB) error {
+	var user struct{ ID uint }
+	if err := db.Table("users").Where("username = ?", "admin").Select("id").First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+
+	var primaryDeptID, primaryPosID uint
+	for _, identity := range builtinAdminOrgIdentity {
+		if !identity.Primary {
+			continue
+		}
+		deptID, posID, ok, err := lookupOrgIdentityIDs(db, identity.DepartmentCode, identity.PositionCode)
+		if err != nil {
+			return err
+		}
+		if ok {
+			primaryDeptID = deptID
+			primaryPosID = posID
+		}
+	}
+
+	return db.Transaction(func(tx *gorm.DB) error {
+		if primaryDeptID > 0 && primaryPosID > 0 {
+			if err := tx.Model(&UserPosition{}).
+				Where("user_id = ?", user.ID).
+				Update("is_primary", false).Error; err != nil {
+				return err
+			}
+		}
+
+		for _, identity := range builtinAdminOrgIdentity {
+			deptID, posID, ok, err := lookupOrgIdentityIDs(tx, identity.DepartmentCode, identity.PositionCode)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				slog.Warn("seed: skipped admin org identity because department or position is missing",
+					"department", identity.DepartmentCode, "position", identity.PositionCode)
+				continue
+			}
+
+			var existing UserPosition
+			err = tx.Where("user_id = ? AND department_id = ? AND position_id = ?", user.ID, deptID, posID).
+				First(&existing).Error
+			switch {
+			case err == nil:
+				if existing.IsPrimary != identity.Primary {
+					if err := tx.Model(&existing).Update("is_primary", identity.Primary).Error; err != nil {
+						return err
+					}
+				}
+			case errors.Is(err, gorm.ErrRecordNotFound):
+				if err := tx.Create(&UserPosition{
+					UserID:       user.ID,
+					DepartmentID: deptID,
+					PositionID:   posID,
+					IsPrimary:    identity.Primary,
+				}).Error; err != nil {
+					return err
+				}
+				slog.Info("seed: assigned admin org identity",
+					"department", identity.DepartmentCode, "position", identity.PositionCode, "primary", identity.Primary)
+			default:
+				return err
+			}
+		}
+
+		return nil
+	})
+}
+
+func lookupOrgIdentityIDs(db *gorm.DB, departmentCode, positionCode string) (uint, uint, bool, error) {
+	var dept struct{ ID uint }
+	if err := db.Table("departments").Where("code = ?", departmentCode).Select("id").First(&dept).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, 0, false, nil
+		}
+		return 0, 0, false, err
+	}
+	var pos struct{ ID uint }
+	if err := db.Table("positions").Where("code = ?", positionCode).Select("id").First(&pos).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, 0, false, nil
+		}
+		return 0, 0, false, err
+	}
+	return dept.ID, pos.ID, true, nil
 }
 
 func seedDepartments(db *gorm.DB) error {

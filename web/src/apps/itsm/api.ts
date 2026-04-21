@@ -529,8 +529,8 @@ export function overrideReassign(ticketId: number, data: { activityId: number; n
   return api.post(`/api/v1/itsm/tickets/${ticketId}/override/reassign`, data)
 }
 
-export function retryAI(ticketId: number) {
-  return api.post(`/api/v1/itsm/tickets/${ticketId}/override/retry-ai`, {})
+export function retryAI(ticketId: number, reason?: string) {
+  return api.post(`/api/v1/itsm/tickets/${ticketId}/override/retry-ai`, { reason })
 }
 
 // ─── Approvals ─────────────────────────────────────────

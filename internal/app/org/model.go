@@ -60,16 +60,16 @@ type Department struct {
 func (Department) TableName() string { return "departments" }
 
 type DepartmentResponse struct {
-	ID          uint            `json:"id"`
-	Name        string          `json:"name"`
-	Code        string          `json:"code"`
-	ParentID    *uint           `json:"parentId"`
-	ManagerID   *uint           `json:"managerId"`
-	Sort        int             `json:"sort"`
-	Description string          `json:"description"`
-	IsActive    bool            `json:"isActive"`
-	CreatedAt   time.Time       `json:"createdAt"`
-	UpdatedAt   time.Time       `json:"updatedAt"`
+	ID          uint      `json:"id"`
+	Name        string    `json:"name"`
+	Code        string    `json:"code"`
+	ParentID    *uint     `json:"parentId"`
+	ManagerID   *uint     `json:"managerId"`
+	Sort        int       `json:"sort"`
+	Description string    `json:"description"`
+	IsActive    bool      `json:"isActive"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 func (d *Department) ToResponse() DepartmentResponse {
@@ -100,13 +100,16 @@ type Position struct {
 func (Position) TableName() string { return "positions" }
 
 type PositionResponse struct {
-	ID          uint      `json:"id"`
-	Name        string    `json:"name"`
-	Code        string    `json:"code"`
-	Description string    `json:"description"`
-	IsActive    bool      `json:"isActive"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	ID              uint                        `json:"id"`
+	Name            string                      `json:"name"`
+	Code            string                      `json:"code"`
+	Description     string                      `json:"description"`
+	IsActive        bool                        `json:"isActive"`
+	DepartmentCount int                         `json:"departmentCount"`
+	MemberCount     int                         `json:"memberCount"`
+	Departments     []PositionDepartmentSummary `json:"departments,omitempty"`
+	CreatedAt       time.Time                   `json:"createdAt"`
+	UpdatedAt       time.Time                   `json:"updatedAt"`
 }
 
 func (p *Position) ToResponse() PositionResponse {
@@ -119,6 +122,12 @@ func (p *Position) ToResponse() PositionResponse {
 		CreatedAt:   p.CreatedAt,
 		UpdatedAt:   p.UpdatedAt,
 	}
+}
+
+type PositionDepartmentSummary struct {
+	ID   uint   `json:"id"`
+	Name string `json:"name"`
+	Code string `json:"code"`
 }
 
 // UserPosition 人员岗位关联
@@ -136,12 +145,12 @@ type UserPosition struct {
 func (UserPosition) TableName() string { return "user_positions" }
 
 type UserPositionResponse struct {
-	ID           uint              `json:"id"`
-	UserID       uint              `json:"userId"`
-	DepartmentID uint              `json:"departmentId"`
-	PositionID   uint              `json:"positionId"`
-	IsPrimary    bool              `json:"isPrimary"`
-	Sort         int               `json:"sort"`
+	ID           uint                `json:"id"`
+	UserID       uint                `json:"userId"`
+	DepartmentID uint                `json:"departmentId"`
+	PositionID   uint                `json:"positionId"`
+	IsPrimary    bool                `json:"isPrimary"`
+	Sort         int                 `json:"sort"`
 	Department   *DepartmentResponse `json:"department,omitempty"`
 	Position     *PositionResponse   `json:"position,omitempty"`
 }
@@ -186,4 +195,3 @@ type MemberWithPositions struct {
 	Positions    []MemberPositionItem `json:"positions"`
 	CreatedAt    time.Time            `json:"createdAt"`
 }
-

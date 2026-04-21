@@ -504,7 +504,7 @@ func seedServiceDefinitions(db *gorm.DB) error {
 			Description:       "用于在系统内直接查看复杂表单、表格明细与两级串签流程图的 Boss 级内置服务。",
 			CatalogCode:       "application-platform:release",
 			SLACode:           "infra-change",
-			CollaborationSpec: `用户通过 IT 服务台提交高风险变更协同申请。服务台需要收集申请主题、申请类别、风险等级、期望完成时间、变更开始时间、变更结束时间、影响范围、回滚要求、影响模块以及变更明细表。申请类别必须支持：生产变更(prod_change)、访问授权(access_grant)、应急支持(emergency_support)。风险等级必须支持：低(low)、中(medium)、高(high)。回滚要求必须支持：需要(required)、不需要(not_required)。影响模块必须支持多选：网关(gateway)、支付(payment)、监控(monitoring)、订单(order)。变更明细表至少包含系统、资源、权限级别、生效时段、变更理由。权限级别必须支持：只读(read)、读写(read_write)。申请提交后，先交给指定用户 serial-reviewer 审批，审批参与者类型必须使用 user。serial-reviewer 审批通过后，再交给信息部的运维管理员岗位审批，审批参与者类型必须使用 position_department，部门编码使用 it，岗位编码使用 ops_admin。运维管理员审批通过后直接结束流程，不要生成驳回分支。`,
+			CollaborationSpec: `用户通过 IT 服务台提交高风险变更协同申请。服务台需要收集申请主题、申请类别、风险等级、期望完成时间、变更开始时间、变更结束时间、影响范围、回滚要求、影响模块以及变更明细表。申请类别必须支持：生产变更(prod_change)、访问授权(access_grant)、应急支持(emergency_support)。风险等级必须支持：低(low)、中(medium)、高(high)。回滚要求必须支持：需要(required)、不需要(not_required)。影响模块必须支持多选：网关(gateway)、支付(payment)、监控(monitoring)、订单(order)。变更明细表至少包含系统、资源、权限级别、生效时段、变更理由。权限级别必须支持：只读(read)、读写(read_write)。申请提交后，先交给总部的串行评审人岗位审批，审批参与者类型必须使用 position_department，部门编码使用 headquarters，岗位编码使用 serial_reviewer。串行评审人审批通过后，再交给信息部的运维管理员岗位审批，审批参与者类型必须使用 position_department，部门编码使用 it，岗位编码使用 ops_admin。运维管理员审批通过后直接结束流程，不要生成驳回分支。`,
 		},
 		{
 			Name:              "生产数据库备份白名单临时放行申请",
@@ -549,6 +549,13 @@ func seedServiceDefinitions(db *gorm.DB) error {
 	for _, s := range seeds {
 		var existing ServiceDefinition
 		if err := db.Where("code = ?", s.Code).First(&existing).Error; err == nil {
+			if s.Code == "boss-serial-change-request" && existing.CollaborationSpec != s.CollaborationSpec {
+				if err := db.Model(&existing).Update("collaboration_spec", s.CollaborationSpec).Error; err != nil {
+					slog.Error("seed: failed to update service collaboration spec", "code", s.Code, "error", err)
+				} else {
+					slog.Info("seed: updated service collaboration spec", "code", s.Code)
+				}
+			}
 			continue
 		}
 

@@ -67,81 +67,76 @@ function InfoCard({
   const { t } = useTranslation(["org", "common"])
 
   return (
-    <div className="rounded-xl border bg-card">
-      <div className="h-1 w-full rounded-t-xl bg-sky-500" />
-      <div className="p-5">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-start gap-4">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-sky-50 text-sm font-bold text-sky-700 dark:bg-sky-950 dark:text-sky-300">
-              {dept.name.slice(0, 2)}
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-lg font-semibold">{dept.name}</h2>
-                <Badge variant="outline" className="text-[10px] font-medium uppercase tracking-wider">
-                  {dept.code}
-                </Badge>
-              </div>
-              <div className="mt-0.5 flex items-center gap-1.5 text-sm text-muted-foreground">
+    <div className="border-b border-border/50 pb-4">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex min-w-0 items-start gap-4">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-border/55 bg-surface/60 text-sm font-semibold text-foreground/80">
+            {dept.name.slice(0, 2)}
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="workspace-page-title truncate">{dept.name}</h2>
+              <Badge variant="outline" className="bg-transparent text-[10px] font-normal text-muted-foreground">
+                {dept.code}
+              </Badge>
+              <Badge variant="outline" className="gap-1.5 bg-transparent font-normal">
                 <span className={cn(
-                  "inline-block h-2 w-2 rounded-full",
-                  dept.isActive ? "bg-green-500" : "bg-gray-400",
+                  "h-1.5 w-1.5 rounded-full",
+                  dept.isActive ? "bg-emerald-500" : "bg-muted-foreground/45",
                 )} />
                 {dept.isActive ? t("org:departments.active") : t("org:departments.inactive")}
+              </Badge>
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm">
+              <div>
+                <span className="text-muted-foreground">{t("org:departments.manager")}</span>
+                <span className="ml-2 text-foreground">{dept.managerName || "—"}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">{t("org:departments.parentDept")}</span>
+                <span className="ml-2 text-foreground">{parentName || t("org:departments.topLevel")}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">{t("org:assignments.memberCount")}</span>
+                <span className="ml-2 text-foreground tabular-nums">{dept.memberCount}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">{t("org:departments.createdAt")}</span>
+                <span className="ml-2 text-foreground">{dept.createdAt ? formatDateTime(dept.createdAt, { dateOnly: true }) : "—"}</span>
               </div>
             </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {canUpdate && (
-              <Button variant="outline" size="sm" onClick={onEdit}>
-                <Pencil className="mr-1.5 h-3.5 w-3.5" />
-                {t("common:edit")}
-              </Button>
-            )}
-            {canDelete && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon-sm">
-                    <MoreHorizontal className="h-4 w-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem
-                    className="text-destructive focus:text-destructive"
-                    onClick={onDelete}
-                    disabled={isDeleting}
-                  >
-                    <Trash2 className="mr-2 h-4 w-4" />
-                    {t("common:delete")}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+            {dept.description && (
+              <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground">{dept.description}</p>
             )}
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-4">
-          <div>
-            <p className="text-xs text-muted-foreground">{t("org:departments.manager")}</p>
-            <p className="mt-1 text-sm">{dept.managerName || "—"}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">{t("org:departments.parentDept")}</p>
-            <p className="mt-1 text-sm">{parentName || t("org:departments.topLevel")}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">{t("org:assignments.memberCount")}</p>
-            <p className="mt-1 text-sm">{dept.memberCount}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">{t("org:departments.createdAt")}</p>
-            <p className="mt-1 text-sm">{dept.createdAt ? formatDateTime(dept.createdAt, { dateOnly: true }) : "—"}</p>
-          </div>
-          {dept.description && (
-            <div className="col-span-full">
-              <p className="text-xs text-muted-foreground">{t("org:departments.description")}</p>
-              <p className="mt-1 text-sm">{dept.description}</p>
-            </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {canUpdate && (
+            <Button variant="outline" size="sm" onClick={onEdit}>
+              <Pencil className="mr-1.5 h-3.5 w-3.5" />
+              {t("common:edit")}
+            </Button>
+          )}
+          {canDelete && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon-sm" aria-label={t("common:actions")}>
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  className="text-destructive focus:text-destructive"
+                  onClick={onDelete}
+                  disabled={isDeleting}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  {t("common:delete")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
         </div>
       </div>
@@ -197,8 +192,8 @@ function AllowedPositionsSection({ deptId }: { deptId: number }) {
   }
 
   return (
-    <div className="rounded-xl border bg-card">
-      <div className="flex items-center justify-between border-b px-5 py-3">
+    <div className="workspace-surface rounded-xl">
+      <div className="flex items-center justify-between border-b border-border/50 px-5 py-3">
         <h3 className="text-sm font-semibold">{t("org:departments.allowedPositions")}</h3>
         {canUpdate && (
           <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
@@ -233,17 +228,21 @@ function AllowedPositionsSection({ deptId }: { deptId: number }) {
       </div>
       <div className="px-5 py-3">
         {allowedPositions.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{t("org:departments.noPositions")}</p>
+          <p className="py-2 text-sm text-muted-foreground">{t("org:departments.noPositions")}</p>
         ) : (
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-2">
             {allowedPositions.map((pos) => (
-              <Badge key={pos.id} variant="secondary" className="gap-1">
-                {pos.name}
+              <Badge key={pos.id} variant="outline" className="gap-1.5 bg-white/35 py-1 pr-1">
+                <span>{pos.name}</span>
+                <span className="text-[10px] font-normal text-muted-foreground">
+                  {t("org:positions.membersCount", { count: pos.memberCount ?? 0 })}
+                </span>
                 {canUpdate && (
                   <button
                     type="button"
-                    className="ml-0.5 rounded-full hover:bg-muted"
+                    className="ml-0.5 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-surface-soft hover:text-foreground"
                     onClick={() => removePosition(pos.id)}
+                    aria-label={t("common:delete")}
                   >
                     <X className="h-3 w-3" />
                   </button>
@@ -327,21 +326,21 @@ function MemberSection({
 
   return (
     <>
-      <div className="rounded-xl border bg-card">
-        <div className="flex items-center justify-between border-b px-5 py-3">
+      <div className="workspace-surface rounded-xl">
+        <div className="flex flex-col gap-3 border-b border-border/50 px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
           <h3 className="text-sm font-semibold">
             {t("org:departments.members")}
             {total > 0 && <span className="ml-1.5 font-normal text-muted-foreground">({total})</span>}
           </h3>
-          <div className="flex items-center gap-2">
-            <form onSubmit={handleSearch} className="flex gap-2">
-              <div className="relative">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <form onSubmit={handleSearch} className="flex min-w-0 gap-2">
+              <div className="relative min-w-0">
                 <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
                 <Input
                   placeholder={t("org:assignments.searchPlaceholder")}
                   value={keyword}
                   onChange={(e) => setKeyword(e.target.value)}
-                  className="h-8 w-48 pl-8 text-xs"
+                  className="workspace-toolbar-input h-8 w-full pl-8 text-xs sm:w-48"
                 />
               </div>
             </form>
@@ -375,7 +374,7 @@ function MemberSection({
               />
             ) : (
               items.map((item) => (
-                <TableRow key={item.userId}>
+                <TableRow key={item.userId} className="border-border/45 hover:bg-surface-soft/45">
                   <TableCell className="py-3.5">
                     <div className="flex items-center gap-3">
                       {item.avatar ? (
@@ -394,7 +393,7 @@ function MemberSection({
                   <TableCell>
                     <div className="flex flex-wrap gap-1">
                       {item.positions.map((pos) => (
-                        <Badge key={pos.assignmentId} variant={pos.isPrimary ? "default" : "secondary"} className="gap-1 text-[11px]">
+                        <Badge key={pos.assignmentId} variant={pos.isPrimary ? "default" : "outline"} className={cn("gap-1 text-[11px]", !pos.isPrimary && "bg-transparent")}>
                           {pos.isPrimary && <Star className="h-3 w-3" />}
                           {pos.positionName}
                         </Badge>
@@ -402,12 +401,12 @@ function MemberSection({
                     </div>
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground tabular-nums">
-                    {item.createdAt ? new Date(item.createdAt).toLocaleDateString() : "—"}
+                    {item.createdAt ? formatDateTime(item.createdAt, { dateOnly: true }) : "—"}
                   </TableCell>
                   <DataTableActionsCell>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon-sm" className="rounded-lg">
+                        <Button variant="ghost" size="icon-sm" className="rounded-lg" aria-label={t("common:actions")}>
                           <MoreHorizontal className="h-4 w-4" />
                         </Button>
                       </DropdownMenuTrigger>
@@ -514,19 +513,19 @@ function SubDepartmentsSection({ children }: { children: TreeNode[] }) {
   const navigate = useNavigate()
 
   return (
-    <div className="rounded-xl border bg-card">
-      <div className="border-b px-5 py-3">
+    <div className="workspace-surface rounded-xl">
+      <div className="border-b border-border/50 px-5 py-3">
         <h3 className="text-sm font-semibold">
           {t("departments.subDepartments")}
           <span className="ml-1.5 font-normal text-muted-foreground">({children.length})</span>
         </h3>
       </div>
-      <div className="divide-y">
+      <div className="divide-y divide-border/45">
         {children.map((child) => (
           <button
             key={child.id}
             type="button"
-            className="flex w-full items-center justify-between px-5 py-3 text-left transition-colors hover:bg-accent/50"
+            className="flex w-full items-center justify-between px-5 py-3 text-left transition-colors hover:bg-surface-soft/45"
             onClick={() => navigate(`/org/departments/${child.id}`)}
           >
             <div className="min-w-0">
@@ -590,10 +589,10 @@ export function Component() {
 
   if (!treeData) {
     return (
-      <div className="space-y-4">
+      <div className="workspace-page">
         <div className="h-8 w-48 animate-pulse rounded bg-muted" />
-        <div className="h-48 animate-pulse rounded-xl border bg-muted/30" />
-        <div className="h-64 animate-pulse rounded-xl border bg-muted/30" />
+        <div className="h-48 animate-pulse rounded-xl border border-border/50 bg-muted/30" />
+        <div className="h-64 animate-pulse rounded-xl border border-border/50 bg-muted/30" />
       </div>
     )
   }
@@ -614,14 +613,14 @@ export function Component() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="workspace-page">
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="sm" asChild>
           <Link to="/org/departments">
-            <ArrowLeft className="h-4 w-4" />
+            <ArrowLeft className="mr-1.5 h-4 w-4" />
+            {t("org:departments.title")}
           </Link>
         </Button>
-        <h2 className="text-lg font-semibold">{dept.name}</h2>
       </div>
 
       <InfoCard

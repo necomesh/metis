@@ -218,6 +218,18 @@ export function AgentForm({ agentType, agent, onSubmit }: AgentFormProps) {
   const kbBindingGroups = useMemo<BindingGroup[]>(() => capabilitySetsToGroups(kbSets, t), [kbSets, t])
   const kgBindingGroups = useMemo<BindingGroup[]>(() => capabilitySetsToGroups(kgSets, t), [kgSets, t])
 
+  function groupFirstLabels(name: string, manageGroups: string, sheetTitle: string) {
+    return {
+      selectedGroupCount: (count: number) => t("ai:agents.selectedGroupCount", { count, name }),
+      manageGroups,
+      sheetTitle,
+      emptyTitle: t("ai:agents.noGroupsSelected", { name }),
+      emptyHint: t("ai:agents.manageGroupHint", { name }),
+      availableCount: (count: number) => t("ai:agents.availableItemCount", { count }),
+      unavailableCount: (count: number) => t("ai:agents.unavailableItemCount", { count }),
+    }
+  }
+
   const capabilitySetBindings = useWatch({ control: form.control, name: "capabilitySetBindings" })
   const selectedToolIds = useWatch({ control: form.control, name: "toolIds" }) ?? []
   const selectedMcpServerIds = useWatch({ control: form.control, name: "mcpServerIds" }) ?? []
@@ -455,6 +467,12 @@ export function AgentForm({ agentType, agent, onSubmit }: AgentFormProps) {
           onChange={(ids) => form.setValue("toolIds", ids)}
           groupValues={groupValueMap}
           onGroupItemsChange={(group, ids) => updateCapabilitySetBinding(group, ids, "toolIds")}
+          selectionMode="group-first"
+          groupFirstLabels={groupFirstLabels(
+            t("ai:agents.capabilityGroupNames.toolSet"),
+            t("ai:agents.manageCapabilityGroups.toolSet"),
+            t("ai:agents.manageCapabilityGroups.toolSet")
+          )}
         />
         <BindingSelectorSection
           title={t("ai:agents.mcpServers")}
@@ -467,6 +485,12 @@ export function AgentForm({ agentType, agent, onSubmit }: AgentFormProps) {
           onChange={(ids) => form.setValue("mcpServerIds", ids)}
           groupValues={groupValueMap}
           onGroupItemsChange={(group, ids) => updateCapabilitySetBinding(group, ids, "mcpServerIds")}
+          selectionMode="group-first"
+          groupFirstLabels={groupFirstLabels(
+            t("ai:agents.capabilityGroupNames.mcp"),
+            t("ai:agents.manageCapabilityGroups.mcp"),
+            t("ai:agents.manageCapabilityGroups.mcp")
+          )}
         />
         <BindingSelectorSection
           title={t("ai:agents.skills")}
@@ -479,6 +503,12 @@ export function AgentForm({ agentType, agent, onSubmit }: AgentFormProps) {
           onChange={(ids) => form.setValue("skillIds", ids)}
           groupValues={groupValueMap}
           onGroupItemsChange={(group, ids) => updateCapabilitySetBinding(group, ids, "skillIds")}
+          selectionMode="group-first"
+          groupFirstLabels={groupFirstLabels(
+            t("ai:agents.capabilityGroupNames.skill"),
+            t("ai:agents.manageCapabilityGroups.skill"),
+            t("ai:agents.manageCapabilityGroups.skill")
+          )}
         />
         <BindingSelectorSection
           title={t("ai:agents.knowledgeBases")}
@@ -491,6 +521,12 @@ export function AgentForm({ agentType, agent, onSubmit }: AgentFormProps) {
           onChange={(ids) => form.setValue("knowledgeBaseIds", ids)}
           groupValues={groupValueMap}
           onGroupItemsChange={(group, ids) => updateCapabilitySetBinding(group, ids, "knowledgeBaseIds")}
+          selectionMode="group-first"
+          groupFirstLabels={groupFirstLabels(
+            t("ai:agents.capabilityGroupNames.knowledgeBase"),
+            t("ai:agents.manageCapabilityGroups.knowledgeBase"),
+            t("ai:agents.manageCapabilityGroups.knowledgeBase")
+          )}
         />
         <BindingSelectorSection
           title={t("ai:agents.knowledgeGraphs")}
@@ -503,6 +539,12 @@ export function AgentForm({ agentType, agent, onSubmit }: AgentFormProps) {
           onChange={(ids) => form.setValue("knowledgeGraphIds", ids)}
           groupValues={groupValueMap}
           onGroupItemsChange={(group, ids) => updateCapabilitySetBinding(group, ids, "knowledgeGraphIds")}
+          selectionMode="group-first"
+          groupFirstLabels={groupFirstLabels(
+            t("ai:agents.capabilityGroupNames.knowledgeGraph"),
+            t("ai:agents.manageCapabilityGroups.knowledgeGraph"),
+            t("ai:agents.manageCapabilityGroups.knowledgeGraph")
+          )}
         />
 
         {/* === Prompts (always visible) === */}

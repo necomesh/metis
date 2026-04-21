@@ -54,6 +54,32 @@ func (s *PositionService) List(params PositionListParams) ([]Position, int64, er
 	return s.repo.List(params)
 }
 
+func (s *PositionService) ListWithUsage(params PositionListParams) ([]PositionResponse, int64, error) {
+	items, total, err := s.repo.List(params)
+	if err != nil {
+		return nil, 0, err
+	}
+	ids := make([]uint, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	usage, err := s.repo.UsageByPositionIDs(ids)
+	if err != nil {
+		return nil, 0, err
+	}
+	result := make([]PositionResponse, len(items))
+	for i, item := range items {
+		resp := item.ToResponse()
+		if u, ok := usage[item.ID]; ok {
+			resp.DepartmentCount = u.DepartmentCount
+			resp.MemberCount = u.MemberCount
+			resp.Departments = u.Departments
+		}
+		result[i] = resp
+	}
+	return result, total, nil
+}
+
 func (s *PositionService) ListActive() ([]Position, error) {
 	return s.repo.ListActive()
 }

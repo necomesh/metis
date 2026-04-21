@@ -153,6 +153,62 @@ func TestAssignInstallAdminOrgIdentity_WaitsForOrgSeedData(t *testing.T) {
 	}
 }
 
+func TestAssignInstallAdminOrgIdentity_AssignsAllBuiltinITSMTestPositions(t *testing.T) {
+	db := newTestDBForInstallHandler(t)
+
+	user := model.User{Username: "admin", IsActive: true}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	for _, code := range []string{"it", "headquarters"} {
+		if err := db.Create(&testDepartment{Code: code}).Error; err != nil {
+			t.Fatalf("create department %s: %v", code, err)
+		}
+	}
+	for _, code := range []string{"it_admin", "db_admin", "network_admin", "security_admin", "ops_admin", "serial_reviewer"} {
+		if err := db.Create(&testPosition{Code: code}).Error; err != nil {
+			t.Fatalf("create position %s: %v", code, err)
+		}
+	}
+
+	if err := assignInstallAdminOrgIdentity(db, "admin"); err != nil {
+		t.Fatalf("assign admin identities: %v", err)
+	}
+	if err := assignInstallAdminOrgIdentity(db, "admin"); err != nil {
+		t.Fatalf("repeat assign admin identities: %v", err)
+	}
+
+	var count int64
+	if err := db.Table("user_positions").Where("user_id = ?", user.ID).Count(&count).Error; err != nil {
+		t.Fatalf("count user positions: %v", err)
+	}
+	if count != 6 {
+		t.Fatalf("expected 6 admin positions, got %d", count)
+	}
+	if err := db.Table("user_positions").Where("user_id = ? AND is_primary = ?", user.ID, true).Count(&count).Error; err != nil {
+		t.Fatalf("count primary positions: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly 1 primary position, got %d", count)
+	}
+
+	var primary struct {
+		DeptCode string
+		PosCode  string
+	}
+	if err := db.Table("user_positions AS up").
+		Select("d.code AS dept_code, p.code AS pos_code").
+		Joins("JOIN departments AS d ON d.id = up.department_id").
+		Joins("JOIN positions AS p ON p.id = up.position_id").
+		Where("up.user_id = ? AND up.is_primary = ?", user.ID, true).
+		Scan(&primary).Error; err != nil {
+		t.Fatalf("load primary identity: %v", err)
+	}
+	if primary.DeptCode != "it" || primary.PosCode != "it_admin" {
+		t.Fatalf("expected primary identity it/it_admin, got %s/%s", primary.DeptCode, primary.PosCode)
+	}
+}
+
 func TestExecuteDoesNotMarkInstalledWhenConfigSaveFails(t *testing.T) {
 	t.Setenv("TZ", "UTC")
 	gin.SetMode(gin.TestMode)

@@ -128,6 +128,7 @@ function ToolActivityRow({
   const [expanded, setExpanded] = useState(false)
 
   const toolName = activity.toolName || "unknown"
+  const toolDisplayName = t(`ai:tools.toolDefs.${toolName}.name`, { defaultValue: toolName })
   const isKnowledgeSearch = toolName === "search_knowledge"
   const { argsText, parsedArgs } = useToolArgs(activity.toolArgs)
   const hasArgs = Boolean(argsText)
@@ -168,8 +169,8 @@ function ToolActivityRow({
         <span className="shrink-0">{statusLabel}</span>
         <span className="min-w-0 flex-1 truncate text-foreground/80">
           {isKnowledgeSearch && parsedArgs
-            ? `${t("ai:tools.toolDefs.search_knowledge.name")}: "${parsedArgs.query ?? ""}"`
-            : toolName}
+            ? `${toolDisplayName}: "${parsedArgs.query ?? ""}"`
+            : toolDisplayName}
         </span>
         {activity.durationMs != null && (
           <span className="shrink-0 text-[10px] text-muted-foreground/60">

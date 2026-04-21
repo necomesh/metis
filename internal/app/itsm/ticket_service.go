@@ -1082,12 +1082,13 @@ func (s *TicketService) RetryAI(ticketID uint, reason string, operatorID uint) (
 			return err
 		}
 
+		details, _ := json.Marshal(map[string]string{"reason": reason})
 		tl := &TicketTimeline{
 			TicketID:   ticketID,
 			OperatorID: operatorID,
 			EventType:  "ai_retry",
 			Message:    "重新启用 AI 决策",
-			Details:    JSONField(mustJSON(map[string]string{"reason": reason})),
+			Details:    JSONField(details),
 		}
 		if reason != "" {
 			tl.Message = "重新启用 AI 决策：" + reason
