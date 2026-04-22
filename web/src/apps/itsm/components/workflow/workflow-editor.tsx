@@ -38,6 +38,9 @@ import { applyDagreLayout } from "./auto-layout"
 import { useUndoRedo } from "./use-undo-redo"
 import "./style.css"
 
+const DEFAULT_VIEWPORT = { x: 96, y: 72, zoom: 0.86 }
+const FIT_VIEW_OPTIONS = { padding: 0.26, maxZoom: 1 }
+
 interface WorkflowEditorProps {
   initialData?: { nodes: Node[]; edges: Edge[] }
   onSave: (data: { nodes: Node[]; edges: Edge[] }) => void
@@ -53,8 +56,8 @@ function InnerEditor({ initialData, onSave, saving, serviceId, validationErrors 
   const { t } = useTranslation("itsm")
   const reactFlowWrapper = useRef<HTMLDivElement>(null)
   const rfInstance = useReactFlow()
-  const [selectedNode, setSelectedNode] = useState<(Node & { data: WFNodeData }) | null>(null)
-  const [selectedEdge, setSelectedEdge] = useState<(Edge & { data?: WFEdgeData }) | null>(null)
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
 
   // Migrate legacy "workflow" type to specific nodeType
   const migratedNodes = (initialData?.nodes ?? []).map((n) => ({
@@ -134,18 +137,18 @@ function InnerEditor({ initialData, onSave, saving, serviceId, validationErrors 
   }, [rfInstance, setNodes, t])
 
   const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
-    setSelectedEdge(null)
-    setSelectedNode(node as Node & { data: WFNodeData })
+    setSelectedEdgeId(null)
+    setSelectedNodeId(node.id)
   }, [])
 
   const onEdgeClick = useCallback((_: React.MouseEvent, edge: Edge) => {
-    setSelectedNode(null)
-    setSelectedEdge(edge as Edge & { data?: WFEdgeData })
+    setSelectedNodeId(null)
+    setSelectedEdgeId(edge.id)
   }, [])
 
   const onPaneClick = useCallback(() => {
-    setSelectedNode(null)
-    setSelectedEdge(null)
+    setSelectedNodeId(null)
+    setSelectedEdgeId(null)
   }, [])
 
   function handleSave() {
@@ -273,6 +276,12 @@ function InnerEditor({ initialData, onSave, saving, serviceId, validationErrors 
     return { ...e, data: { ...e.data, failed: true } }
   })
 
+  const selectedNode = selectedNodeId
+    ? (nodes.find((node) => node.id === selectedNodeId) as Node & { data: WFNodeData } | undefined) ?? null
+    : null
+  const selectedEdge = selectedEdgeId
+    ? (edges.find((edge) => edge.id === selectedEdgeId) as Edge & { data?: WFEdgeData } | undefined) ?? null
+    : null
   const edgeSourceNodeType = selectedEdge
     ? (nodes.find((n) => n.id === selectedEdge.source)?.data as unknown as WFNodeData | undefined)?.nodeType
     : undefined
@@ -301,7 +310,11 @@ function InnerEditor({ initialData, onSave, saving, serviceId, validationErrors 
                   type: "workflow",
                   markerEnd: { type: MarkerType.ArrowClosed },
                 }}
+                defaultViewport={DEFAULT_VIEWPORT}
                 fitView
+                fitViewOptions={FIT_VIEW_OPTIONS}
+                minZoom={0.35}
+                maxZoom={1.25}
                 selectNodesOnDrag
                 multiSelectionKeyCode="Shift"
                 className="workflow-builder-flow"
@@ -369,10 +382,10 @@ function InnerEditor({ initialData, onSave, saving, serviceId, validationErrors 
         </ContextMenu>
       </div>
       {selectedNode && (
-        <NodePropertyPanel node={selectedNode} serviceId={serviceId} onClose={() => setSelectedNode(null)} />
+        <NodePropertyPanel node={selectedNode} serviceId={serviceId} onClose={() => setSelectedNodeId(null)} />
       )}
       {selectedEdge && (
-        <EdgePropertyPanel edge={selectedEdge} sourceNodeType={edgeSourceNodeType} onClose={() => setSelectedEdge(null)} />
+        <EdgePropertyPanel edge={selectedEdge} sourceNodeType={edgeSourceNodeType} onClose={() => setSelectedEdgeId(null)} />
       )}
     </div>
   )

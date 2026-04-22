@@ -69,15 +69,15 @@ export function FormBindingPicker({ formSchema, onChange }: FormBindingPickerPro
       )}
 
       <Sheet open={designerOpen} onOpenChange={setDesignerOpen}>
-        <SheetContent className="sm:max-w-4xl p-0 flex flex-col">
-          <SheetHeader className="px-6 pt-6 pb-0">
-            <SheetTitle>{t("workflow.prop.formBinding")}</SheetTitle>
+        <SheetContent className="w-[min(1180px,calc(100vw-32px))] gap-0 p-0 sm:max-w-none">
+          <SheetHeader className="shrink-0 border-b border-border/55 px-5 py-4">
+            <SheetTitle className="text-base">{t("workflow.prop.formBinding")}</SheetTitle>
             <SheetDescription className="sr-only">{t("workflow.prop.formBinding")}</SheetDescription>
           </SheetHeader>
-          <div className="flex-1 min-h-0 px-6 py-4">
+          <div className="min-h-0 flex-1 px-5 py-4">
             <FormDesigner schema={draft} onChange={setDraft} />
           </div>
-          <SheetFooter className="px-6 pb-6">
+          <SheetFooter className="shrink-0 px-5 py-4">
             <Button variant="outline" size="sm" onClick={() => setDesignerOpen(false)}>
               {t("workflow.prop.cancel", { defaultValue: "Cancel" })}
             </Button>

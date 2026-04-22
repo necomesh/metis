@@ -1,14 +1,33 @@
 import { useTranslation } from "react-i18next"
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core"
+import {
+  rectSortingStrategy,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+} from "@dnd-kit/sortable"
+import { CSS } from "@dnd-kit/utilities"
 import { GripVertical, Trash2, ChevronUp, ChevronDown } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import type { FormField, FormLayout } from "../types"
+import type { FieldType, FormField, FormLayout } from "../types"
 
 interface DesignerCanvasProps {
   fields: FormField[]
   layout: FormLayout | null
+  layoutColumns: 1 | 2 | 3
   selectedFieldKey: string | null
   onSelectField: (key: string | null) => void
+  onAddField: (type: FieldType) => void
+  onReorderFields: (activeKey: string, overKey: string) => void
   onDeleteField: (key: string) => void
   onMoveField: (key: string, direction: "up" | "down") => void
 }
@@ -16,18 +35,57 @@ interface DesignerCanvasProps {
 export function DesignerCanvas({
   fields,
   layout,
+  layoutColumns,
   selectedFieldKey,
   onSelectField,
+  onAddField,
+  onReorderFields,
   onDeleteField,
   onMoveField,
 }: DesignerCanvasProps) {
   const { t } = useTranslation("itsm")
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    onReorderFields(String(active.id), String(over.id))
+  }
+
+  function handleDragOver(event: React.DragEvent) {
+    if (event.dataTransfer.types.includes("application/metis-form-field-type")) {
+      event.preventDefault()
+      event.dataTransfer.dropEffect = "copy"
+    }
+  }
+
+  function handleDrop(event: React.DragEvent) {
+    const type = event.dataTransfer.getData("application/metis-form-field-type") as FieldType
+    if (!type) return
+    event.preventDefault()
+    onAddField(type)
+  }
+
+  const fieldKeys = fields.map((field) => field.key)
+  const gridClassName = cn(
+    "grid gap-2",
+    layoutColumns === 1 && "grid-cols-1",
+    layoutColumns === 2 && "grid-cols-2",
+    layoutColumns === 3 && "grid-cols-3",
+  )
 
   if (fields.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-64 border-2 border-dashed rounded-lg text-muted-foreground">
-        <p className="text-sm">{t("forms.empty")}</p>
-        <p className="text-xs mt-1">{t("forms.emptyHint")}</p>
+      <div
+        className="mx-auto flex min-h-[320px] max-w-[720px] flex-col items-center justify-center rounded-xl border border-dashed border-border/80 bg-white/64 text-muted-foreground"
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+      >
+        <p className="text-sm font-medium">{t("forms.empty")}</p>
+        <p className="mt-1 text-xs">{t("forms.emptyHint")}</p>
       </div>
     )
   }
@@ -35,25 +93,28 @@ export function DesignerCanvas({
   // Render fields as section groups or flat list
   if (layout?.sections && layout.sections.length > 0) {
     return (
-      <div className="space-y-4">
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <div className="mx-auto max-w-[760px] space-y-4" onDragOver={handleDragOver} onDrop={handleDrop}>
         {layout.sections.map((section, si) => {
           const sectionFields = section.fields
             .map((key) => fields.find((f) => f.key === key))
             .filter(Boolean) as FormField[]
 
           return (
-            <div key={si} className="border rounded-lg">
-              <div className="px-3 py-2 bg-muted/50 border-b rounded-t-lg">
+            <div key={si} className="overflow-hidden rounded-xl border border-border/65 bg-white/76">
+              <div className="border-b border-border/60 bg-white/70 px-3 py-2">
                 <h4 className="text-sm font-medium">{section.title}</h4>
                 {section.description && (
                   <p className="text-xs text-muted-foreground">{section.description}</p>
                 )}
               </div>
-              <div className="p-2 space-y-1">
+              <SortableContext items={sectionFields.map((field) => field.key)} strategy={rectSortingStrategy}>
+                <div className={cn(gridClassName, "p-2")}>
                 {sectionFields.map((field) => (
                   <FieldCard
                     key={field.key}
                     field={field}
+                    layoutColumns={layoutColumns}
                     isSelected={selectedFieldKey === field.key}
                     onSelect={() => onSelectField(field.key)}
                     onDelete={() => onDeleteField(field.key)}
@@ -67,21 +128,26 @@ export function DesignerCanvas({
                     {t("forms.empty")}
                   </p>
                 )}
-              </div>
+                </div>
+              </SortableContext>
             </div>
           )
         })}
-      </div>
+        </div>
+      </DndContext>
     )
   }
 
   // Flat list
   return (
-    <div className="space-y-1">
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <SortableContext items={fieldKeys} strategy={rectSortingStrategy}>
+        <div className={cn("mx-auto max-w-[760px]", gridClassName)} onDragOver={handleDragOver} onDrop={handleDrop}>
       {fields.map((field) => (
         <FieldCard
           key={field.key}
           field={field}
+          layoutColumns={layoutColumns}
           isSelected={selectedFieldKey === field.key}
           onSelect={() => onSelectField(field.key)}
           onDelete={() => onDeleteField(field.key)}
@@ -90,12 +156,22 @@ export function DesignerCanvas({
           t={t}
         />
       ))}
-    </div>
+        </div>
+      </SortableContext>
+    </DndContext>
   )
+}
+
+function fieldSpanClass(field: FormField, layoutColumns: 1 | 2 | 3) {
+  if (layoutColumns === 1) return "col-span-1"
+  if (field.width === "third") return "col-span-1"
+  if (field.width === "half") return layoutColumns === 2 ? "col-span-1" : "col-span-2"
+  return layoutColumns === 2 ? "col-span-2" : "col-span-3"
 }
 
 function FieldCard({
   field,
+  layoutColumns,
   isSelected,
   onSelect,
   onDelete,
@@ -104,6 +180,7 @@ function FieldCard({
   t,
 }: {
   field: FormField
+  layoutColumns: 1 | 2 | 3
   isSelected: boolean
   onSelect: () => void
   onDelete: () => void
@@ -111,17 +188,43 @@ function FieldCard({
   onMoveDown: () => void
   t: (key: string) => string
 }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: field.key })
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  }
+
   return (
     <div
+      ref={setNodeRef}
+      style={style}
       className={cn(
-        "flex items-center gap-2 rounded-md border px-3 py-2 cursor-pointer transition-colors",
+        fieldSpanClass(field, layoutColumns),
+        "flex cursor-pointer items-center gap-2 rounded-lg border border-border/65 bg-white/76 px-3 py-2.5 transition-colors",
         isSelected
-          ? "border-primary bg-primary/5 ring-1 ring-primary/20"
-          : "hover:bg-accent/50",
+          ? "border-primary/55 bg-primary/5 ring-1 ring-primary/20"
+          : "hover:border-primary/35 hover:bg-white",
+        isDragging && "z-10 opacity-70 shadow-[0_18px_46px_-28px_rgba(15,23,42,0.45)]",
       )}
       onClick={onSelect}
     >
-      <GripVertical className="h-4 w-4 shrink-0 text-muted-foreground" />
+      <button
+        type="button"
+        className="flex size-6 shrink-0 cursor-grab items-center justify-center rounded-md text-muted-foreground hover:bg-muted/70 active:cursor-grabbing"
+        aria-label="Drag field"
+        onClick={(event) => event.stopPropagation()}
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical className="h-4 w-4" />
+      </button>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium truncate">{field.label}</span>

@@ -11,6 +11,22 @@
     radial-gradient(circle at 18% 12%, color-mix(in oklab, var(--color-primary) 10%, transparent), transparent 28%);
 }
 
+.workflow-builder-flow .react-flow__node {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+}
+
+.workflow-builder-flow .react-flow__node:focus,
+.workflow-builder-flow .react-flow__node:focus-visible {
+  outline: none;
+}
+
+.workflow-builder-flow .workflow-node-card {
+  overflow: hidden;
+}
+
 .workflow-builder-flow .react-flow__handle {
   width: 12px;
   height: 12px;

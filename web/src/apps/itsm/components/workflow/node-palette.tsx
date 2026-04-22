@@ -12,16 +12,16 @@ export function NodePalette() {
   }
 
   return (
-    <aside className="flex w-[232px] shrink-0 flex-col overflow-y-auto border-r border-border/55 bg-white/48 px-3 py-3">
-      <div className="mb-3 px-1">
+    <aside className="flex h-full min-h-0 w-[232px] shrink-0 flex-col overflow-hidden border-r border-border/55 bg-white/48 px-3 py-3">
+      <div className="mb-3 shrink-0 px-1">
         <div className="text-sm font-semibold tracking-[-0.01em]">{t("workflow.nodeTypes")}</div>
         <div className="mt-1 text-xs leading-5 text-muted-foreground">{t("workflow.paletteHint")}</div>
       </div>
-      <div className="space-y-4">
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
         {WORKFLOW_NODE_GROUPS.map((group) => (
           <section key={group.label}>
             <div className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground/72">
-            {t(group.label)}
+              {t(group.label)}
             </div>
             <div className="space-y-1.5">
               {group.types.map((nt) => {

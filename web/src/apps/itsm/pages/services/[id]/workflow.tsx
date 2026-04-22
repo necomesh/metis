@@ -73,7 +73,7 @@ export function Component() {
           {t("workflow.back")}
         </Button>
       </div>
-      <div className="flex-1">
+      <div className="min-h-0 flex-1">
         <WorkflowEditor
           initialData={initialData}
           onSave={(data) => saveMut.mutate(data)}

@@ -58,27 +58,33 @@ const groups: { key: string; items: PaletteItem[] }[] = [
 export function FieldTypePalette({ onAddField }: FieldTypePaletteProps) {
   const { t } = useTranslation("itsm")
 
+  function handleDragStart(event: React.DragEvent, type: FieldType) {
+    event.dataTransfer.setData("application/metis-form-field-type", type)
+    event.dataTransfer.effectAllowed = "copy"
+  }
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {groups.map((group) => (
         <div key={group.key}>
-          <h4 className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wide">
+          <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/72">
             {t(`forms.fieldGroup.${group.key}`)}
           </h4>
-          <div className="grid grid-cols-2 gap-1.5">
+          <div className="grid grid-cols-1 gap-1.5 xl:grid-cols-2">
             {group.items.map(({ type, icon: Icon }) => (
               <button
                 key={type}
                 type="button"
+                draggable
+                onDragStart={(event) => handleDragStart(event, type)}
                 onClick={() => onAddField(type)}
                 className={cn(
-                  "flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-xs",
-                  "hover:bg-accent hover:text-accent-foreground transition-colors",
-                  "text-left cursor-pointer",
+                  "flex min-h-9 cursor-grab items-center gap-2 rounded-lg border border-border/70 bg-white/72 px-2.5 py-2 text-[12px] active:cursor-grabbing",
+                  "text-left transition-colors hover:border-primary/35 hover:bg-white hover:text-foreground",
                 )}
               >
                 <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                <span className="truncate">{t(`forms.type.${type}`)}</span>
+                <span className="min-w-0 leading-4">{t(`forms.type.${type}`)}</span>
               </button>
             ))}
           </div>
