@@ -50,14 +50,14 @@ export function NodePropertyPanel({ node, serviceId, onClose }: NodePanelProps) 
     onClose()
   }
 
-  const hasParticipants = nodeType === "form" || nodeType === "approve" || nodeType === "process"
+  const hasParticipants = nodeType === "form" || nodeType === "process"
   const hasFormBinding = nodeType === "form"
-  const hasApproveMode = nodeType === "approve"
+  const hasProcessMode = nodeType === "process"
   const hasAction = nodeType === "action"
   const hasScript = nodeType === "script"
   const hasNotify = nodeType === "notify"
   const hasWait = nodeType === "wait" || nodeType === "timer"
-  const hasMapping = nodeType === "form" || nodeType === "approve" || nodeType === "process"
+  const hasMapping = nodeType === "form" || nodeType === "process"
   const isProtected = nodeType === "start" || nodeType === "end"
   const accent = getNodeAccent(nodeType)
 
@@ -90,9 +90,9 @@ export function NodePropertyPanel({ node, serviceId, onClose }: NodePanelProps) 
           )}
         </PanelSection>
 
-        {(hasApproveMode || hasWait || hasNotify || hasAction || hasScript) && (
+        {(hasProcessMode || hasWait || hasNotify || hasAction || hasScript) && (
           <PanelSection title={t("workflow.panel.execution")}>
-            {hasApproveMode && (
+            {hasProcessMode && (
               <div className="space-y-1.5">
                 <Label className="text-xs">{t("workflow.prop.executionMode")}</Label>
                 <Select value={data.executionMode ?? "single"} onValueChange={(v) => updateData({ executionMode: v as WFNodeData["executionMode"] })}>
@@ -237,7 +237,7 @@ export function EdgePropertyPanel({ edge, sourceNodeType, onClose }: EdgePanelPr
         <PanelSection title={t("workflow.panel.identity")}>
           <div className="space-y-1.5">
             <Label className="text-xs">{t("workflow.prop.outcome")}</Label>
-            <Input value={data.outcome ?? ""} onChange={(e) => updateData({ outcome: e.target.value })} placeholder="e.g. approved" className="h-9 text-sm" />
+            <Input value={data.outcome ?? ""} onChange={(e) => updateData({ outcome: e.target.value })} placeholder="e.g. completed" className="h-9 text-sm" />
           </div>
 
           <div className="flex items-center gap-2 rounded-lg border border-border/55 bg-background/45 px-3 py-2">

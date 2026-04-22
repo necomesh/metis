@@ -346,7 +346,7 @@ func HandleSmartRecovery(db *gorm.DB, smartEngine *SmartEngine) func(ctx context
 			// Check if there are active (pending/in_progress) activities
 			var activeCount int64
 			db.Table("itsm_ticket_activities").
-				Where("ticket_id = ? AND status IN ?", t.ID, []string{ActivityPending, ActivityInProgress, ActivityPendingApproval}).
+				Where("ticket_id = ? AND status IN ?", t.ID, []string{ActivityPending, ActivityInProgress}).
 				Count(&activeCount)
 
 			if activeCount > 0 {

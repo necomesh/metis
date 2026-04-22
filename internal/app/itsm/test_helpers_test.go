@@ -28,6 +28,7 @@ func newTestDB(t *testing.T) *gorm.DB {
 		&ServiceAction{},
 		&ServiceKnowledgeDocument{},
 		&ai.Agent{},
+		&model.SystemConfig{},
 		&model.User{},
 	); err != nil {
 		t.Fatalf("migrate test db: %v", err)

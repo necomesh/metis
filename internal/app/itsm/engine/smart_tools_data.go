@@ -208,7 +208,7 @@ func (s *decisionDataStore) GetActivityAssignments(activityID uint) ([]ActivityA
 func (s *decisionDataStore) GetCurrentActivities(ticketID uint) ([]CurrentActivityInfo, error) {
 	var activities []CurrentActivityInfo
 	err := s.db.Table("itsm_ticket_activities").
-		Where("ticket_id = ? AND status IN ?", ticketID, []string{ActivityPending, ActivityInProgress, ActivityPendingApproval}).
+		Where("ticket_id = ? AND status IN ?", ticketID, []string{ActivityPending, ActivityInProgress}).
 		Select("id, name, activity_type, status, execution_mode, activity_group_id, ai_confidence").
 		Order("id ASC").
 		Find(&activities).Error

@@ -35,8 +35,7 @@ type WFEdgeData struct {
 type NodeData struct {
 	Label        string            `json:"label"`
 	FormSchema   json.RawMessage    `json:"formSchema,omitempty"`
-	ApproveMode  string            `json:"approve_mode,omitempty"` // single | parallel | sequential
-	Participants []Participant     `json:"participants,omitempty"`
+		Participants []Participant     `json:"participants,omitempty"`
 	ActionID     uint              `json:"action_id,omitempty"`
 	Conditions   []GatewayCondition `json:"conditions,omitempty"`
 	ChannelID    uint              `json:"channel_id,omitempty"`

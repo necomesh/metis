@@ -29,7 +29,7 @@ import {
 import { cn } from "@/lib/utils"
 import { overrideJump, overrideReassign, retryAI, fetchUsers } from "../api"
 
-const STEP_TYPES = ["form", "approve", "process", "action", "notify", "wait"]
+const STEP_TYPES = ["form", "process", "action", "notify", "wait"]
 
 interface OverrideActionsProps {
   ticketId: number

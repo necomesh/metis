@@ -84,53 +84,6 @@ func (h *TicketHandler) buildTimelineResponses(items []TicketTimeline) ([]Ticket
 	return result, nil
 }
 
-type CreateTicketRequest struct {
-	Title       string    `json:"title" binding:"required,max=256"`
-	Description string    `json:"description"`
-	ServiceID   uint      `json:"serviceId" binding:"required"`
-	PriorityID  uint      `json:"priorityId" binding:"required"`
-	FormData    JSONField `json:"formData"`
-}
-
-func (h *TicketHandler) Create(c *gin.Context) {
-	var req CreateTicketRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		handler.Fail(c, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	userID, _ := c.Get("userId")
-	requesterID := userID.(uint)
-
-	c.Set("audit_action", "itsm.ticket.create")
-	c.Set("audit_resource", "ticket")
-
-	ticket, err := h.svc.Create(CreateTicketInput{
-		Title:       req.Title,
-		Description: req.Description,
-		ServiceID:   req.ServiceID,
-		PriorityID:  req.PriorityID,
-		FormData:    req.FormData,
-	}, requesterID)
-	if err != nil {
-		switch {
-		case errors.Is(err, ErrServiceDefNotFound):
-			handler.Fail(c, http.StatusBadRequest, "service not found")
-		case errors.Is(err, ErrServiceNotActive):
-			handler.Fail(c, http.StatusBadRequest, err.Error())
-		case errors.Is(err, ErrPriorityNotFound):
-			handler.Fail(c, http.StatusBadRequest, "priority not found")
-		default:
-			handler.Fail(c, http.StatusInternalServerError, err.Error())
-		}
-		return
-	}
-
-	c.Set("audit_resource_id", strconv.Itoa(int(ticket.ID)))
-	c.Set("audit_summary", "created ticket: "+ticket.Code)
-	h.respondTicket(c, ticket)
-}
-
 func (h *TicketHandler) List(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
@@ -236,37 +189,6 @@ func (h *TicketHandler) Assign(c *gin.Context) {
 	}
 
 	c.Set("audit_summary", "assigned ticket: "+ticket.Code)
-	h.respondTicket(c, ticket)
-}
-
-func (h *TicketHandler) Complete(c *gin.Context) {
-	id, err := parseID(c)
-	if err != nil {
-		handler.Fail(c, http.StatusBadRequest, "invalid id")
-		return
-	}
-
-	userID, _ := c.Get("userId")
-	operatorID := userID.(uint)
-
-	c.Set("audit_action", "itsm.ticket.complete")
-	c.Set("audit_resource", "ticket")
-	c.Set("audit_resource_id", c.Param("id"))
-
-	ticket, err := h.svc.Complete(id, operatorID)
-	if err != nil {
-		switch {
-		case errors.Is(err, ErrTicketNotFound):
-			handler.Fail(c, http.StatusNotFound, err.Error())
-		case errors.Is(err, ErrTicketTerminal):
-			handler.Fail(c, http.StatusBadRequest, err.Error())
-		default:
-			handler.Fail(c, http.StatusInternalServerError, err.Error())
-		}
-		return
-	}
-
-	c.Set("audit_summary", "completed ticket: "+ticket.Code)
 	h.respondTicket(c, ticket)
 }
 
@@ -376,23 +298,6 @@ func (h *TicketHandler) Mine(c *gin.Context) {
 	}
 
 	items, total, err := h.svc.Mine(requesterID, keyword, status, startDate, endDate, page, pageSize)
-	if err != nil {
-		handler.Fail(c, http.StatusInternalServerError, err.Error())
-		return
-	}
-	h.respondTicketList(c, items, total)
-}
-
-func (h *TicketHandler) Todo(c *gin.Context) {
-	userID, _ := c.Get("userId")
-	uid := userID.(uint)
-
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
-	keyword := c.Query("keyword")
-	status := c.Query("status")
-
-	items, total, err := h.svc.Todo(uid, keyword, status, page, pageSize)
 	if err != nil {
 		handler.Fail(c, http.StatusInternalServerError, err.Error())
 		return
@@ -530,100 +435,6 @@ func (h *TicketHandler) Activities(c *gin.Context) {
 
 // --- Smart engine override handlers ---
 
-func (h *TicketHandler) ConfirmActivity(c *gin.Context) {
-	id, err := parseID(c)
-	if err != nil {
-		handler.Fail(c, http.StatusBadRequest, "invalid id")
-		return
-	}
-	activityID, err := strconv.ParseUint(c.Param("aid"), 10, 64)
-	if err != nil {
-		handler.Fail(c, http.StatusBadRequest, "invalid activity id")
-		return
-	}
-
-	userID, _ := c.Get("userId")
-	operatorID := userID.(uint)
-
-	c.Set("audit_action", "itsm.ticket.confirm_activity")
-	c.Set("audit_resource", "ticket")
-	c.Set("audit_resource_id", c.Param("id"))
-
-	ticket, err := h.svc.ConfirmActivity(id, uint(activityID), operatorID)
-	if err != nil {
-		switch {
-		case errors.Is(err, ErrTicketNotFound):
-			handler.Fail(c, http.StatusNotFound, err.Error())
-		case errors.Is(err, ErrTicketTerminal):
-			handler.Fail(c, http.StatusBadRequest, err.Error())
-		case errors.Is(err, engine.ErrActivityNotFound):
-			handler.Fail(c, http.StatusNotFound, err.Error())
-		case errors.Is(err, ErrNotApprover):
-			handler.Fail(c, http.StatusForbidden, err.Error())
-		case errors.Is(err, ErrActivityAlready):
-			handler.Fail(c, http.StatusConflict, err.Error())
-		default:
-			handler.Fail(c, http.StatusInternalServerError, err.Error())
-		}
-		return
-	}
-
-	c.Set("audit_summary", "confirmed AI decision for ticket: "+ticket.Code)
-	h.respondTicket(c, ticket)
-}
-
-type RejectActivityRequest struct {
-	Reason string `json:"reason"`
-}
-
-func (h *TicketHandler) RejectActivity(c *gin.Context) {
-	id, err := parseID(c)
-	if err != nil {
-		handler.Fail(c, http.StatusBadRequest, "invalid id")
-		return
-	}
-	activityID, err := strconv.ParseUint(c.Param("aid"), 10, 64)
-	if err != nil {
-		handler.Fail(c, http.StatusBadRequest, "invalid activity id")
-		return
-	}
-
-	var req RejectActivityRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		handler.Fail(c, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	userID, _ := c.Get("userId")
-	operatorID := userID.(uint)
-
-	c.Set("audit_action", "itsm.ticket.reject_activity")
-	c.Set("audit_resource", "ticket")
-	c.Set("audit_resource_id", c.Param("id"))
-
-	ticket, err := h.svc.RejectActivity(id, uint(activityID), req.Reason, operatorID)
-	if err != nil {
-		switch {
-		case errors.Is(err, ErrTicketNotFound):
-			handler.Fail(c, http.StatusNotFound, err.Error())
-		case errors.Is(err, ErrTicketTerminal):
-			handler.Fail(c, http.StatusBadRequest, err.Error())
-		case errors.Is(err, engine.ErrActivityNotFound):
-			handler.Fail(c, http.StatusNotFound, err.Error())
-		case errors.Is(err, ErrNotApprover):
-			handler.Fail(c, http.StatusForbidden, err.Error())
-		case errors.Is(err, ErrActivityAlready):
-			handler.Fail(c, http.StatusConflict, err.Error())
-		default:
-			handler.Fail(c, http.StatusInternalServerError, err.Error())
-		}
-		return
-	}
-
-	c.Set("audit_summary", "rejected AI decision for ticket: "+ticket.Code)
-	h.respondTicket(c, ticket)
-}
-
 type OverrideJumpRequest struct {
 	ActivityType string `json:"activityType" binding:"required"`
 	AssigneeID   *uint  `json:"assigneeId"`
@@ -743,130 +554,6 @@ func (h *TicketHandler) RetryAI(c *gin.Context) {
 	}
 
 	c.Set("audit_summary", "retry AI for ticket: "+ticket.Code)
-	h.respondTicket(c, ticket)
-}
-
-// --- Approval handlers ---
-
-func (h *TicketHandler) Approvals(c *gin.Context) {
-	userID, _ := c.Get("userId")
-	uid := userID.(uint)
-
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
-
-	items, total, err := h.svc.Approvals(uid, page, pageSize)
-	if err != nil {
-		handler.Fail(c, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	handler.OK(c, gin.H{"items": items, "total": total})
-}
-
-func (h *TicketHandler) ApprovalCount(c *gin.Context) {
-	userID, _ := c.Get("userId")
-	uid := userID.(uint)
-
-	count, err := h.svc.ApprovalCount(uid)
-	if err != nil {
-		handler.Fail(c, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	handler.OK(c, gin.H{"count": count})
-}
-
-type ApproveActivityRequest struct{}
-
-func (h *TicketHandler) ApproveActivity(c *gin.Context) {
-	id, err := parseID(c)
-	if err != nil {
-		handler.Fail(c, http.StatusBadRequest, "invalid id")
-		return
-	}
-	activityID, err := strconv.ParseUint(c.Param("aid"), 10, 64)
-	if err != nil {
-		handler.Fail(c, http.StatusBadRequest, "invalid activity id")
-		return
-	}
-
-	userID, _ := c.Get("userId")
-	operatorID := userID.(uint)
-
-	c.Set("audit_action", "itsm.ticket.approve_activity")
-	c.Set("audit_resource", "ticket")
-	c.Set("audit_resource_id", c.Param("id"))
-
-	ticket, err := h.svc.ApproveActivity(id, uint(activityID), operatorID)
-	if err != nil {
-		switch {
-		case errors.Is(err, ErrTicketNotFound):
-			handler.Fail(c, http.StatusNotFound, err.Error())
-		case errors.Is(err, ErrTicketTerminal):
-			handler.Fail(c, http.StatusBadRequest, err.Error())
-		case errors.Is(err, engine.ErrActivityNotFound):
-			handler.Fail(c, http.StatusNotFound, err.Error())
-		case errors.Is(err, ErrNotApprover):
-			handler.Fail(c, http.StatusForbidden, err.Error())
-		case errors.Is(err, ErrActivityAlready):
-			handler.Fail(c, http.StatusConflict, err.Error())
-		default:
-			handler.Fail(c, http.StatusInternalServerError, err.Error())
-		}
-		return
-	}
-
-	c.Set("audit_summary", "approved activity for ticket: "+ticket.Code)
-	h.respondTicket(c, ticket)
-}
-
-type DenyActivityRequest struct {
-	Reason string `json:"reason"`
-}
-
-func (h *TicketHandler) DenyActivity(c *gin.Context) {
-	id, err := parseID(c)
-	if err != nil {
-		handler.Fail(c, http.StatusBadRequest, "invalid id")
-		return
-	}
-	activityID, err := strconv.ParseUint(c.Param("aid"), 10, 64)
-	if err != nil {
-		handler.Fail(c, http.StatusBadRequest, "invalid activity id")
-		return
-	}
-
-	var req DenyActivityRequest
-	_ = c.ShouldBindJSON(&req) // reason is optional
-
-	userID, _ := c.Get("userId")
-	operatorID := userID.(uint)
-
-	c.Set("audit_action", "itsm.ticket.deny_activity")
-	c.Set("audit_resource", "ticket")
-	c.Set("audit_resource_id", c.Param("id"))
-
-	ticket, err := h.svc.DenyActivity(id, uint(activityID), operatorID, req.Reason)
-	if err != nil {
-		switch {
-		case errors.Is(err, ErrTicketNotFound):
-			handler.Fail(c, http.StatusNotFound, err.Error())
-		case errors.Is(err, ErrTicketTerminal):
-			handler.Fail(c, http.StatusBadRequest, err.Error())
-		case errors.Is(err, engine.ErrActivityNotFound):
-			handler.Fail(c, http.StatusNotFound, err.Error())
-		case errors.Is(err, ErrNotApprover):
-			handler.Fail(c, http.StatusForbidden, err.Error())
-		case errors.Is(err, ErrActivityAlready):
-			handler.Fail(c, http.StatusConflict, err.Error())
-		default:
-			handler.Fail(c, http.StatusInternalServerError, err.Error())
-		}
-		return
-	}
-
-	c.Set("audit_summary", "denied activity for ticket: "+ticket.Code)
 	h.respondTicket(c, ticket)
 }
 

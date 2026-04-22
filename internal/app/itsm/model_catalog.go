@@ -135,19 +135,26 @@ type ServiceDefinitionResponse struct {
 
 func (s *ServiceDefinition) ToResponse() ServiceDefinitionResponse {
 	var publishHealthCheck *ServiceHealthCheck
-	if s.PublishHealthCheckedAt != nil && len(s.PublishHealthItems) > 0 {
+	if s.PublishHealthCheckedAt != nil {
 		var items []ServiceHealthItem
-		if err := json.Unmarshal([]byte(s.PublishHealthItems), &items); err == nil {
-			status := s.PublishHealthStatus
-			if status == "" {
-				status = "pass"
+		if len(s.PublishHealthItems) == 0 {
+			items = []ServiceHealthItem{}
+		} else if err := json.Unmarshal([]byte(s.PublishHealthItems), &items); err != nil {
+			items = []ServiceHealthItem{}
+		} else {
+			if items == nil {
+				items = []ServiceHealthItem{}
 			}
-			publishHealthCheck = &ServiceHealthCheck{
-				ServiceID: s.ID,
-				Status:    status,
-				Items:     items,
-				CheckedAt: s.PublishHealthCheckedAt,
-			}
+		}
+		status := s.PublishHealthStatus
+		if status == "" {
+			status = "pass"
+		}
+		publishHealthCheck = &ServiceHealthCheck{
+			ServiceID: s.ID,
+			Status:    status,
+			Items:     items,
+			CheckedAt: s.PublishHealthCheckedAt,
 		}
 	}
 

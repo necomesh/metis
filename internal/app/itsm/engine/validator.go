@@ -317,13 +317,13 @@ func ValidateWorkflow(workflowJSON json.RawMessage) []ValidationError {
 			continue
 		}
 
-		// b_timer must attach to human nodes (form/approve/process)
+		// b_timer must attach to human nodes (form/process)
 		if n.Type == NodeBTimer {
-			if hostNode.Type != NodeForm && hostNode.Type != NodeApprove && hostNode.Type != NodeProcess {
+			if hostNode.Type != NodeForm && hostNode.Type != NodeProcess {
 				errs = append(errs, ValidationError{
 					NodeID:  n.ID,
 					Level:   "error",
-					Message: fmt.Sprintf("边界定时器 %s 只能附着在人工节点（form/approve/process）上，当前附着在 %s", n.ID, hostNode.Type),
+					Message: fmt.Sprintf("边界定时器 %s 只能附着在人工节点（form/process）上，当前附着在 %s", n.ID, hostNode.Type),
 				})
 			}
 			// b_timer must have duration

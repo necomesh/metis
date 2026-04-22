@@ -145,32 +145,42 @@ func (e *ClassicEngine) Progress(ctx context.Context, tx *gorm.DB, params Progre
 		return ErrNodeNotFound
 	}
 
-	// Multi-person approval: delegate to progressApproval for approve-type activities
-	// with parallel or sequential mode before completing the activity.
-	if activity.ActivityType == NodeApprove && (activity.ExecutionMode == "parallel" || activity.ExecutionMode == "sequential") {
-		shouldContinue, err := e.progressApproval(tx, &activity, params)
-		if err != nil {
-			return err
-		}
-		if !shouldContinue {
-			// Activity still in progress (not all assignments done)
+	now := time.Now()
+	var completedAssignment assignmentModel
+	assignmentResult := tx.Model(&assignmentModel{}).
+		Where("activity_id = ? AND assignee_id = ? AND status = ?", activity.ID, params.OperatorID, "pending").
+		Updates(map[string]any{
+			"status":      "completed",
+			"finished_at": now,
+		})
+	if assignmentResult.Error != nil {
+		return assignmentResult.Error
+	}
+	if assignmentResult.RowsAffected > 0 {
+		if err := tx.Where("activity_id = ? AND assignee_id = ? AND status = ?",
+			activity.ID, params.OperatorID, "completed").
+			Order("id DESC").First(&completedAssignment).Error; err == nil && completedAssignment.DelegatedFrom != nil {
+			if err := tx.Model(&assignmentModel{}).
+				Where("id = ? AND status = ?", *completedAssignment.DelegatedFrom, "delegated").
+				Updates(map[string]any{"status": "pending", "is_current": true}).Error; err != nil {
+				return err
+			}
+			e.recordTimeline(tx, params.TicketID, &params.ActivityID, 0, "delegate_return",
+				"委派任务已完成，工单已回归原处理人")
 			return nil
 		}
-		// All assignments done — activity already completed by progressApproval, continue workflow
-	} else {
-		// Single mode or non-approve: complete the activity immediately
-		now := time.Now()
-		updates := map[string]any{
-			"status":             ActivityCompleted,
-			"transition_outcome": params.Outcome,
-			"finished_at":        now,
-		}
-		if len(params.Result) > 0 {
-			updates["form_data"] = string(params.Result)
-		}
-		if err := tx.Model(&activityModel{}).Where("id = ?", params.ActivityID).Updates(updates).Error; err != nil {
-			return err
-		}
+	}
+
+	updates := map[string]any{
+		"status":             ActivityCompleted,
+		"transition_outcome": params.Outcome,
+		"finished_at":        now,
+	}
+	if len(params.Result) > 0 {
+		updates["form_data"] = string(params.Result)
+	}
+	if err := tx.Model(&activityModel{}).Where("id = ?", params.ActivityID).Updates(updates).Error; err != nil {
+		return err
 	}
 
 	// Write form bindings as process variables (if activity had a form with bindings)
@@ -188,7 +198,7 @@ func (e *ClassicEngine) Progress(ctx context.Context, tx *gorm.DB, params Progre
 	// Cancel any suspended boundary tokens (⑤b itsm-boundary-events)
 	cancelBoundaryTokens(tx, &token)
 
-	// Reload activity to get the final transition_outcome (may differ from params.Outcome in multi-approval)
+	// Reload activity to get the final transition_outcome recorded by the activity handler.
 	var finalActivity activityModel
 	tx.First(&finalActivity, params.ActivityID)
 	finalOutcome := finalActivity.TransitionOutcome
@@ -294,12 +304,6 @@ func (e *ClassicEngine) processNode(
 
 	case NodeForm:
 		if err := e.handleForm(tx, token, operatorID, node, nodeData); err != nil {
-			return err
-		}
-		return e.attachBoundaryEvents(tx, def, token, node)
-
-	case NodeApprove:
-		if err := e.handleApprove(tx, token, operatorID, node, nodeData); err != nil {
 			return err
 		}
 		return e.attachBoundaryEvents(tx, def, token, node)

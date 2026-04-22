@@ -4,8 +4,7 @@ import { useState, useMemo } from "react"
 import { useTranslation } from "react-i18next"
 import { useNavigate } from "react-router"
 import { useQuery } from "@tanstack/react-query"
-import { Search, Ticket, Plus } from "lucide-react"
-import { usePermission } from "@/hooks/use-permission"
+import { Search, Ticket } from "lucide-react"
 import { useListPage } from "@/hooks/use-list-page"
 import { withActiveMenuPermission } from "@/lib/navigation-state"
 import { Button } from "@/components/ui/button"
@@ -31,7 +30,6 @@ import { TICKET_MENU_PERMISSION } from "./navigation"
 export function Component() {
   const { t } = useTranslation(["itsm", "common"])
   const navigate = useNavigate()
-  const canCreate = usePermission("itsm:ticket:create")
 
   const [statusFilter, setStatusFilter] = useState("")
   const [priorityFilter, setPriorityFilter] = useState("")
@@ -69,11 +67,6 @@ export function Component() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">{t("itsm:tickets.title")}</h2>
-        {canCreate && (
-          <Button onClick={() => navigate("/itsm/tickets/create")}>
-            <Plus className="mr-1.5 h-4 w-4" />{t("itsm:tickets.create")}
-          </Button>
-        )}
       </div>
 
       <DataTableToolbar>
@@ -124,19 +117,21 @@ export function Component() {
             <TableRow>
               <TableHead className="w-[180px] min-w-[180px]">{t("itsm:tickets.code")}</TableHead>
               <TableHead className="min-w-[200px]">{t("itsm:tickets.ticketTitle")}</TableHead>
+              <TableHead className="w-[90px]">{t("itsm:tickets.requester")}</TableHead>
               <TableHead className="w-[100px]">{t("itsm:tickets.priority")}</TableHead>
               <TableHead className="w-[100px]">{t("itsm:tickets.status")}</TableHead>
               <TableHead className="w-[100px]">{t("itsm:tickets.service")}</TableHead>
-              <TableHead className="w-[80px]">{t("itsm:tickets.assignee")}</TableHead>
-              <TableHead className="w-[160px]">{t("itsm:tickets.slaStatus")}</TableHead>
+              <TableHead className="w-[110px]">当前责任方</TableHead>
+              <TableHead className="min-w-[160px]">下一步</TableHead>
+              <TableHead className="w-[150px]">{t("itsm:tickets.slaStatus")}</TableHead>
               <TableHead className="w-[140px]">{t("itsm:tickets.createdAt")}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <DataTableLoadingRow colSpan={8} />
+              <DataTableLoadingRow colSpan={9} />
             ) : items.length === 0 ? (
-              <DataTableEmptyRow colSpan={8} icon={Ticket} title={t("itsm:tickets.empty")} description={canCreate ? t("itsm:tickets.emptyHint") : undefined} />
+              <DataTableEmptyRow colSpan={9} icon={Ticket} title={t("itsm:tickets.empty")} />
             ) : (
               items.map((item) => (
                 <TableRow
@@ -146,6 +141,7 @@ export function Component() {
                 >
                   <TableCell className="font-mono text-sm whitespace-nowrap">{item.code}</TableCell>
                   <TableCell className="font-medium">{item.title}</TableCell>
+                  <TableCell className="text-sm">{item.requesterName}</TableCell>
                   <TableCell>
                     <span className="inline-flex items-center gap-1.5 text-sm">
                       <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.priorityColor }} />
@@ -156,7 +152,8 @@ export function Component() {
                     <TicketStatusBadge ticket={item} />
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">{item.serviceName}</TableCell>
-                  <TableCell className="text-sm">{item.assigneeName || "—"}</TableCell>
+                  <TableCell className="text-sm">{item.currentOwnerName || item.assigneeName || "—"}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{item.nextStepSummary || "等待处理"}</TableCell>
                   <TableCell>
                     <SLABadge slaStatus={item.slaStatus} slaResolutionDeadline={item.slaResolutionDeadline} />
                   </TableCell>

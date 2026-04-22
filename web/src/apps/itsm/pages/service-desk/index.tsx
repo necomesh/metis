@@ -337,7 +337,7 @@ function ITSMDraftFormSurfaceCard({
     },
     onSuccess: (result) => {
       if (!result.ok) {
-        setInlineError(result.guidance || result.failureReason || result.message || "提交未通过")
+        setInlineError(result.guidance || result.failureReason || result.message || "提交失败")
         return
       }
       if (result.surface?.surfaceType === "itsm.draft_form") {

@@ -322,14 +322,9 @@ func (a *ITSMApp) Routes(api *gin.RouterGroup) {
 
 		// Tickets — special views must come before :id routes
 		g.GET("/tickets/mine", ticketH.Mine)
-		g.GET("/tickets/todo", ticketH.Todo)
-		g.GET("/tickets/approvals", ticketH.Approvals)
-		g.GET("/tickets/approvals/count", ticketH.ApprovalCount)
-		g.POST("/tickets", ticketH.Create)
 		g.GET("/tickets", ticketH.List)
 		g.GET("/tickets/:id", ticketH.Get)
 		g.PUT("/tickets/:id/assign", ticketH.Assign)
-		g.PUT("/tickets/:id/complete", ticketH.Complete)
 		g.PUT("/tickets/:id/cancel", ticketH.Cancel)
 		g.PUT("/tickets/:id/withdraw", ticketH.Withdraw)
 		g.GET("/tickets/:id/timeline", ticketH.Timeline)
@@ -342,15 +337,9 @@ func (a *ITSMApp) Routes(api *gin.RouterGroup) {
 		g.PUT("/tickets/:id/variables/:key", variableH.Update)
 		// Execution tokens
 		g.GET("/tickets/:id/tokens", tokenH.List)
-		// Phase 3: Smart engine override routes
-		g.POST("/tickets/:id/activities/:aid/confirm", ticketH.ConfirmActivity)
-		g.POST("/tickets/:id/activities/:aid/reject", ticketH.RejectActivity)
 		g.POST("/tickets/:id/override/jump", ticketH.OverrideJump)
 		g.POST("/tickets/:id/override/reassign", ticketH.OverrideReassign)
 		g.POST("/tickets/:id/override/retry-ai", ticketH.RetryAI)
-		// Phase 4: Approval routes
-		g.POST("/tickets/:id/activities/:aid/approve", ticketH.ApproveActivity)
-		g.POST("/tickets/:id/activities/:aid/deny", ticketH.DenyActivity)
 		// SLA pause/resume
 		g.PUT("/tickets/:id/sla/pause", ticketH.SLAPause)
 		g.PUT("/tickets/:id/sla/resume", ticketH.SLAResume)

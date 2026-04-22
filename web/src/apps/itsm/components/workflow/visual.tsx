@@ -12,7 +12,6 @@ import {
   Layers,
   Play,
   Radio,
-  ShieldCheck,
   Square,
   Wrench,
   XCircle,
@@ -32,8 +31,6 @@ export function WorkflowNodeIconGlyph({ nodeType, className }: { nodeType?: Node
       return <Square className={iconClassName} strokeWidth={2.2} />
     case "form":
       return <FileText className={iconClassName} strokeWidth={2.2} />
-    case "approve":
-      return <ShieldCheck className={iconClassName} strokeWidth={2.2} />
     case "process":
       return <Wrench className={iconClassName} strokeWidth={2.2} />
     case "action":

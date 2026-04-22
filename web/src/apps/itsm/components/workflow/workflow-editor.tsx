@@ -129,7 +129,6 @@ function InnerEditor({ initialData, onSave, saving, serviceId, validationErrors 
       data: {
         label: t(`workflow.node.${nodeType}`),
         nodeType,
-        ...(nodeType === "approve" ? { executionMode: "single" } : {}),
         ...(nodeType === "wait" || nodeType === "timer" ? { waitMode: nodeType === "timer" ? "timer" : "signal" } : {}),
       } satisfies WFNodeData,
     }

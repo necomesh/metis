@@ -12,8 +12,6 @@ registerApp({
       label: "workspace",
       items: [
         "itsm:service-desk:use",
-        "itsm:ticket:todo",
-        "itsm:ticket:approvals",
         "itsm:ticket:mine",
       ],
     },
@@ -68,33 +66,11 @@ registerApp({
       ],
     },
     {
-      path: "itsm/tickets/create",
-      lazy: () => import("./pages/tickets/create/index"),
-    },
-    {
       path: "itsm/tickets/mine",
       children: [
         {
           index: true,
           lazy: () => import("./pages/tickets/mine/index"),
-        },
-      ],
-    },
-    {
-      path: "itsm/tickets/todo",
-      children: [
-        {
-          index: true,
-          lazy: () => import("./pages/tickets/todo/index"),
-        },
-      ],
-    },
-    {
-      path: "itsm/tickets/approvals",
-      children: [
-        {
-          index: true,
-          lazy: () => import("./pages/tickets/approvals/index"),
         },
       ],
     },

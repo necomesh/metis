@@ -363,16 +363,6 @@ export function fetchTicket(id: number) {
   return api.get<TicketItem>(`/api/v1/itsm/tickets/${id}`)
 }
 
-export function createTicket(data: {
-  title: string
-  description?: string
-  serviceId: number
-  priorityId: number
-  formData?: unknown
-}) {
-  return api.post<TicketItem>("/api/v1/itsm/tickets", data)
-}
-
 export function assignTicket(id: number, assigneeId: number) {
   return api.put<TicketItem>(`/api/v1/itsm/tickets/${id}/assign`, {
     assigneeId,
@@ -489,22 +479,6 @@ export function submitServiceDeskDraft(sessionId: number, data: SubmitDraftReque
   )
 }
 
-export function fetchTodoTickets(params: {
-  keyword?: string
-  status?: string
-  page?: number
-  pageSize?: number
-}) {
-  const p = new URLSearchParams()
-  if (params.keyword) p.set("keyword", params.keyword)
-  if (params.status) p.set("status", params.status)
-  p.set("page", String(params.page ?? 1))
-  p.set("pageSize", String(params.pageSize ?? 20))
-  return api.get<{ items: TicketItem[]; total: number }>(
-    `/api/v1/itsm/tickets/todo?${p}`,
-  )
-}
-
 // ─── Timeline ───────────────────────────────────────────
 
 export interface TimelineItem {
@@ -583,14 +557,6 @@ export function fetchUsers(keyword?: string) {
 
 // ─── Smart Engine Override APIs ────────────────────────
 
-export function confirmActivity(ticketId: number, activityId: number) {
-  return api.post(`/api/v1/itsm/tickets/${ticketId}/activities/${activityId}/confirm`, {})
-}
-
-export function rejectActivity(ticketId: number, activityId: number, reason: string) {
-  return api.post(`/api/v1/itsm/tickets/${ticketId}/activities/${activityId}/reject`, { reason })
-}
-
 export function overrideJump(ticketId: number, data: { activityType: string; assigneeId?: number; reason: string }) {
   return api.post(`/api/v1/itsm/tickets/${ticketId}/override/jump`, data)
 }
@@ -601,57 +567,6 @@ export function overrideReassign(ticketId: number, data: { activityId: number; n
 
 export function retryAI(ticketId: number, reason?: string) {
   return api.post(`/api/v1/itsm/tickets/${ticketId}/override/retry-ai`, { reason })
-}
-
-// ─── Approvals ─────────────────────────────────────────
-
-export interface ApprovalItem {
-  ticketId: number
-  ticketCode: string
-  ticketTitle: string
-  ticketStatus: string
-  serviceId: number
-  priorityId: number
-  priorityName: string
-  priorityColor: string
-  serviceName: string
-  slaStatus: string
-  slaResponseDeadline: string | null
-  slaResolutionDeadline: string | null
-  activityId: number
-  activityName: string
-  activityType: string
-  activityStatus: string
-  formSchema: unknown
-  aiConfidence: number
-  aiReasoning: string
-  startedAt: string | null
-  createdAt: string
-  assignmentId: number
-  participantType: string
-  canAct: boolean
-  approvalKind: "workflow" | "ai_confirm"
-}
-
-export function fetchApprovals(params: { page?: number; pageSize?: number }) {
-  const p = new URLSearchParams()
-  p.set("page", String(params.page ?? 1))
-  p.set("pageSize", String(params.pageSize ?? 20))
-  return api.get<{ items: ApprovalItem[]; total: number }>(
-    `/api/v1/itsm/tickets/approvals?${p}`,
-  )
-}
-
-export function fetchApprovalCount() {
-  return api.get<{ count: number }>("/api/v1/itsm/tickets/approvals/count")
-}
-
-export function approveActivity(ticketId: number, activityId: number) {
-  return api.post(`/api/v1/itsm/tickets/${ticketId}/activities/${activityId}/approve`, {})
-}
-
-export function denyActivity(ticketId: number, activityId: number, reason?: string) {
-  return api.post(`/api/v1/itsm/tickets/${ticketId}/activities/${activityId}/deny`, { reason })
 }
 
 // ─── AI App APIs (for smart engine config) ─────────────

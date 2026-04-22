@@ -23,7 +23,7 @@ func AllTools() []ITSMTool {
 		{
 			Name:        "itsm.service_match",
 			DisplayName: "服务匹配",
-			Description: "读取 ITSM 服务目录并通过结构化语义判定返回权威匹配结果：明确命中时只返回一个 selected_service_id，并返回 service_locked/next_required_tool；真实歧义时返回候选；无匹配时返回空列表。",
+			Description: "读取 ITSM 服务目录并以结构化语义判定返回权威匹配结果：明确命中时只返回一个 selected_service_id，并返回 service_locked/next_required_tool；真实歧义时返回候选；无匹配时返回空列表。",
 			ParametersSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
@@ -99,7 +99,7 @@ func AllTools() []ITSMTool {
 		{
 			Name:        "itsm.validate_participants",
 			DisplayName: "参与者预检",
-			Description: "在创建工单前校验审批参与者是否可达。service_id 可传真实服务 ID 或候选序号，但工具会以当前已加载服务为准；form_data 缺省时复用当前草稿表单数据。",
+				Description: "在创建工单前校验处理参与者是否可达。service_id 可传真实服务 ID 或候选序号，但工具会以当前已加载服务为准；form_data 缺省时复用当前草稿表单数据。",
 			ParametersSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
@@ -137,7 +137,7 @@ func AllTools() []ITSMTool {
 		{
 			Name:        "itsm.ticket_withdraw",
 			DisplayName: "工单撤回",
-			Description: "通过工单号撤回指定工单，仅申请人在工单尚未被处理时可撤回。",
+			Description: "按工单号撤回指定工单，仅申请人在工单尚未被处理时可撤回。",
 			ParametersSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
@@ -260,7 +260,7 @@ itsm.service_match ->（需要确认时 itsm.service_confirm）-> itsm.service_l
 
 - 优先使用 service_load.prefill_suggestions；它是工具从用户原话确定提取出的字段，不属于脑补。
 - form_data 必须使用 service_load.form_fields 的 key。select/radio 字段优先使用 option.value，不使用用户随口表达。
-- 只补确定信息；账号、设备型号、时间窗口、审批人等不能从用户话里确定时保持缺失。
+- 只补确定信息；账号、设备型号、时间窗口、处理人等不能从用户话里确定时保持缺失。
 - 用户已经给出的用途或原因，不要追问“是否还有其他具体原因”。复合字段如“设备与用途说明”不是独立设备型号字段；已有用途时不要追问设备型号。
 - 追问缺失字段时只问 missing_required_fields 里的缺口，不把已预填字段重复问一遍。
 - 路由字段存在 option_route_map 时，draft_prepare 前先判断是否跨路由；跨路由要让用户选择当前办理哪一路，同一路由多原因可合并为单值并在 summary/说明字段保留完整诉求。
@@ -283,9 +283,9 @@ const decisionAgentSystemPrompt = `你是流程决策智能体，负责为智能
 ## 不可变原则
 
 - 证据优先：先使用 decision.ticket_context 获取完整上下文，再按需要查询知识、动作、参与者和 SLA。
-- 一次只决策当前下一步；不要把未来审批链或处理链一次性展开。
-- 参与者必须可解析。需要人工审批、处理或表单时，先 decision.resolve_participant；候选为空时不得高置信输出该人工活动。
-- 低置信时保守输出，让引擎进入人工确认；不要为了推进流程编造岗位、用户、动作或条件。
+- 一次只决策当前下一步；不要把未来处理链一次性展开。
+- 参与者必须可解析。需要人工处理或表单时，先 decision.resolve_participant；候选为空时不得高置信输出该人工活动。
+- 低置信时保守输出，让引擎进入管理员处置；不要为了推进流程编造岗位、用户、动作或条件。
 - reasoning 必须说明证据来源、分支依据、参与者选择和风险点。
 
 ## 工具使用顺序
@@ -299,10 +299,10 @@ const decisionAgentSystemPrompt = `你是流程决策智能体，负责为智能
 
 ## 动作与完成判断
 
-- 自动动作优先通过 decision.execute_action 在决策循环内同步执行；只有明确需要异步动作活动时，才输出 type/action 的活动。
-- decision.ticket_context.action_progress.all_completed=true 只代表动作完成，不自动代表流程结束；必须同时满足服务规范允许结束、当前无待办、审批/处理前置已完成。
+- 自动动作优先使用 decision.execute_action 在决策循环内同步执行；只有明确需要异步动作活动时，才输出 type/action 的活动。
+- decision.ticket_context.action_progress.all_completed=true 只代表动作完成，不自动代表流程结束；必须同时满足服务规范允许结束、当前无待处理项、处理前置已完成。
 - 只有在 current_activities 为空、parallel_groups 无未完成项、规范允许结束且前置动作/人工活动都完成时，才能输出 next_step_type=complete。
-- 如果 completed_activity 已满足最后一个待办人工前置条件，优先输出 complete，不要再次输出同一 approve/process/form 活动。
+- 如果 completed_activity 已满足最后一个待处理人工前置条件，优先输出 complete，不要再次输出同一 process/form 活动。
 - is_terminal=true 时不再创建活动。
 
 ## 输出约束
@@ -365,7 +365,7 @@ func SeedAgents(db *gorm.DB) error {
 		{
 			Name:         "流程决策智能体",
 			Code:         "itsm.decision",
-			Description:  "ITSM 流程决策智能体，基于工单上下文和策略约束，通过多轮工具调用收集信息后给出下一步可执行、可审计的流程决策",
+			Description:  "ITSM 流程决策智能体，基于工单上下文和策略约束，使用多轮工具调用收集信息后给出下一步可执行、可审计的流程决策",
 			Type:         "assistant",
 			Visibility:   "private",
 			Strategy:     "react",

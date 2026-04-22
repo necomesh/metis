@@ -86,7 +86,7 @@ func ParseSmartServiceConfig(raw string) SmartServiceConfig {
 
 // DecisionPlan is the structured output from the AI agent.
 type DecisionPlan struct {
-	NextStepType  string             `json:"next_step_type"` // approve|process|action|notify|form|complete|escalate
+	NextStepType  string             `json:"next_step_type"` // process|action|notify|form|complete|escalate
 	ExecutionMode string             `json:"execution_mode"` // ""|"single"|"parallel"
 	Activities    []DecisionActivity `json:"activities"`
 	Reasoning     string             `json:"reasoning"`
@@ -106,7 +106,7 @@ type DecisionActivity struct {
 
 // Allowed next_step_types for smart engine.
 var AllowedSmartStepTypes = map[string]bool{
-	"approve": true, "process": true, "action": true,
+	"process": true, "action": true,
 	"notify": true, "form": true, "complete": true, "escalate": true,
 }
 
@@ -236,7 +236,7 @@ func (e *SmartEngine) Cancel(ctx context.Context, tx *gorm.DB, params CancelPara
 	// Cancel all active activities
 	if err := tx.Model(&activityModel{}).
 		Where("ticket_id = ? AND status IN ?", params.TicketID,
-			[]string{ActivityPending, ActivityPendingApproval, ActivityInProgress}).
+			[]string{ActivityPending, ActivityInProgress}).
 		Updates(map[string]any{
 			"status":      ActivityCancelled,
 			"finished_at": time.Now(),
@@ -300,7 +300,7 @@ func (e *SmartEngine) runDecisionCycle(ctx context.Context, tx *gorm.DB, ticketI
 
 	var activeCount int64
 	if err := tx.Model(&activityModel{}).
-		Where("ticket_id = ? AND status IN ?", ticketID, []string{ActivityPending, ActivityInProgress, ActivityPendingApproval}).
+		Where("ticket_id = ? AND status IN ?", ticketID, []string{ActivityPending, ActivityInProgress}).
 		Count(&activeCount).Error; err != nil {
 		return err
 	}
@@ -326,7 +326,7 @@ func (e *SmartEngine) runDecisionCycle(ctx context.Context, tx *gorm.DB, ticketI
 
 	// Validate decision plan
 	if err := e.validateDecisionPlan(tx, ticketID, plan, svcInfo); err != nil {
-		return e.handleDecisionFailure(tx, ticketID, fmt.Sprintf("AI 决策校验不通过: %v", err))
+		return e.handleDecisionFailure(tx, ticketID, fmt.Sprintf("AI 决策校验失败: %v", err))
 	}
 
 	// Reset failure count on success
@@ -341,7 +341,7 @@ func (e *SmartEngine) runDecisionCycle(ctx context.Context, tx *gorm.DB, ticketI
 	if plan.Confidence >= cfg.ConfidenceThreshold {
 		return e.executeDecisionPlan(tx, ticketID, plan)
 	}
-	return e.pendApprovalDecisionPlan(tx, ticketID, plan)
+	return e.pendManualHandlingPlan(tx, ticketID, plan)
 }
 
 // handleDecisionFailure increments failure count and records timeline.
@@ -448,7 +448,7 @@ func (e *SmartEngine) executeParallelPlan(tx *gorm.DB, ticketID uint, plan *Deci
 			tx.Create(assignment)
 		} else if da.ParticipantType == "position_department" && da.PositionCode != "" && da.DepartmentCode != "" {
 			e.createPositionAssignment(tx, ticketID, act.ID, da.PositionCode, da.DepartmentCode)
-		} else if da.Type == "approve" || da.Type == "process" || da.Type == "form" {
+		} else if da.Type == "process" || da.Type == "form" {
 			e.tryFallbackAssignment(tx, ticketID, act.ID)
 		}
 
@@ -464,8 +464,8 @@ func (e *SmartEngine) executeParallelPlan(tx *gorm.DB, ticketID uint, plan *Deci
 			}
 		}
 
-		e.recordTimeline(tx, ticketID, &act.ID, 0, "ai_decision_executed",
-			fmt.Sprintf("AI 并签活动：%s（组 %s，信心 %.0f%%）", decisionActivityName(da), groupID[:8], plan.Confidence*100),
+			e.recordTimeline(tx, ticketID, &act.ID, 0, "ai_decision_executed",
+				fmt.Sprintf("AI 并行处理活动：%s（组 %s，信心 %.0f%%）", decisionActivityName(da), groupID[:8], plan.Confidence*100),
 			plan.Reasoning)
 	}
 
@@ -483,7 +483,7 @@ func (e *SmartEngine) executeSinglePlan(tx *gorm.DB, ticketID uint, plan *Decisi
 	planJSON := mustJSON(plan)
 	da := plan.Activities[0]
 	status := ActivityInProgress
-	if da.Type == "approve" || da.Type == "form" || da.Type == "process" {
+	if da.Type == "form" || da.Type == "process" {
 		status = ActivityPending
 	}
 
@@ -522,7 +522,7 @@ func (e *SmartEngine) executeSinglePlan(tx *gorm.DB, ticketID uint, plan *Decisi
 		}
 	} else if da.ParticipantType == "position_department" && da.PositionCode != "" && da.DepartmentCode != "" {
 		e.createPositionAssignment(tx, ticketID, act.ID, da.PositionCode, da.DepartmentCode)
-	} else if da.Type == "approve" || da.Type == "process" || da.Type == "form" {
+	} else if da.Type == "process" || da.Type == "form" {
 		e.tryFallbackAssignment(tx, ticketID, act.ID)
 	}
 
@@ -631,22 +631,21 @@ func (e *SmartEngine) createPositionAssignment(tx *gorm.DB, ticketID, activityID
 	}
 }
 
-// pendApprovalDecisionPlan creates a pending_approval activity for low-confidence decision.
-func (e *SmartEngine) pendApprovalDecisionPlan(tx *gorm.DB, ticketID uint, plan *DecisionPlan) error {
+// pendManualHandlingPlan creates a manual process activity for low-confidence decisions.
+func (e *SmartEngine) pendManualHandlingPlan(tx *gorm.DB, ticketID uint, plan *DecisionPlan) error {
 	now := time.Now()
 	planJSON := mustJSON(plan)
 
-	// Create activity in pending_approval state
-	name := "AI 决策待确认"
+	name := "AI 低置信待处置"
 	if len(plan.Activities) > 0 {
-		name = fmt.Sprintf("AI 决策待确认：%s", decisionActivityName(plan.Activities[0]))
+		name = fmt.Sprintf("AI 低置信待处置：%s", decisionActivityName(plan.Activities[0]))
 	}
 
 	act := &activityModel{
 		TicketID:     ticketID,
 		Name:         name,
-		ActivityType: plan.NextStepType,
-		Status:       ActivityPendingApproval,
+		ActivityType: NodeProcess,
+		Status:       ActivityPending,
 		AIDecision:   planJSON,
 		AIReasoning:  plan.Reasoning,
 		AIConfidence: plan.Confidence,
@@ -690,7 +689,7 @@ func (e *SmartEngine) pendApprovalDecisionPlan(tx *gorm.DB, ticketID uint, plan 
 	}
 
 	e.recordTimeline(tx, ticketID, &act.ID, 0, "ai_decision_pending",
-		fmt.Sprintf("AI 决策信心不足（%.0f%%），等待人工确认", plan.Confidence*100),
+		fmt.Sprintf("AI 决策信心不足（%.0f%%），等待人工处置", plan.Confidence*100),
 		plan.Reasoning)
 
 	return nil
@@ -834,8 +833,6 @@ func mustJSON(v any) string {
 
 func decisionActivityName(da DecisionActivity) string {
 	switch da.Type {
-	case "approve":
-		return "审批"
 	case "process":
 		return "处理"
 	case "action":
@@ -1014,8 +1011,8 @@ func uintPtrIf(v uint) *uint {
 	return &v
 }
 
-// ExecuteConfirmedPlan executes a confirmed decision plan (after human approval).
-func (e *SmartEngine) ExecuteConfirmedPlan(tx *gorm.DB, ticketID uint, plan *DecisionPlan) error {
+// ExecuteDecisionPlan executes an already validated decision plan.
+func (e *SmartEngine) ExecuteDecisionPlan(tx *gorm.DB, ticketID uint, plan *DecisionPlan) error {
 	if plan.NextStepType == "complete" {
 		return e.handleComplete(tx, ticketID, plan)
 	}
@@ -1153,7 +1150,7 @@ func (e *SmartEngine) buildInitialSeed(tx *gorm.DB, ticketID uint, svc *serviceM
 		}
 	}
 
-	allowedSteps := []string{"approve", "process", "action", "notify", "form", "complete", "escalate"}
+	allowedSteps := []string{"process", "action", "notify", "form", "complete", "escalate"}
 	switch ticket.Status {
 	case "completed", "cancelled", "failed":
 		allowedSteps = []string{}
@@ -1238,9 +1235,9 @@ func buildAgenticSystemPrompt(collaborationSpec, decisionMode, workflowJSON stri
 
 const agenticToolGuidance = `## 工具使用指引
 
-你可以通过以下工具收集证据。工具结果是决策事实，不能用猜测替代。
+你可以使用以下工具收集证据。工具结果是决策事实，不能用猜测替代。
 
-- **decision.ticket_context** — 获取工单完整上下文（表单数据、SLA、当前待办、活动历史、动作进度、并签组状态）
+- **decision.ticket_context** — 获取工单完整上下文（表单数据、SLA、当前处理任务、活动历史、动作进度、并行组状态）
 - **decision.knowledge_search** — 搜索服务关联知识库
 - **decision.resolve_participant** — 按类型解析参与人（user/position/department/position_department/requester_manager）
 - **decision.user_workload** — 查询用户当前工单负载
@@ -1253,12 +1250,12 @@ const agenticToolGuidance = `## 工具使用指引
 
 1. 必须先用 decision.ticket_context 了解完整上下文，尤其是 current_activities、activity_history、action_progress、parallel_groups 和 is_terminal。
 2. 如果 is_terminal=true，直接输出 complete 或保持终态判断，不要创建新活动。
-3. 当 trigger_reason=activity_completed 时，必须先读取 completed_activity 和 completed_requirements；刚完成的人工活动如果已经满足当前服务规范，不得再次创建同一审批/处理/表单，必须进入下一条件或 complete。
+3. 当 trigger_reason=activity_completed 时，必须先读取 completed_activity 和 completed_requirements；刚完成的人工活动如果已经满足当前服务规范，不得再次创建同一处理/表单，必须进入下一条件或 complete。
 4. 用 decision.list_actions 查看是否有可用自动化动作；协作规范要求预检、放行等同步动作时，优先 decision.execute_action，而不是输出 action 活动。
 5. 如需查阅处理规范或知识库，使用 decision.knowledge_search。知识不可用或无命中时可以降级，但要在 reasoning 说明。
-6. 需要人工审批/处理/表单时，必须先用 decision.resolve_participant 解析参与人；count=0 时不得高置信输出该人工活动。
+6. 需要人工处理/表单时，必须先用 decision.resolve_participant 解析参与人；count=0 时不得高置信输出该人工活动。
 7. 候选多人时，可用 decision.user_workload 选择负载较低者；SLA 风险明显时可用 decision.sla_status。
-8. 如果需要多角色并行审批（并签），设置 execution_mode 为 "parallel"，在 activities 中列出所有并行角色。
+8. 如果需要多角色并行处理，设置 execution_mode 为 "parallel"，在 activities 中列出所有并行角色。
 9. 最终输出决策 JSON（不调用任何工具）。
 
 ### 完成判断
@@ -1267,8 +1264,8 @@ const agenticToolGuidance = `## 工具使用指引
 - 服务协作规范或工作流参考允许结束；
 - decision.ticket_context.current_activities 为空；
 - decision.ticket_context.parallel_groups 没有未完成项；
-- 必要的审批、处理、表单或自动动作前置条件已经完成。
-- 本轮 completed_activity 已满足服务规范里最后一个待办人工条件。
+- 必要的处理、表单或自动动作前置条件已经完成。
+- 本轮 completed_activity 已满足服务规范里最后一个人工处理条件。
 
 action_progress.all_completed=true 只说明动作已全部成功执行，不自动代表流程应结束；必须对照服务规范判断。`
 
@@ -1276,11 +1273,11 @@ const agenticOutputFormat = "## 输出要求\n\n" +
 	"当你完成信息收集和推理后，直接输出以下 JSON 格式的决策（不要再调用任何工具）：\n\n" +
 	"```json\n" +
 	"{\n" +
-	"  \"next_step_type\": \"process|approve|action|notify|form|complete|escalate\",\n" +
+	"  \"next_step_type\": \"process|action|notify|form|complete|escalate\",\n" +
 	"  \"execution_mode\": \"single|parallel\",\n" +
 	"  \"activities\": [\n" +
 	"    {\n" +
-	"      \"type\": \"process|approve|action|notify|form\",\n" +
+	"      \"type\": \"process|action|notify|form\",\n" +
 	"      \"participant_type\": \"user|position_department\",\n" +
 	"      \"participant_id\": 42,\n" +
 	"      \"position_code\": \"db_admin\",\n" +
@@ -1295,13 +1292,13 @@ const agenticOutputFormat = "## 输出要求\n\n" +
 	"```\n\n" +
 	"字段说明：\n" +
 	"- next_step_type: 下一步类型。\"complete\" 表示流程可以结束。\n" +
-	"- execution_mode: 执行模式。\"single\"（默认）为串行，\"parallel\" 为并签模式——activities 中的多个活动将并行等待处理，全部完成后才推进到下一步。当协作规范要求多角色并行审批时使用 \"parallel\"。\n" +
+	"- execution_mode: 执行模式。\"single\"（默认）为串行，\"parallel\" 表示 activities 中的多个活动将并行等待处理，全部完成后才推进到下一步。\n" +
 	"- activities: 需要创建的活动列表。\n" +
 	"- complete 决策的 activities 必须为空数组。\n" +
 	"- participant_type: \"user\" 需填 participant_id；\"position_department\" 需填 position_code + department_code。\n" +
 	"- position_code / department_code: 当 participant_type 为 position_department 时，填写岗位编码和部门编码。\n" +
 	"- action_id: 当 type 为 \"action\" 时，填写 decision.list_actions 返回的 action id。\n" +
-	"- reasoning: 你的推理过程（会展示给管理员审核）。\n" +
+		"- reasoning: 你的推理过程（会展示给管理员查看）。\n" +
 	"- confidence: 决策信心（0.0-1.0）。越高表示越确信。"
 
 // extractWorkflowHints extracts a structured step summary from WorkflowJSON
@@ -1323,8 +1320,7 @@ func extractWorkflowHints(workflowJSON string) string {
 					PositionCode   string `json:"position_code"`
 					DepartmentCode string `json:"department_code"`
 				} `json:"participants"`
-				ApproveMode      string `json:"approve_mode"`
-				GatewayDirection string `json:"gateway_direction"`
+					GatewayDirection string `json:"gateway_direction"`
 				ActionID         *uint  `json:"action_id"`
 			} `json:"data"`
 		} `json:"nodes"`
@@ -1450,17 +1446,7 @@ func extractWorkflowHints(workflowJSON string) string {
 			for _, ei := range outEdges[nodeID] {
 				queue = append(queue, wf.Edges[ei].Target)
 			}
-		case "approve":
-			participant := describeParticipants(node.Data.Participants)
-			mode := ""
-			if node.Data.ApproveMode == "parallel" {
-				mode = "（并签）"
-			}
-			desc = fmt.Sprintf("%d. **审批** [%s] — %s%s", step, label, participant, mode)
-			for _, ei := range outEdges[nodeID] {
-				queue = append(queue, wf.Edges[ei].Target)
-			}
-		case "process":
+			case "process":
 			participant := describeParticipants(node.Data.Participants)
 			desc = fmt.Sprintf("%d. **处理** [%s] — %s", step, label, participant)
 			for _, ei := range outEdges[nodeID] {

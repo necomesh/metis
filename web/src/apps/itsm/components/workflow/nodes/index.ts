@@ -6,7 +6,7 @@ import { GatewayNode } from "./gateway-node"
 import { SubprocessNode } from "./subprocess-node"
 
 const EVENT_TYPES = new Set<NodeType>(["start", "end", "timer", "signal"])
-const TASK_TYPES = new Set<NodeType>(["form", "approve", "process", "action", "script", "notify"])
+const TASK_TYPES = new Set<NodeType>(["form", "process", "action", "script", "notify"])
 const GATEWAY_TYPES = new Set<NodeType>(["exclusive", "parallel", "inclusive"])
 
 function resolveNodeComponent(nodeType: NodeType) {
@@ -20,7 +20,7 @@ function resolveNodeComponent(nodeType: NodeType) {
 
 // Build nodeTypes map: each NodeType gets its own entry mapping to the right renderer
 export const nodeTypes: NodeTypes = {}
-for (const nt of ["start", "end", "timer", "signal", "form", "approve", "process", "action", "script", "notify", "exclusive", "parallel", "inclusive", "subprocess", "wait"] as NodeType[]) {
+for (const nt of ["start", "end", "timer", "signal", "form", "process", "action", "script", "notify", "exclusive", "parallel", "inclusive", "subprocess", "wait"] as NodeType[]) {
   nodeTypes[nt] = resolveNodeComponent(nt)
 }
 // Historical persisted node type maps to the new default task renderer.

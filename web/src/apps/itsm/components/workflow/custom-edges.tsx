@@ -42,7 +42,6 @@ function defaultNodeData(nodeType: NodeType, label: string): WFNodeData {
   return {
     label,
     nodeType,
-    ...(nodeType === "approve" ? { executionMode: "single" as const } : {}),
     ...(nodeType === "wait" || nodeType === "timer" ? { waitMode: nodeType === "timer" ? "timer" as const : "signal" as const } : {}),
   }
 }
@@ -79,14 +78,13 @@ function WorkflowEdgeInner({
   const condition = edgeData?.condition
   const condText = conditionSummary(condition)
 
-  const isApproved = outcome === "approved" || outcome === "approve"
-  const isRejected = outcome === "rejected" || outcome === "reject"
+  const isCompleted = outcome === "completed" || outcome === "submitted"
 
   const strokeColor = selected
     ? "var(--color-primary)"
-    : edgeData?.failed || isRejected
+    : edgeData?.failed
       ? "#dc2626"
-      : edgeData?.visited || isApproved
+      : edgeData?.visited || isCompleted
         ? "#059669"
         : "color-mix(in oklab, var(--color-muted-foreground) 32%, transparent)"
 
@@ -154,8 +152,7 @@ function WorkflowEdgeInner({
             <span
               className={cn(
                 "pointer-events-none max-w-[160px] truncate rounded-full border bg-white/90 px-2 py-0.5 text-[10px] font-medium shadow-[0_8px_22px_-18px_rgba(15,23,42,0.42)]",
-                isApproved && "border-emerald-500/20 text-emerald-700",
-                isRejected && "border-red-500/20 text-red-700",
+                isCompleted && "border-emerald-500/20 text-emerald-700",
                 condText && !outcome && "border-amber-500/20 text-amber-700",
                 isDefault && !outcome && !condText && "border-border/70 text-muted-foreground",
               )}

@@ -30,16 +30,6 @@ import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
-import {
   Card,
   CardContent,
   CardHeader,
@@ -76,14 +66,12 @@ import { useAuthStore } from "@/stores/auth"
 import {
   assignTicket,
   cancelTicket,
-  confirmActivity,
   fetchTicket,
   fetchTicketActivities,
   fetchTicketTimeline,
   fetchTicketTokens,
   fetchUsers,
   progressTicket,
-  rejectActivity,
   type ActivityItem,
   type TicketItem,
   type TimelineItem,
@@ -95,9 +83,9 @@ import { SmartFlowVisualization } from "../../../components/smart-flow-visualiza
 import { VariablesPanel } from "../../../components/variables-panel"
 import { WorkflowViewer } from "../../../components/workflow"
 
-const ACTIVE_STATUSES = new Set(["pending", "in_progress", "waiting_approval", "waiting_action"])
+const ACTIVE_STATUSES = new Set(["pending", "in_progress", "waiting_action"])
 const TERMINAL_STATUSES = new Set(["completed", "cancelled", "failed"])
-const HUMAN_ACTIVITY_TYPES = new Set(["approve", "form", "process"])
+const HUMAN_ACTIVITY_TYPES = new Set(["form", "process"])
 const DEFAULT_DECISIONING_MESSAGE = "决策引擎正在生成下一步，页面会自动刷新。"
 
 const DEFAULT_EVENT_STYLE = { icon: Clock, bg: "bg-muted", fg: "text-muted-foreground" }
@@ -109,12 +97,8 @@ const TIMELINE_EVENT_STYLE: Record<string, { icon: LucideIcon; bg: string; fg: s
   workflow_started:      { icon: Play, bg: "bg-blue-100", fg: "text-blue-600" },
   workflow_completed:    { icon: CheckCircle, bg: "bg-green-100", fg: "text-green-600" },
   activity_completed:    { icon: CheckCircle, bg: "bg-green-100", fg: "text-green-600" },
-  activity_approved:     { icon: CheckCircle, bg: "bg-green-100", fg: "text-green-600" },
-  activity_denied:       { icon: XCircle, bg: "bg-red-100", fg: "text-red-600" },
   ai_decision_pending:   { icon: Bot, bg: "bg-amber-100", fg: "text-amber-600" },
   ai_decision_executed:  { icon: Bot, bg: "bg-green-100", fg: "text-green-600" },
-  ai_decision_confirmed: { icon: CheckCircle, bg: "bg-green-100", fg: "text-green-600" },
-  ai_decision_rejected:  { icon: XCircle, bg: "bg-red-100", fg: "text-red-600" },
   ai_decision_failed:    { icon: AlertTriangle, bg: "bg-red-100", fg: "text-red-600" },
   ai_disabled:           { icon: AlertTriangle, bg: "bg-amber-100", fg: "text-amber-600" },
   ai_retry:              { icon: RotateCcw, bg: "bg-amber-100", fg: "text-amber-600" },
@@ -162,7 +146,6 @@ function useCancelSchema() {
 function getNodeOutcomes(activityType: string): string[] {
   switch (activityType) {
     case "form": return ["submitted"]
-    case "approve": return ["approved", "rejected"]
     case "process": return ["completed"]
     default: return ["completed"]
   }
@@ -214,20 +197,16 @@ function summarizeDecision(plan: DecisionPlan | null, fallback?: string | null) 
 function ownerName(ticket: TicketItem, activity?: ActivityItem | null) {
   if (ticket.currentOwnerName) return ticket.currentOwnerName
   if (ticket.assigneeName) return ticket.assigneeName
-  if (activity?.status === "pending_approval") return "AI 决策确认人"
   if (activity?.activityType === "action") return "自动化动作"
   return "AI 智能引擎"
 }
 
 function decisioningMessageForOutcome(outcome?: string) {
   switch (outcome) {
-    case "approved":
-    case "confirm":
-      return "已通过，后台决策中。"
-    case "rejected":
-    case "reject":
-    case "failed":
-      return "已驳回，后台决策中。"
+    case "submitted":
+      return "已提交处理结果，后台决策中。"
+    case "completed":
+      return "已完成当前处理，后台决策中。"
     default:
       return "已处理，后台决策中。"
   }
@@ -262,6 +241,12 @@ function DecisionButtonContent({ icon: Icon, children }: { icon: LucideIcon; chi
       <span className="truncate font-medium">{children}</span>
     </span>
   )
+}
+
+function outcomeLabel(activity: ActivityItem, outcome: string, t: (key: string) => string) {
+  if (activity.activityType === "form") return t("itsm:tickets.submitProcessing")
+  if (outcome === "completed") return t("itsm:tickets.processComplete")
+  return `${activity.name}: ${outcome}`
 }
 
 function EvidenceList({ title, items }: { title: string; items?: unknown[] }) {
@@ -426,7 +411,6 @@ export function Component() {
   const ticketId = Number(id)
   const [assignOpen, setAssignOpen] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
-  const [rejectAiOpen, setRejectAiOpen] = useState(false)
   const [decisioningMessage, setDecisioningMessage] = useState(DEFAULT_DECISIONING_MESSAGE)
 
   const canAssign = usePermission("itsm:ticket:assign")
@@ -537,33 +521,6 @@ export function Component() {
     },
   })
 
-  const confirmAiMut = useMutation({
-    mutationFn: (activityId: number) => confirmActivity(ticketId, activityId),
-    onMutate: () => markSmartDecisioning(decisioningMessageForOutcome("confirm")),
-    onSuccess: () => {
-      invalidateTicket()
-      toast.success(t("itsm:smart.confirmSuccess"))
-    },
-    onError: (err) => {
-      invalidateTicket()
-      toast.error(err.message)
-    },
-  })
-
-  const rejectAiMut = useMutation({
-    mutationFn: (activityId: number) => rejectActivity(ticketId, activityId, t("itsm:smart.humanRejected")),
-    onMutate: () => markSmartDecisioning(decisioningMessageForOutcome("reject")),
-    onSuccess: () => {
-      invalidateTicket()
-      setRejectAiOpen(false)
-      toast.success(t("itsm:smart.rejectSuccess"))
-    },
-    onError: (err) => {
-      invalidateTicket()
-      toast.error(err.message)
-    },
-  })
-
   useEffect(() => {
     if (ticket?.engineType !== "smart" || ticket.smartState !== "ai_reasoning") return
 
@@ -586,8 +543,7 @@ export function Component() {
   const isActive = ticket ? ACTIVE_STATUSES.has(ticket.status) : false
   const isTerminal = ticket ? TERMINAL_STATUSES.has(ticket.status) : false
   const isDecisioning = ticket?.engineType === "smart" && ticket.smartState === "ai_reasoning"
-  const isAiConfirmation = currentActivity?.status === "pending_approval"
-  const actionableActivity = isAiConfirmation ? currentActivity : activeHumanActivity
+  const actionableActivity = activeHumanActivity
   const isCurrentUserResponsible = Boolean(
     ticket?.canAct || actionableActivity?.canAct || (ticket?.assigneeId && ticket.assigneeId === currentUserId),
   )
@@ -634,7 +590,7 @@ export function Component() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/45 px-3 py-1 text-xs font-medium text-muted-foreground">
                 <ShieldCheck className="h-3.5 w-3.5" />
-                审批摘要
+                处置摘要
               </div>
               <div className="text-sm">
                 <span className="text-muted-foreground">当前责任方</span>
@@ -647,7 +603,7 @@ export function Component() {
                 label="工单诉求"
                 value={ticket.description ? <span className="whitespace-pre-wrap">{ticket.description}</span> : ticket.title}
               />
-              <SectionBlock label="下一步判断" value={nextStep} />
+              <SectionBlock label="下一步" value={nextStep} />
             </div>
 
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
@@ -738,7 +694,7 @@ export function Component() {
               <CardTitle className="flex items-center justify-between gap-3 text-base">
                 <span className="inline-flex items-center gap-2">
                   <CheckCircle2 className="h-4 w-4" />
-                  决策栏
+                  处置栏
                 </span>
                 {confidencePct != null && (
                   <Badge variant={confidencePct >= 80 ? "default" : confidencePct >= 50 ? "secondary" : "destructive"} className="h-6 px-2 text-[11px]">
@@ -777,31 +733,16 @@ export function Component() {
                   </p>
                 )}
 
-                {isActive && !isDecisioning && isAiConfirmation && currentActivity && isCurrentUserResponsible && (
-                  <>
-                    <Button size="sm" className="w-full" onClick={() => confirmAiMut.mutate(currentActivity.id)} disabled={confirmAiMut.isPending || rejectAiMut.isPending}>
-                      <DecisionButtonContent icon={CheckCircle2}>{t("itsm:smart.confirm")}</DecisionButtonContent>
-                    </Button>
-                    <Button size="sm" variant="outline" className="w-full text-destructive" onClick={() => setRejectAiOpen(true)} disabled={confirmAiMut.isPending || rejectAiMut.isPending}>
-                      <DecisionButtonContent icon={CircleX}>{t("itsm:smart.reject")}</DecisionButtonContent>
-                    </Button>
-                  </>
-                )}
-
-                {isActive && !isDecisioning && !isAiConfirmation && activeHumanActivity && isCurrentUserResponsible && getNodeOutcomes(activeHumanActivity.activityType).map((outcome) => (
+                {isActive && !isDecisioning && activeHumanActivity && isCurrentUserResponsible && getNodeOutcomes(activeHumanActivity.activityType).map((outcome) => (
                   <Button
                     key={`${activeHumanActivity.id}-${outcome}`}
                     size="sm"
                     className="w-full"
-                    variant={outcome === "rejected" || outcome === "failed" ? "outline" : "default"}
+                    variant="default"
                     disabled={progressMut.isPending}
                     onClick={() => progressMut.mutate({ activityId: activeHumanActivity.id, outcome })}
                   >
-                    <DecisionButtonContent icon={outcome === "rejected" ? CircleX : CheckCircle2}>
-                      {activeHumanActivity.activityType === "approve"
-                        ? outcome === "rejected" ? t("itsm:approval.deny") : t("itsm:approval.approve")
-                        : `${activeHumanActivity.name}: ${outcome}`}
-                    </DecisionButtonContent>
+                    <DecisionButtonContent icon={CheckCircle2}>{outcomeLabel(activeHumanActivity, outcome, t)}</DecisionButtonContent>
                   </Button>
                 ))}
 
@@ -830,7 +771,7 @@ export function Component() {
 
                 {(!isActive || isTerminal) && (
                   <p className="col-span-2 rounded-lg border border-border/50 bg-background/35 p-3 text-sm text-muted-foreground">
-                    当前工单不可继续审批，证据区保留完整流程与审计记录。
+                    当前工单已结束，证据区保留完整流程与审计记录。
                   </p>
                 )}
 
@@ -844,25 +785,6 @@ export function Component() {
           </Card>
         </aside>
       </div>
-
-      <AlertDialog open={rejectAiOpen} onOpenChange={setRejectAiOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t("itsm:smart.rejectConfirmTitle", { defaultValue: "拒绝 AI 决策" })}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {currentActivity?.name && <>{t("itsm:smart.nextStep")}: {currentActivity.name}<br /></>}
-              {confidencePct != null && <>{t("itsm:smart.confidence")}: {confidencePct}%<br /></>}
-              {t("itsm:smart.rejectConfirmDesc", { defaultValue: "拒绝后系统会保留审计记录，并等待后续人工处理或接管。" })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t("common:cancel")}</AlertDialogCancel>
-            <AlertDialogAction onClick={() => currentActivity && rejectAiMut.mutate(currentActivity.id)} disabled={!currentActivity || rejectAiMut.isPending}>
-              {t("itsm:smart.confirmReject", { defaultValue: "确认拒绝" })}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       <Sheet open={assignOpen} onOpenChange={setAssignOpen}>
         <SheetContent className="sm:max-w-md">

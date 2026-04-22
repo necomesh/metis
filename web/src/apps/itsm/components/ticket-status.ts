@@ -5,7 +5,6 @@ type BadgeVariant = "default" | "secondary" | "destructive" | "outline"
 export const TICKET_STATUS_OPTIONS: Record<string, { variant: BadgeVariant; key: string }> = {
   pending: { variant: "secondary", key: "statusPending" },
   in_progress: { variant: "default", key: "statusInProgress" },
-  waiting_approval: { variant: "outline", key: "statusWaitingApproval" },
   waiting_action: { variant: "outline", key: "statusWaitingAction" },
   completed: { variant: "default", key: "statusCompleted" },
   failed: { variant: "destructive", key: "statusFailed" },

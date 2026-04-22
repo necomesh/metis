@@ -17,7 +17,7 @@ func (f *fakeKnowledgeSearcher) Search(kbIDs []uint, query string, limit int) ([
 	f.query = query
 	f.limit = limit
 	return []KnowledgeResult{
-		{Title: "VPN 规范", Content: "先做预检再审批", Score: 0.91},
+		{Title: "VPN 规范", Content: "先做预检再处理", Score: 0.91},
 	}, nil
 }
 

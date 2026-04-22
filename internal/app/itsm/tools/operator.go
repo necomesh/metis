@@ -242,11 +242,11 @@ func (o *Operator) ValidateParticipants(serviceID uint, formData map[string]any)
 		return &ParticipantValidation{OK: true}, nil // Can't parse, skip.
 	}
 
-	// Check each approve/process node.
-	for _, node := range workflow.Nodes {
-		if node.Type != "approve" && node.Type != "process" {
-			continue
-		}
+		// Check each process node.
+		for _, node := range workflow.Nodes {
+			if node.Type != "process" {
+				continue
+			}
 		d := node.Data
 		if d.ParticipantType == "user" && d.UserID != nil {
 			// Direct user assignment — check user exists and is active.

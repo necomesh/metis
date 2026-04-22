@@ -10,7 +10,6 @@ import (
 const (
 	TicketStatusPending         = "pending"
 	TicketStatusInProgress      = "in_progress"
-	TicketStatusWaitingApproval = "waiting_approval"
 	TicketStatusWaitingAction   = "waiting_action"
 	TicketStatusCompleted       = "completed"
 	TicketStatusFailed          = "failed"

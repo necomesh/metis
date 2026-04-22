@@ -57,7 +57,7 @@ func TestSmartProgressContinuationUsesWorkflowTransaction(t *testing.T) {
 		return eng.Progress(context.Background(), tx, ProgressParams{
 			TicketID:   ticket.ID,
 			ActivityID: activity.ID,
-			Outcome:    "approved",
+			Outcome:    "completed",
 			OperatorID: 1,
 		})
 	})
@@ -89,7 +89,7 @@ func TestSmartProgressContinuationSubmitFailureRollsBackActivityCompletion(t *te
 		return eng.Progress(context.Background(), tx, ProgressParams{
 			TicketID:   ticket.ID,
 			ActivityID: activity.ID,
-			Outcome:    "approved",
+			Outcome:    "completed",
 			OperatorID: 1,
 		})
 	})
@@ -120,8 +120,8 @@ func TestSmartProgressContinuationWaitsForParallelGroupConvergence(t *testing.T)
 	ticket, first := createSmartContinuationTicket(t, db, "parallel-group", ActivityPending)
 	second := activityModel{
 		TicketID:        ticket.ID,
-		Name:            "并行审批 B",
-		ActivityType:    NodeApprove,
+		Name:            "并行处理 B",
+		ActivityType:    NodeProcess,
 		Status:          ActivityPending,
 		ActivityGroupID: "parallel-group",
 	}
@@ -135,7 +135,7 @@ func TestSmartProgressContinuationWaitsForParallelGroupConvergence(t *testing.T)
 		return eng.Progress(context.Background(), tx, ProgressParams{
 			TicketID:   ticket.ID,
 			ActivityID: first.ID,
-			Outcome:    "approved",
+			Outcome:    "completed",
 			OperatorID: 1,
 		})
 	}); err != nil {
@@ -160,7 +160,7 @@ func TestSmartProgressContinuationWaitsForParallelGroupConvergence(t *testing.T)
 		return eng.Progress(context.Background(), tx, ProgressParams{
 			TicketID:   ticket.ID,
 			ActivityID: second.ID,
-			Outcome:    "approved",
+			Outcome:    "completed",
 			OperatorID: 1,
 		})
 	}); err != nil {
@@ -201,8 +201,8 @@ func createSmartContinuationTicket(t *testing.T, db *gorm.DB, groupID string, ac
 	}
 	activity := activityModel{
 		TicketID:        ticket.ID,
-		Name:            "审批",
-		ActivityType:    NodeApprove,
+		Name:            "处理",
+		ActivityType:    NodeProcess,
 		Status:          activityStatus,
 		ActivityGroupID: groupID,
 	}

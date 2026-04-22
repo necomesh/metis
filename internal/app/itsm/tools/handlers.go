@@ -323,7 +323,7 @@ func SubmitDraft(op ServiceDeskOperator, store StateStore, sessionID uint, userI
 	if validation != nil && !validation.OK {
 		return &DraftSubmitResult{
 			OK:            false,
-			Message:       "参与者预检未通过，工单未创建。",
+			Message:       "参与者预检失败，工单未创建。",
 			FailureReason: validation.FailureReason,
 			NodeLabel:     validation.NodeLabel,
 			Guidance:      validation.Guidance,

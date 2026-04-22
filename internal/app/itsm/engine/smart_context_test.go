@@ -42,7 +42,7 @@ func TestBuildInitialSeedIncludesDecisionTrigger(t *testing.T) {
 		ID:                7,
 		Name:              "VPN 开通申请",
 		Description:       "VPN service",
-		CollaborationSpec: "审批通过后结束流程。",
+		CollaborationSpec: "处理完成后结束流程。",
 	}, "direct_first", &completedActivityID)
 	if err != nil {
 		t.Fatalf("build initial seed: %v", err)
@@ -147,11 +147,11 @@ func TestDecisionTicketContextReturnsStableDecisionAnchors(t *testing.T) {
 				SLAResponseDeadline:   &now,
 				SLAResolutionDeadline: &now,
 			},
-			history: []activityModel{
-				{ID: 9, Name: "审批", ActivityType: "approve", Status: ActivityCompleted, TransitionOutcome: "approved", FinishedAt: &now},
-			},
-			activityByID: map[uint]activityModel{
-				9: {ID: 9, Name: "审批", ActivityType: "approve", Status: ActivityCompleted, TransitionOutcome: "approved", FinishedAt: &now},
+				history: []activityModel{
+					{ID: 9, Name: "处理", ActivityType: "process", Status: ActivityCompleted, TransitionOutcome: "completed", FinishedAt: &now},
+				},
+				activityByID: map[uint]activityModel{
+					9: {ID: 9, Name: "处理", ActivityType: "process", Status: ActivityCompleted, TransitionOutcome: "completed", FinishedAt: &now},
 			},
 			assignments: map[uint][]ActivityAssignmentInfo{
 				9: {{ParticipantType: "user", UserID: uintPtrIf(1), AssigneeID: uintPtrIf(1), Status: "completed", FinishedAt: &now}},
@@ -166,7 +166,7 @@ func TestDecisionTicketContextReturnsStableDecisionAnchors(t *testing.T) {
 			totalActions: 2,
 			assignment:   &CurrentAssignmentInfo{AssigneeID: 1, AssigneeName: "admin"},
 			groups:       []ParallelGroupInfo{{ActivityGroupID: "group-1", Total: 2, Completed: 1}},
-			pendingNames: []string{"安全审批"},
+				pendingNames: []string{"安全处理"},
 		},
 	}, nil)
 	if err != nil {
@@ -217,7 +217,7 @@ func TestDecisionTicketContextReturnsStableDecisionAnchors(t *testing.T) {
 	if resp.CompletedActivity.ID != 9 || len(resp.CompletedActivity.Participants) != 1 || resp.CompletedActivity.Participants[0].UserID != 1 {
 		t.Fatalf("expected completed activity participant facts, got %+v", resp.CompletedActivity)
 	}
-	if len(resp.CompletedRequirements) != 1 || resp.CompletedRequirements[0].Type != "approve" || !resp.CompletedRequirements[0].Satisfied {
+	if len(resp.CompletedRequirements) != 1 || resp.CompletedRequirements[0].Type != "process" || !resp.CompletedRequirements[0].Satisfied {
 		t.Fatalf("expected completed requirements, got %+v", resp.CompletedRequirements)
 	}
 }
@@ -243,10 +243,10 @@ func TestValidateDecisionPlanRejectsDuplicateCompletedHumanActivity(t *testing.T
 	}
 	activity := activityModel{
 		TicketID:          ticket.ID,
-		Name:              "审批",
-		ActivityType:      NodeApprove,
+		Name:              "处理",
+		ActivityType:      NodeProcess,
 		Status:            ActivityCompleted,
-		TransitionOutcome: "approved",
+		TransitionOutcome: "completed",
 	}
 	if err := db.Create(&activity).Error; err != nil {
 		t.Fatalf("create activity: %v", err)
@@ -264,12 +264,12 @@ func TestValidateDecisionPlanRejectsDuplicateCompletedHumanActivity(t *testing.T
 
 	eng := &SmartEngine{}
 	err = eng.validateDecisionPlan(db, ticket.ID, &DecisionPlan{
-		NextStepType:  NodeApprove,
+		NextStepType:  NodeProcess,
 		ExecutionMode: "single",
 		Activities: []DecisionActivity{{
-			Type:          NodeApprove,
+			Type:          NodeProcess,
 			ParticipantID: uintPtrIf(1),
-			Instructions:  "再次审批",
+			Instructions:  "再次处理",
 		}},
 		Confidence: 0.95,
 	}, &serviceModel{ID: 1})

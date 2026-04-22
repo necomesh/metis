@@ -397,7 +397,7 @@ function healthStatusText(status: ServiceHealthItem["status"] | "empty") {
 }
 
 function healthItemStatusText(status: ServiceHealthItem["status"]) {
-  if (status === "pass") return "通过"
+  if (status === "pass") return "正常"
   if (status === "fail") return "失败"
   return "警告"
 }
@@ -427,7 +427,7 @@ function ServiceHealthSection({ health }: { health: ServiceHealthCheck | null })
               {displayStatus === "empty"
                   ? "暂无检查结果"
                   : displayStatus === "pass"
-                    ? "关键配置已通过"
+                    ? "关键配置正常"
                     : "请处理运行安全项"}
             </p>
             <p className="text-xs leading-5 text-muted-foreground">Agent、协作规范、参考路径、知识/动作、兜底人与权限都会纳入检查。</p>

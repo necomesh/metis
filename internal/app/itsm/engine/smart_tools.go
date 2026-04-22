@@ -265,7 +265,7 @@ func assignmentFacts(assignments []ActivityAssignmentInfo) []map[string]any {
 
 func isHumanActivityType(activityType string) bool {
 	switch activityType {
-	case NodeApprove, NodeProcess, NodeForm:
+	case NodeProcess, NodeForm:
 		return true
 	default:
 		return false
@@ -274,7 +274,7 @@ func isHumanActivityType(activityType string) bool {
 
 func isPositiveActivityOutcome(outcome string) bool {
 	switch strings.ToLower(strings.TrimSpace(outcome)) {
-	case "", "approve", "approved", "confirm", "confirmed", "complete", "completed", "process", "processed", "submit", "submitted", "success", "passed":
+	case "", "complete", "completed", "process", "processed", "submit", "submitted", "success", "passed":
 		return true
 	default:
 		return false
@@ -459,7 +459,7 @@ func toolSimilarHistory() decisionToolDef {
 	return decisionToolDef{
 		Def: llm.ToolDef{
 			Name:        "decision.similar_history",
-			Description: "查询同一服务下已完成工单的处理模式，提供历史参考（平均耗时、常见审批人等）",
+			Description: "查询同一服务下已完成工单的处理模式，提供历史参考（平均耗时、常见处理人等）",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
