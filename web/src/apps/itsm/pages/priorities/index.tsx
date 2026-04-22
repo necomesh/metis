@@ -1,18 +1,17 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { useForm } from "react-hook-form"
 import { z } from "zod"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { Plus, Pencil, Trash2, Flag } from "lucide-react"
+import { Flag, Pencil, Plus, Trash2 } from "lucide-react"
 import { usePermission } from "@/hooks/use-permission"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { Badge } from "@/components/ui/badge"
 import {
   DataTableActions,
   DataTableActionsCell,
@@ -20,6 +19,7 @@ import {
   DataTableCard,
   DataTableEmptyRow,
   DataTableLoadingRow,
+  DataTableToolbar,
 } from "@/components/ui/data-table"
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -35,6 +35,17 @@ import {
 import {
   Form, FormControl, FormField, FormItem, FormLabel, FormMessage,
 } from "@/components/ui/form"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import {
+  ConfigSearchField,
+  FormSection,
+  IconTooltipButton,
+  QuietStatus,
+} from "../../components/config-management-ui"
 import {
   type PriorityItem, fetchPriorities, createPriority, updatePriority, deletePriority,
 } from "../../api"
@@ -54,11 +65,34 @@ function usePrioritySchema() {
 
 type FormValues = z.infer<ReturnType<typeof usePrioritySchema>>
 
+function matchesQuery(item: Pick<PriorityItem, "name" | "code" | "description">, query: string) {
+  if (!query) return true
+  const haystack = `${item.name} ${item.code} ${item.description ?? ""}`.toLowerCase()
+  return haystack.includes(query)
+}
+
+function formatMinutes(minutes: number, unit: string) {
+  return `${minutes} ${unit}`
+}
+
+function isHexColor(value: string) {
+  return /^#[0-9a-fA-F]{6}$/.test(value)
+}
+
+function PrioritySwatch({ color }: { color: string }) {
+  return (
+    <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-background/40">
+      <span className="h-4 w-4 rounded-[0.35rem] border border-black/5" style={{ backgroundColor: color }} />
+    </span>
+  )
+}
+
 export function Component() {
   const { t } = useTranslation(["itsm", "common"])
   const queryClient = useQueryClient()
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<PriorityItem | null>(null)
+  const [search, setSearch] = useState("")
   const schema = usePrioritySchema()
 
   const canCreate = usePermission("itsm:priority:create")
@@ -70,10 +104,18 @@ export function Component() {
     queryFn: () => fetchPriorities(),
   })
 
+  const filteredItems = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    return items
+      .filter((item) => matchesQuery(item, query))
+      .slice()
+      .sort((a, b) => a.value - b.value || a.name.localeCompare(b.name))
+  }, [items, search])
+
   const form = useForm<FormValues>({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     resolver: zodResolver(schema as any),
-    defaultValues: { name: "", code: "", value: 0, color: "#000000", description: "", defaultResponseMinutes: 0, defaultResolutionMinutes: 0 },
+    defaultValues: { name: "", code: "", value: 0, color: "#5b6f8f", description: "", defaultResponseMinutes: 0, defaultResolutionMinutes: 0 },
   })
 
   useEffect(() => {
@@ -89,7 +131,7 @@ export function Component() {
           defaultResolutionMinutes: editing.defaultResolutionMinutes,
         })
       } else {
-        form.reset({ name: "", code: "", value: 0, color: "#000000", description: "", defaultResponseMinutes: 0, defaultResolutionMinutes: 0 })
+        form.reset({ name: "", code: "", value: 0, color: "#5b6f8f", description: "", defaultResponseMinutes: 0, defaultResolutionMinutes: 0 })
       }
     }
   }, [formOpen, editing, form])
@@ -114,15 +156,26 @@ export function Component() {
 
   function handleCreate() { setEditing(null); setFormOpen(true) }
   function handleEdit(item: PriorityItem) { setEditing(item); setFormOpen(true) }
-  function onSubmit(values: FormValues) { if (editing) { updateMut.mutate(values) } else { createMut.mutate(values) } }
+  function onSubmit(values: FormValues) {
+    if (editing) {
+      updateMut.mutate(values)
+    } else {
+      createMut.mutate(values)
+    }
+  }
+
   const isPending = createMut.isPending || updateMut.isPending
+  const minuteUnit = t("itsm:priorities.minuteShort")
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">{t("itsm:priorities.title")}</h2>
+    <div className="workspace-page">
+      <div className="workspace-page-header">
+        <div className="min-w-0">
+          <h2 className="workspace-page-title">{t("itsm:priorities.title")}</h2>
+          <p className="workspace-page-description">{t("itsm:priorities.pageDesc")}</p>
+        </div>
         {canCreate && (
-          <Button onClick={handleCreate}>
+          <Button size="sm" onClick={handleCreate}>
             <Plus className="mr-1.5 h-4 w-4" />
             {t("itsm:priorities.create")}
           </Button>
@@ -130,53 +183,81 @@ export function Component() {
       </div>
 
       <DataTableCard>
+        <DataTableToolbar>
+          <ConfigSearchField
+            value={search}
+            onChange={setSearch}
+            placeholder={t("itsm:priorities.searchPlaceholder")}
+          />
+          <span className="text-xs text-muted-foreground">
+            {t("itsm:priorities.listCount", { count: filteredItems.length })}
+          </span>
+        </DataTableToolbar>
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="min-w-[140px]">{t("itsm:priorities.name")}</TableHead>
-              <TableHead className="w-[80px]">{t("itsm:priorities.code")}</TableHead>
-              <TableHead className="w-[80px]">{t("itsm:priorities.value")}</TableHead>
-              <TableHead className="w-[120px]">{t("itsm:priorities.defaultResponseMinutes")}</TableHead>
-              <TableHead className="w-[120px]">{t("itsm:priorities.defaultResolutionMinutes")}</TableHead>
-              <TableHead className="w-[80px]">{t("common:status")}</TableHead>
-              <DataTableActionsHead className="min-w-[140px]">{t("common:actions")}</DataTableActionsHead>
+              <TableHead className="min-w-[220px]">{t("itsm:priorities.name")}</TableHead>
+              <TableHead className="w-[96px]">{t("itsm:priorities.value")}</TableHead>
+              <TableHead className="min-w-[220px]">{t("itsm:priorities.defaultCommitment")}</TableHead>
+              <TableHead className="w-[96px]">{t("common:status")}</TableHead>
+              <DataTableActionsHead className="min-w-24">{t("common:actions")}</DataTableActionsHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <DataTableLoadingRow colSpan={7} />
+              <DataTableLoadingRow colSpan={5} />
             ) : items.length === 0 ? (
-              <DataTableEmptyRow colSpan={7} icon={Flag} title={t("itsm:priorities.empty")} description={canCreate ? t("itsm:priorities.emptyHint") : undefined} />
+              <DataTableEmptyRow colSpan={5} icon={Flag} title={t("itsm:priorities.empty")} description={canCreate ? t("itsm:priorities.emptyHint") : undefined} />
+            ) : filteredItems.length === 0 ? (
+              <DataTableEmptyRow colSpan={5} icon={Flag} title={t("itsm:priorities.searchEmpty")} />
             ) : (
-              items.map((item) => (
-                <TableRow key={item.id}>
-                  <TableCell className="font-medium">
-                    <span className="mr-2 inline-block h-3 w-3 rounded-full" style={{ backgroundColor: item.color }} />
-                    {item.name}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{item.code}</TableCell>
-                  <TableCell className="text-sm">{item.value}</TableCell>
-                  <TableCell className="text-sm">{item.defaultResponseMinutes} min</TableCell>
-                  <TableCell className="text-sm">{item.defaultResolutionMinutes} min</TableCell>
+              filteredItems.map((item) => (
+                <TableRow key={item.id} className="hover:bg-muted/22">
                   <TableCell>
-                    <Badge variant={item.isActive ? "default" : "secondary"}>
-                      {item.isActive ? t("itsm:priorities.active") : t("itsm:priorities.inactive")}
-                    </Badge>
+                    <div className="flex min-w-0 items-center gap-3">
+                      <PrioritySwatch color={item.color} />
+                      <div className="min-w-0">
+                        <div className="font-medium text-foreground/90">{item.name}</div>
+                        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                          <span className="font-mono">{item.code}</span>
+                          <span className="font-mono">{item.color}</span>
+                          {item.description ? <span className="truncate">{item.description}</span> : null}
+                        </div>
+                      </div>
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-sm tabular-nums">{item.value}</TableCell>
+                  <TableCell className="text-sm">
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-foreground/82">
+                      <span>{t("itsm:priorities.responseShort")} {formatMinutes(item.defaultResponseMinutes, minuteUnit)}</span>
+                      <span>{t("itsm:priorities.resolutionShort")} {formatMinutes(item.defaultResolutionMinutes, minuteUnit)}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <QuietStatus active={item.isActive} activeLabel={t("itsm:priorities.active")} inactiveLabel={t("itsm:priorities.inactive")} />
                   </TableCell>
                   <DataTableActionsCell>
                     <DataTableActions>
                       {canUpdate && (
-                        <Button variant="ghost" size="sm" className="px-2.5" onClick={() => handleEdit(item)}>
-                          <Pencil className="mr-1 h-3.5 w-3.5" />{t("common:edit")}
-                        </Button>
+                        <IconTooltipButton
+                          label={t("common:edit")}
+                          icon={Pencil}
+                          onClick={() => handleEdit(item)}
+                        />
                       )}
                       {canDelete && (
                         <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button variant="ghost" size="sm" className="px-2.5 text-destructive hover:text-destructive">
-                              <Trash2 className="mr-1 h-3.5 w-3.5" />{t("common:delete")}
-                            </Button>
-                          </AlertDialogTrigger>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <AlertDialogTrigger asChild>
+                                <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-destructive">
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                  <span className="sr-only">{t("common:delete")}</span>
+                                </Button>
+                              </AlertDialogTrigger>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" sideOffset={6}>{t("common:delete")}</TooltipContent>
+                          </Tooltip>
                           <AlertDialogContent>
                             <AlertDialogHeader>
                               <AlertDialogTitle>{t("itsm:priorities.deleteTitle")}</AlertDialogTitle>
@@ -202,63 +283,76 @@ export function Component() {
         <SheetContent className="sm:max-w-lg">
           <SheetHeader>
             <SheetTitle>{editing ? t("itsm:priorities.edit") : t("itsm:priorities.create")}</SheetTitle>
-            <SheetDescription className="sr-only">{editing ? t("itsm:priorities.edit") : t("itsm:priorities.create")}</SheetDescription>
+            <SheetDescription>{t("itsm:priorities.sheetDesc")}</SheetDescription>
           </SheetHeader>
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-1 flex-col gap-5 px-4">
-              <FormField control={form.control} name="name" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t("itsm:priorities.name")}</FormLabel>
-                  <FormControl><Input placeholder={t("itsm:priorities.namePlaceholder")} {...field} /></FormControl>
-                  <FormMessage />
-                </FormItem>
-              )} />
-              <FormField control={form.control} name="code" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t("itsm:priorities.code")}</FormLabel>
-                  <FormControl><Input placeholder={t("itsm:priorities.codePlaceholder")} {...field} /></FormControl>
-                  <FormMessage />
-                </FormItem>
-              )} />
-              <div className="grid grid-cols-2 gap-4">
-                <FormField control={form.control} name="value" render={({ field }) => (
+              <FormSection title={t("itsm:priorities.formIdentity")}>
+                <FormField control={form.control} name="name" render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{t("itsm:priorities.value")}</FormLabel>
-                    <FormControl><Input type="number" {...field} onChange={(e) => field.onChange(Number(e.target.value))} /></FormControl>
+                    <FormLabel>{t("itsm:priorities.name")}</FormLabel>
+                    <FormControl><Input placeholder={t("itsm:priorities.namePlaceholder")} {...field} /></FormControl>
                     <FormMessage />
                   </FormItem>
                 )} />
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField control={form.control} name="code" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t("itsm:priorities.code")}</FormLabel>
+                      <FormControl><Input placeholder={t("itsm:priorities.codePlaceholder")} {...field} /></FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+                  <FormField control={form.control} name="value" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t("itsm:priorities.value")}</FormLabel>
+                      <FormControl><Input type="number" {...field} onChange={(e) => field.onChange(Number(e.target.value))} /></FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+                </div>
+              </FormSection>
+              <FormSection title={t("itsm:priorities.formVisual")}>
                 <FormField control={form.control} name="color" render={({ field }) => (
                   <FormItem>
                     <FormLabel>{t("itsm:priorities.color")}</FormLabel>
-                    <FormControl><Input type="color" {...field} className="h-9 p-1" /></FormControl>
+                    <FormControl>
+                      <div className="grid grid-cols-[3rem_1fr] gap-3">
+                        <Input type="color" {...field} value={isHexColor(field.value) ? field.value : "#5b6f8f"} className="h-9 w-12 p-1" />
+                        <Input value={field.value} onChange={field.onChange} placeholder="#5b6f8f" className="font-mono" />
+                      </div>
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )} />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <FormField control={form.control} name="defaultResponseMinutes" render={({ field }) => (
+              </FormSection>
+              <FormSection title={t("itsm:priorities.formCommitment")}>
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField control={form.control} name="defaultResponseMinutes" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t("itsm:priorities.defaultResponseMinutes")}</FormLabel>
+                      <FormControl><Input type="number" {...field} onChange={(e) => field.onChange(Number(e.target.value))} /></FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+                  <FormField control={form.control} name="defaultResolutionMinutes" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t("itsm:priorities.defaultResolutionMinutes")}</FormLabel>
+                      <FormControl><Input type="number" {...field} onChange={(e) => field.onChange(Number(e.target.value))} /></FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+                </div>
+              </FormSection>
+              <FormSection title={t("itsm:priorities.formDescription")}>
+                <FormField control={form.control} name="description" render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{t("itsm:priorities.defaultResponseMinutes")}</FormLabel>
-                    <FormControl><Input type="number" {...field} onChange={(e) => field.onChange(Number(e.target.value))} /></FormControl>
+                    <FormLabel>{t("itsm:priorities.description")}</FormLabel>
+                    <FormControl><Textarea rows={3} {...field} /></FormControl>
                     <FormMessage />
                   </FormItem>
                 )} />
-                <FormField control={form.control} name="defaultResolutionMinutes" render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t("itsm:priorities.defaultResolutionMinutes")}</FormLabel>
-                    <FormControl><Input type="number" {...field} onChange={(e) => field.onChange(Number(e.target.value))} /></FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )} />
-              </div>
-              <FormField control={form.control} name="description" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t("itsm:priorities.description")}</FormLabel>
-                  <FormControl><Textarea rows={3} {...field} /></FormControl>
-                  <FormMessage />
-                </FormItem>
-              )} />
+              </FormSection>
               <SheetFooter>
                 <Button type="submit" size="sm" disabled={isPending}>
                   {isPending ? t("common:saving") : editing ? t("common:save") : t("common:create")}
