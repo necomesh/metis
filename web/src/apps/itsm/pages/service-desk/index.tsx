@@ -21,7 +21,6 @@ import { useAiChat } from "@/apps/ai/pages/chat/hooks/use-ai-chat"
 import { sessionApi, type AgentSession } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/textarea"
 import { fetchEngineConfig } from "../../api"
 
 const SUGGESTED_PROMPTS = [
@@ -139,32 +138,51 @@ function ServiceDeskComposer({
   onSend: () => void
   compact?: boolean
 }) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    const textarea = textareaRef.current
+    if (!textarea) return
+    textarea.style.height = "auto"
+    const maxHeight = compact ? 160 : 200
+    textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`
+  }, [value, compact])
+
   return (
-    <div
-      className={cn(
-        "flex w-full items-end gap-2 rounded-xl border border-border/80 bg-background/92 p-2 shadow-[0_22px_55px_-46px_rgba(15,23,42,0.75)]",
-        compact ? "max-w-3xl" : "max-w-[720px]",
-      )}
-    >
-      <Textarea
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey) {
-            event.preventDefault()
-            onSend()
-          }
-        }}
-        placeholder={placeholder}
-        className={cn(
-          "max-h-40 resize-none border-0 bg-transparent px-3 py-2.5 shadow-none focus-visible:ring-0",
-          compact ? "min-h-11" : "min-h-28 text-base",
-        )}
-        disabled={disabled}
-      />
-      <Button type="button" size="icon" className="size-10 shrink-0" onClick={onSend} disabled={!value.trim() || disabled || pending}>
-        {pending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
-      </Button>
+    <div className={cn("w-full", compact ? "max-w-3xl" : "max-w-[720px]")}>
+      <div className="rounded-2xl border bg-background shadow-lg transition-colors focus-within:border-primary/30">
+        <textarea
+          ref={textareaRef}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing) return
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault()
+              onSend()
+            }
+          }}
+          placeholder={placeholder}
+          rows={1}
+          className={cn(
+            "w-full max-h-[200px] resize-none bg-transparent px-4 pt-3 pb-1 text-base leading-relaxed placeholder:text-muted-foreground focus:outline-none read-only:cursor-text",
+            compact ? "min-h-11" : "min-h-24",
+          )}
+          readOnly={disabled}
+        />
+        <div className="flex items-center justify-between px-3 pb-2">
+          <div />
+          <Button
+            type="button"
+            size="icon"
+            className="size-8 rounded-full"
+            onClick={onSend}
+            disabled={!value.trim() || disabled || pending}
+          >
+            {pending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+          </Button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -262,7 +280,6 @@ function ServiceDeskConversation({
   const queryClient = useQueryClient()
   const [input, setInput] = useState("")
   const scrollRef = useRef<HTMLDivElement>(null)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const initialPromptSentRef = useRef(false)
 
@@ -307,7 +324,6 @@ function ServiceDeskConversation({
     onSuccess: (text) => {
       chat.sendMessage({ text })
       setInput("")
-      requestAnimationFrame(() => textareaRef.current?.focus())
     },
     onError: (err) => toast.error(err.message),
   })
@@ -330,7 +346,7 @@ function ServiceDeskConversation({
   const showEmpty = !isLoading && qaPairs.length === 0 && !initialPrompt
 
   return (
-    <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+    <main className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
         <div className="flex h-14 shrink-0 items-center justify-between border-b border-border/70 px-5">
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex size-8 shrink-0 items-center justify-center rounded-full border border-primary/20 bg-primary/8 text-primary">
@@ -346,17 +362,10 @@ function ServiceDeskConversation({
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {isBusy ? (
-              <Button size="sm" variant="outline" onClick={() => cancelMutation.mutate()} disabled={cancelMutation.isPending}>
-                {cancelMutation.isPending ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <Square className="mr-1.5 size-3.5" />}
-                停止
-              </Button>
-            ) : null}
-          </div>
+          <div />
         </div>
 
-        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+        <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
           {isLoading ? (
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
               <Loader2 className="mr-2 size-4 animate-spin" />
@@ -405,7 +414,22 @@ function ServiceDeskConversation({
           )}
         </div>
 
-        <div className="shrink-0 border-t border-border/70 bg-background px-5 py-4">
+        {isBusy && (
+          <div className="flex shrink-0 justify-center pb-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-full px-4"
+              onClick={() => cancelMutation.mutate()}
+              disabled={cancelMutation.isPending}
+            >
+              {cancelMutation.isPending ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <Square className="mr-1.5 size-3.5" />}
+              停止
+            </Button>
+          </div>
+        )}
+
+        <div className="shrink-0 bg-background px-4 pb-3 pt-1">
           <div className="mx-auto max-w-3xl">
             <ServiceDeskComposer
               value={input}
@@ -416,6 +440,7 @@ function ServiceDeskConversation({
               placeholder="描述你的 IT 诉求..."
               compact
             />
+            <p className="mt-1 text-center text-[10px] text-muted-foreground/50">Enter 发送，Shift + Enter 换行</p>
           </div>
         </div>
     </main>
@@ -487,7 +512,7 @@ export function Component() {
   }, [])
 
   return (
-    <div className="grid h-[calc(100vh-3.5rem)] min-h-0 grid-cols-1 overflow-hidden bg-[linear-gradient(180deg,hsl(var(--background)),hsl(var(--muted)/0.18))] md:grid-cols-[240px_minmax(0,1fr)]">
+    <div className="grid h-full min-h-0 grid-cols-1 overflow-hidden bg-[linear-gradient(180deg,hsl(var(--background)),hsl(var(--muted)/0.18))] md:grid-cols-[240px_minmax(0,1fr)]">
       <ServiceDeskSidebar
         sessions={sessions}
         activeSessionId={activeSession?.id ?? null}
