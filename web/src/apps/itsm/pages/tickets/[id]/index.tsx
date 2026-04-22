@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, type ReactNode } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import { useParams, useNavigate } from "react-router"
 import { useTranslation } from "react-i18next"
 import { useForm } from "react-hook-form"
@@ -17,6 +17,7 @@ import {
   CircleX,
   Clock,
   FileText,
+  Loader2,
   Play,
   PlusCircle,
   RotateCcw,
@@ -89,6 +90,7 @@ import {
 } from "../../../api"
 import { OverrideActions } from "../../../components/override-actions"
 import { SLABadge } from "../../../components/sla-badge"
+import { TicketStatusBadge } from "../../../components/ticket-status-badge"
 import { SmartFlowVisualization } from "../../../components/smart-flow-visualization"
 import { VariablesPanel } from "../../../components/variables-panel"
 import { WorkflowViewer } from "../../../components/workflow"
@@ -96,16 +98,7 @@ import { WorkflowViewer } from "../../../components/workflow"
 const ACTIVE_STATUSES = new Set(["pending", "in_progress", "waiting_approval", "waiting_action"])
 const TERMINAL_STATUSES = new Set(["completed", "cancelled", "failed"])
 const HUMAN_ACTIVITY_TYPES = new Set(["approve", "form", "process"])
-
-const STATUS_MAP: Record<string, { variant: "default" | "secondary" | "destructive" | "outline"; key: string }> = {
-  pending: { variant: "secondary", key: "statusPending" },
-  in_progress: { variant: "default", key: "statusInProgress" },
-  waiting_approval: { variant: "outline", key: "statusWaitingApproval" },
-  waiting_action: { variant: "outline", key: "statusWaitingAction" },
-  completed: { variant: "default", key: "statusCompleted" },
-  failed: { variant: "destructive", key: "statusFailed" },
-  cancelled: { variant: "secondary", key: "statusCancelled" },
-}
+const DEFAULT_DECISIONING_MESSAGE = "决策引擎正在生成下一步，页面会自动刷新。"
 
 const DEFAULT_EVENT_STYLE = { icon: Clock, bg: "bg-muted", fg: "text-muted-foreground" }
 const TIMELINE_EVENT_STYLE: Record<string, { icon: LucideIcon; bg: string; fg: string }> = {
@@ -224,6 +217,20 @@ function ownerName(ticket: TicketItem, activity?: ActivityItem | null) {
   if (activity?.status === "pending_approval") return "AI 决策确认人"
   if (activity?.activityType === "action") return "自动化动作"
   return "AI 智能引擎"
+}
+
+function decisioningMessageForOutcome(outcome?: string) {
+  switch (outcome) {
+    case "approved":
+    case "confirm":
+      return "已通过，后台决策中。"
+    case "rejected":
+    case "reject":
+    case "failed":
+      return "已驳回，后台决策中。"
+    default:
+      return "已处理，后台决策中。"
+  }
 }
 
 function factSource(ticket: TicketItem, t: (key: string) => string) {
@@ -420,6 +427,7 @@ export function Component() {
   const [assignOpen, setAssignOpen] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
   const [rejectAiOpen, setRejectAiOpen] = useState(false)
+  const [decisioningMessage, setDecisioningMessage] = useState(DEFAULT_DECISIONING_MESSAGE)
 
   const canAssign = usePermission("itsm:ticket:assign")
   const canCancel = usePermission("itsm:ticket:cancel")
@@ -478,6 +486,24 @@ export function Component() {
     queryClient.invalidateQueries({ queryKey: ["itsm-ticket-activities", ticketId] })
   }
 
+  const markSmartDecisioning = (message: string) => {
+    setDecisioningMessage(message)
+    queryClient.setQueryData<TicketItem>(["itsm-ticket", ticketId], (current) => {
+      if (!current || current.engineType !== "smart") return current
+      return {
+        ...current,
+        assigneeId: null,
+        assigneeName: "",
+        canAct: false,
+        currentActivityId: null,
+        currentOwnerName: "AI 智能引擎",
+        currentOwnerType: "ai",
+        nextStepSummary: "后台决策中",
+        smartState: "ai_reasoning",
+      }
+    })
+  }
+
   const assignMut = useMutation({
     mutationFn: (v: { assigneeId: number }) => assignTicket(ticketId, v.assigneeId),
     onSuccess: () => {
@@ -500,31 +526,54 @@ export function Component() {
 
   const progressMut = useMutation({
     mutationFn: (data: { activityId: number; outcome: string }) => progressTicket(ticketId, data),
+    onMutate: (data) => markSmartDecisioning(decisioningMessageForOutcome(data.outcome)),
     onSuccess: () => {
       invalidateTicket()
       toast.success(t("itsm:tickets.progressSuccess"))
     },
-    onError: (err) => toast.error(err.message),
+    onError: (err) => {
+      invalidateTicket()
+      toast.error(err.message)
+    },
   })
 
   const confirmAiMut = useMutation({
     mutationFn: (activityId: number) => confirmActivity(ticketId, activityId),
+    onMutate: () => markSmartDecisioning(decisioningMessageForOutcome("confirm")),
     onSuccess: () => {
       invalidateTicket()
       toast.success(t("itsm:smart.confirmSuccess"))
     },
-    onError: (err) => toast.error(err.message),
+    onError: (err) => {
+      invalidateTicket()
+      toast.error(err.message)
+    },
   })
 
   const rejectAiMut = useMutation({
     mutationFn: (activityId: number) => rejectActivity(ticketId, activityId, t("itsm:smart.humanRejected")),
+    onMutate: () => markSmartDecisioning(decisioningMessageForOutcome("reject")),
     onSuccess: () => {
       invalidateTicket()
       setRejectAiOpen(false)
       toast.success(t("itsm:smart.rejectSuccess"))
     },
-    onError: (err) => toast.error(err.message),
+    onError: (err) => {
+      invalidateTicket()
+      toast.error(err.message)
+    },
   })
+
+  useEffect(() => {
+    if (ticket?.engineType !== "smart" || ticket.smartState !== "ai_reasoning") return
+
+    const interval = window.setInterval(() => {
+      queryClient.invalidateQueries({ queryKey: ["itsm-ticket", ticketId] })
+      queryClient.invalidateQueries({ queryKey: ["itsm-ticket-timeline", ticketId] })
+      queryClient.invalidateQueries({ queryKey: ["itsm-ticket-activities", ticketId] })
+    }, 3000)
+    return () => window.clearInterval(interval)
+  }, [queryClient, ticket?.engineType, ticket?.smartState, ticketId])
 
   const currentActivity = ticket ? activities.find((a) => a.id === ticket.currentActivityId) : undefined
   const activeHumanActivity = activities.find(
@@ -536,13 +585,13 @@ export function Component() {
   const confidencePct = confidence == null ? null : Math.round(confidence * 100)
   const isActive = ticket ? ACTIVE_STATUSES.has(ticket.status) : false
   const isTerminal = ticket ? TERMINAL_STATUSES.has(ticket.status) : false
-  const statusInfo = ticket ? (STATUS_MAP[ticket.status] ?? { variant: "secondary" as const, key: "statusPending" }) : null
+  const isDecisioning = ticket?.engineType === "smart" && ticket.smartState === "ai_reasoning"
   const isAiConfirmation = currentActivity?.status === "pending_approval"
   const actionableActivity = isAiConfirmation ? currentActivity : activeHumanActivity
   const isCurrentUserResponsible = Boolean(
     ticket?.canAct || actionableActivity?.canAct || (ticket?.assigneeId && ticket.assigneeId === currentUserId),
   )
-  const nextStep = ticket ? summarizeDecision(plan, ticket.nextStepSummary || actionableActivity?.name) : ""
+  const nextStep = ticket ? (isDecisioning ? t("itsm:tickets.statusDecisioning") : summarizeDecision(plan, ticket.nextStepSummary || actionableActivity?.name)) : ""
   const owner = ticket ? ownerName(ticket, actionableActivity) : "—"
 
   if (isLoading) {
@@ -571,7 +620,7 @@ export function Component() {
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="workspace-page-title truncate">{ticket.code}</h2>
-              {statusInfo && <Badge variant={statusInfo.variant}>{t(`itsm:tickets.${statusInfo.key}`)}</Badge>}
+              <TicketStatusBadge ticket={ticket} />
               <Badge variant="outline">{ticket.engineType === "smart" ? "智能工单" : "经典流程"}</Badge>
             </div>
             <p className="workspace-page-description">{ticket.title}</p>
@@ -721,7 +770,14 @@ export function Component() {
               </div>
 
               <div className="grid grid-cols-2 gap-2 border-t border-border/50 pt-3 [&_[data-slot=button]]:h-8 [&_[data-slot=button]]:text-xs">
-                {isActive && isAiConfirmation && currentActivity && isCurrentUserResponsible && (
+                {isDecisioning && (
+                  <p className="col-span-2 inline-flex items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-800">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    {decisioningMessage}
+                  </p>
+                )}
+
+                {isActive && !isDecisioning && isAiConfirmation && currentActivity && isCurrentUserResponsible && (
                   <>
                     <Button size="sm" className="w-full" onClick={() => confirmAiMut.mutate(currentActivity.id)} disabled={confirmAiMut.isPending || rejectAiMut.isPending}>
                       <DecisionButtonContent icon={CheckCircle2}>{t("itsm:smart.confirm")}</DecisionButtonContent>
@@ -732,7 +788,7 @@ export function Component() {
                   </>
                 )}
 
-                {isActive && !isAiConfirmation && activeHumanActivity && isCurrentUserResponsible && getNodeOutcomes(activeHumanActivity.activityType).map((outcome) => (
+                {isActive && !isDecisioning && !isAiConfirmation && activeHumanActivity && isCurrentUserResponsible && getNodeOutcomes(activeHumanActivity.activityType).map((outcome) => (
                   <Button
                     key={`${activeHumanActivity.id}-${outcome}`}
                     size="sm"
@@ -749,7 +805,7 @@ export function Component() {
                   </Button>
                 ))}
 
-                {isActive && canAssign && (
+                {isActive && !isDecisioning && canAssign && (
                   <Button size="sm" variant="outline" className="w-full" onClick={() => { assignForm.reset({ assigneeId: ticket.assigneeId ?? 0 }); setAssignOpen(true) }}>
                     <DecisionButtonContent icon={UserPlus}>{t("itsm:tickets.assign")}</DecisionButtonContent>
                   </Button>
@@ -766,7 +822,7 @@ export function Component() {
                   </div>
                 )}
 
-                {isActive && canCancel && (
+                {isActive && !isDecisioning && canCancel && (
                   <Button size="sm" variant="outline" className="w-full text-destructive" onClick={() => { cancelForm.reset({ reason: "" }); setCancelOpen(true) }}>
                     <DecisionButtonContent icon={CircleX}>{t("itsm:tickets.cancel")}</DecisionButtonContent>
                   </Button>
@@ -778,7 +834,7 @@ export function Component() {
                   </p>
                 )}
 
-                {isActive && actionableActivity && !isCurrentUserResponsible && (
+                {isActive && !isDecisioning && actionableActivity && !isCurrentUserResponsible && (
                   <p className="col-span-2 rounded-lg border border-border/50 bg-background/35 p-3 text-sm text-muted-foreground">
                     当前步骤正在等待责任人处理，你可以查看依据和审计记录。
                   </p>

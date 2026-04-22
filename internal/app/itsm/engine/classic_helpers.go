@@ -21,9 +21,9 @@ type ticketModel struct {
 	SLAStatus             string     `gorm:"column:sla_status"`
 	SLAPausedAt           *time.Time `gorm:"column:sla_paused_at"`
 	AIFailureCount        int        `gorm:"column:ai_failure_count;default:0"`
-	CollaborationSpec     string     `gorm:"column:collaboration_spec;type:text"`  // via service join
-	AgentID               *uint      `gorm:"column:agent_id"`                      // via service join
-	AgentConfig           string     `gorm:"column:agent_config;type:text"`        // via service join
+	CollaborationSpec     string     `gorm:"column:collaboration_spec;type:text"` // via service join
+	AgentID               *uint      `gorm:"column:agent_id"`                     // via service join
+	AgentConfig           string     `gorm:"column:agent_config;type:text"`       // via service join
 }
 
 func (ticketModel) TableName() string { return "itsm_tickets" }
@@ -54,32 +54,33 @@ type activityModel struct {
 func (activityModel) TableName() string { return "itsm_ticket_activities" }
 
 type assignmentModel struct {
-	ID              uint   `gorm:"primaryKey;autoIncrement"`
-	TicketID        uint   `gorm:"column:ticket_id;not null"`
-	ActivityID      uint   `gorm:"column:activity_id;not null"`
-	ParticipantType string `gorm:"column:participant_type;size:32;not null"`
-	UserID          *uint  `gorm:"column:user_id"`
-	PositionID      *uint  `gorm:"column:position_id"`
-	DepartmentID    *uint  `gorm:"column:department_id"`
-	AssigneeID      *uint  `gorm:"column:assignee_id"`
-	Status          string `gorm:"column:status;size:16;default:pending"`
-	Sequence        int    `gorm:"column:sequence;default:0"`
-	IsCurrent       bool   `gorm:"column:is_current;default:false"`
-	DelegatedFrom   *uint  `gorm:"column:delegated_from"`
-	TransferFrom    *uint  `gorm:"column:transfer_from"`
-	CreatedAt       time.Time `gorm:"column:created_at;autoCreateTime"`
+	ID              uint       `gorm:"primaryKey;autoIncrement"`
+	TicketID        uint       `gorm:"column:ticket_id;not null"`
+	ActivityID      uint       `gorm:"column:activity_id;not null"`
+	ParticipantType string     `gorm:"column:participant_type;size:32;not null"`
+	UserID          *uint      `gorm:"column:user_id"`
+	PositionID      *uint      `gorm:"column:position_id"`
+	DepartmentID    *uint      `gorm:"column:department_id"`
+	AssigneeID      *uint      `gorm:"column:assignee_id"`
+	Status          string     `gorm:"column:status;size:16;default:pending"`
+	Sequence        int        `gorm:"column:sequence;default:0"`
+	IsCurrent       bool       `gorm:"column:is_current;default:false"`
+	DelegatedFrom   *uint      `gorm:"column:delegated_from"`
+	TransferFrom    *uint      `gorm:"column:transfer_from"`
+	CreatedAt       time.Time  `gorm:"column:created_at;autoCreateTime"`
+	FinishedAt      *time.Time `gorm:"column:finished_at"`
 }
 
 func (assignmentModel) TableName() string { return "itsm_ticket_assignments" }
 
 type timelineModel struct {
-	ID         uint   `gorm:"primaryKey;autoIncrement"`
-	TicketID   uint   `gorm:"column:ticket_id;not null"`
-	ActivityID *uint  `gorm:"column:activity_id"`
-	OperatorID uint   `gorm:"column:operator_id;not null"`
-	EventType  string `gorm:"column:event_type;size:32;not null"`
-	Message    string `gorm:"column:message;size:512"`
-	Reasoning  string `gorm:"column:reasoning;type:text"`
+	ID         uint      `gorm:"primaryKey;autoIncrement"`
+	TicketID   uint      `gorm:"column:ticket_id;not null"`
+	ActivityID *uint     `gorm:"column:activity_id"`
+	OperatorID uint      `gorm:"column:operator_id;not null"`
+	EventType  string    `gorm:"column:event_type;size:32;not null"`
+	Message    string    `gorm:"column:message;size:512"`
+	Reasoning  string    `gorm:"column:reasoning;type:text"`
 	CreatedAt  time.Time `gorm:"column:created_at;autoCreateTime"`
 }
 
@@ -87,15 +88,15 @@ func (timelineModel) TableName() string { return "itsm_ticket_timelines" }
 
 // executionTokenModel is a lightweight model for direct DB operations on tokens.
 type executionTokenModel struct {
-	ID            uint       `gorm:"primaryKey;autoIncrement"`
-	TicketID      uint       `gorm:"column:ticket_id;not null;index:idx_token_ticket_status"`
-	ParentTokenID *uint      `gorm:"column:parent_token_id"`
-	NodeID        string     `gorm:"column:node_id;size:64"`
-	Status        string     `gorm:"column:status;size:16;not null;index:idx_token_ticket_status"`
-	TokenType     string     `gorm:"column:token_type;size:16;not null"`
-	ScopeID       string     `gorm:"column:scope_id;size:64;not null;default:root"`
-	CreatedAt     time.Time  `gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt     time.Time  `gorm:"column:updated_at;autoUpdateTime"`
+	ID            uint      `gorm:"primaryKey;autoIncrement"`
+	TicketID      uint      `gorm:"column:ticket_id;not null;index:idx_token_ticket_status"`
+	ParentTokenID *uint     `gorm:"column:parent_token_id"`
+	NodeID        string    `gorm:"column:node_id;size:64"`
+	Status        string    `gorm:"column:status;size:16;not null;index:idx_token_ticket_status"`
+	TokenType     string    `gorm:"column:token_type;size:16;not null"`
+	ScopeID       string    `gorm:"column:scope_id;size:64;not null;default:root"`
+	CreatedAt     time.Time `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt     time.Time `gorm:"column:updated_at;autoUpdateTime"`
 }
 
 func (executionTokenModel) TableName() string { return "itsm_execution_tokens" }

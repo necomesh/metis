@@ -6,7 +6,6 @@ import { useNavigate } from "react-router"
 import { Ticket, Search } from "lucide-react"
 import { useListPage } from "@/hooks/use-list-page"
 import { withActiveMenuPermission } from "@/lib/navigation-state"
-import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
@@ -17,14 +16,8 @@ import {
 } from "@/components/ui/table"
 import { type TicketItem } from "../../../api"
 import { SLABadge } from "../../../components/sla-badge"
+import { TicketStatusBadge } from "../../../components/ticket-status-badge"
 import { TICKET_MENU_PERMISSION } from "../navigation"
-
-const STATUS_MAP: Record<string, { variant: "default" | "secondary" | "destructive" | "outline"; key: string }> = {
-  pending: { variant: "secondary", key: "statusPending" },
-  in_progress: { variant: "default", key: "statusInProgress" },
-  waiting_approval: { variant: "outline", key: "statusWaitingApproval" },
-  waiting_action: { variant: "outline", key: "statusWaitingAction" },
-}
 
 export function Component() {
   const { t } = useTranslation(["itsm", "common"])
@@ -92,34 +85,31 @@ export function Component() {
             ) : items.length === 0 ? (
               <DataTableEmptyRow colSpan={8} icon={Ticket} title={t("itsm:tickets.empty")} />
             ) : (
-              items.map((item) => {
-                const statusInfo = STATUS_MAP[item.status] ?? { variant: "secondary" as const, key: "statusPending" }
-                return (
-                  <TableRow
-                    key={item.id}
-                    className="cursor-pointer"
-                    onClick={() => navigate(`/itsm/tickets/${item.id}`, { state: withActiveMenuPermission(TICKET_MENU_PERMISSION.todo) })}
-                  >
-                    <TableCell className="whitespace-nowrap font-mono text-sm">{item.code}</TableCell>
-                    <TableCell className="font-medium">{item.title}</TableCell>
-                    <TableCell className="whitespace-nowrap">
-                      <span className="inline-flex items-center gap-1.5 text-sm">
-                        <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.priorityColor }} />
-                        {item.priorityName}
-                      </span>
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap">
-                      <Badge variant={statusInfo.variant}>{t(`itsm:tickets.${statusInfo.key}`)}</Badge>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{item.serviceName}</TableCell>
-                    <TableCell className="whitespace-nowrap text-sm">{item.requesterName}</TableCell>
-                    <TableCell className="whitespace-nowrap">
-                      <SLABadge slaStatus={item.slaStatus} slaResolutionDeadline={item.slaResolutionDeadline} />
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{new Date(item.createdAt).toLocaleString()}</TableCell>
-                  </TableRow>
-                )
-              })
+              items.map((item) => (
+                <TableRow
+                  key={item.id}
+                  className="cursor-pointer"
+                  onClick={() => navigate(`/itsm/tickets/${item.id}`, { state: withActiveMenuPermission(TICKET_MENU_PERMISSION.todo) })}
+                >
+                  <TableCell className="whitespace-nowrap font-mono text-sm">{item.code}</TableCell>
+                  <TableCell className="font-medium">{item.title}</TableCell>
+                  <TableCell className="whitespace-nowrap">
+                    <span className="inline-flex items-center gap-1.5 text-sm">
+                      <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.priorityColor }} />
+                      {item.priorityName}
+                    </span>
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap">
+                    <TicketStatusBadge ticket={item} />
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{item.serviceName}</TableCell>
+                  <TableCell className="whitespace-nowrap text-sm">{item.requesterName}</TableCell>
+                  <TableCell className="whitespace-nowrap">
+                    <SLABadge slaStatus={item.slaStatus} slaResolutionDeadline={item.slaResolutionDeadline} />
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{new Date(item.createdAt).toLocaleString()}</TableCell>
+                </TableRow>
+              ))
             )}
           </TableBody>
         </Table>

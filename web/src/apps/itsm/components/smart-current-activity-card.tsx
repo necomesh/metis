@@ -197,8 +197,8 @@ function buildStateView(state: SmartState, ticket: TicketItem) {
     case "ai_reasoning":
       return {
         icon: Bot,
-        title: "AI 正在分析下一步",
-        sentence: "智能引擎正在读取上下文、协作规范和历史轨迹。",
+        title: "决策中",
+        sentence: "决策引擎正在生成下一步。",
         tone: "border-sky-200 bg-sky-50 text-sky-800",
       }
     default:

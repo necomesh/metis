@@ -34,6 +34,17 @@ type CurrentAssignmentInfo struct {
 	AssigneeName string
 }
 
+// ActivityAssignmentInfo holds assignment facts for a ticket activity.
+type ActivityAssignmentInfo struct {
+	ParticipantType string
+	UserID          *uint
+	PositionID      *uint
+	DepartmentID    *uint
+	AssigneeID      *uint
+	Status          string
+	FinishedAt      *time.Time
+}
+
 // CurrentActivityInfo holds a non-terminal activity that may block the next decision.
 type CurrentActivityInfo struct {
 	ID              uint
@@ -92,6 +103,12 @@ type DecisionDataProvider interface {
 
 	// GetDecisionHistory returns completed and rejected activities for a ticket, ordered by ID ascending.
 	GetDecisionHistory(ticketID uint) ([]activityModel, error)
+
+	// GetActivityByID returns one activity for the ticket.
+	GetActivityByID(ticketID, activityID uint) (*activityModel, error)
+
+	// GetActivityAssignments returns assignment facts for one activity.
+	GetActivityAssignments(activityID uint) ([]ActivityAssignmentInfo, error)
 
 	// GetCurrentActivities returns non-terminal activities for a ticket, ordered by ID ascending.
 	GetCurrentActivities(ticketID uint) ([]CurrentActivityInfo, error)
@@ -169,6 +186,25 @@ func (s *decisionDataStore) GetDecisionHistory(ticketID uint) ([]activityModel, 
 	return activities, err
 }
 
+func (s *decisionDataStore) GetActivityByID(ticketID, activityID uint) (*activityModel, error) {
+	var activity activityModel
+	err := s.db.Where("ticket_id = ? AND id = ?", ticketID, activityID).First(&activity).Error
+	if err != nil {
+		return nil, err
+	}
+	return &activity, nil
+}
+
+func (s *decisionDataStore) GetActivityAssignments(activityID uint) ([]ActivityAssignmentInfo, error) {
+	var assignments []ActivityAssignmentInfo
+	err := s.db.Table("itsm_ticket_assignments").
+		Where("activity_id = ?", activityID).
+		Select("participant_type, user_id, position_id, department_id, assignee_id, status, finished_at").
+		Order("id ASC").
+		Find(&assignments).Error
+	return assignments, err
+}
+
 func (s *decisionDataStore) GetCurrentActivities(ticketID uint) ([]CurrentActivityInfo, error) {
 	var activities []CurrentActivityInfo
 	err := s.db.Table("itsm_ticket_activities").
@@ -198,14 +234,20 @@ func (s *decisionDataStore) CountActiveServiceActions(serviceID uint) (int64, er
 }
 
 func (s *decisionDataStore) GetCurrentAssignment(ticketID uint) (*CurrentAssignmentInfo, error) {
-	var assignment struct {
+	var assignments []struct {
 		AssigneeID *uint
 	}
 	if err := s.db.Table("itsm_ticket_assignments").
 		Where("ticket_id = ? AND is_current = ?", ticketID, true).
-		Select("assignee_id").First(&assignment).Error; err != nil {
+		Select("assignee_id").
+		Limit(1).
+		Find(&assignments).Error; err != nil {
 		return nil, err
 	}
+	if len(assignments) == 0 {
+		return nil, nil
+	}
+	assignment := assignments[0]
 	if assignment.AssigneeID == nil {
 		return nil, nil
 	}

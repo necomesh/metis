@@ -280,6 +280,13 @@ func TestConfirmActivity_SubmitsImmediateSmartContinuation(t *testing.T) {
 	if len(f.submitter.payloads) != 1 || f.submitter.payloads[0].CompletedActivityID == nil || *f.submitter.payloads[0].CompletedActivityID != f.activity.ID {
 		t.Fatalf("expected payload to include completed activity id %d, got %+v", f.activity.ID, f.submitter.payloads)
 	}
+	var ticket Ticket
+	if err := f.db.First(&ticket, f.ticket.ID).Error; err != nil {
+		t.Fatalf("reload ticket: %v", err)
+	}
+	if ticket.CurrentActivityID != nil {
+		t.Fatalf("expected current activity to clear while smart decision is queued, got %d", *ticket.CurrentActivityID)
+	}
 }
 
 func TestConfirmedSmartProgressTaskCompletesTicketWhenDecisionIsComplete(t *testing.T) {
@@ -307,6 +314,44 @@ func TestConfirmedSmartProgressTaskCompletesTicketWhenDecisionIsComplete(t *test
 	}
 }
 
+func TestConfirmedSmartProgressTaskRejectsDuplicateApprovalPlan(t *testing.T) {
+	initialPlan := `{"next_step_type":"approve","execution_mode":"single","activities":[{"type":"approve","participant_type":"user","participant_id":2,"instructions":"network admin approval"}],"reasoning":"need approval","confidence":0.4}`
+	f := newSmartServiceFixture(t, initialPlan)
+	f.executor.content = fmt.Sprintf(`{"next_step_type":"approve","execution_mode":"single","activities":[{"type":"approve","participant_type":"user","participant_id":%d,"instructions":"network admin approval"}],"reasoning":"duplicate approval","confidence":0.95}`, f.approver.ID)
+
+	if _, err := f.service.ConfirmActivity(f.ticket.ID, f.activity.ID, f.approver.ID); err != nil {
+		t.Fatalf("confirm activity: %v", err)
+	}
+	if len(f.submitter.rawPayloads) != 1 {
+		t.Fatalf("expected one raw smart-progress payload, got %d", len(f.submitter.rawPayloads))
+	}
+
+	handler := engine.HandleSmartProgress(f.db, f.smart)
+	if err := handler(context.Background(), f.submitter.rawPayloads[0]); err != nil {
+		t.Fatalf("handle smart progress should treat duplicate validation as handled decision failure: %v", err)
+	}
+
+	var pendingApprovals int64
+	if err := f.db.Model(&TicketActivity{}).
+		Where("ticket_id = ? AND activity_type = ? AND status IN ?", f.ticket.ID, engine.NodeApprove, []string{engine.ActivityPending, engine.ActivityInProgress, engine.ActivityPendingApproval}).
+		Count(&pendingApprovals).Error; err != nil {
+		t.Fatalf("count pending approvals: %v", err)
+	}
+	if pendingApprovals != 0 {
+		t.Fatalf("expected no duplicate pending approval, got %d", pendingApprovals)
+	}
+
+	var totalApprovals int64
+	if err := f.db.Model(&TicketActivity{}).
+		Where("ticket_id = ? AND activity_type = ?", f.ticket.ID, engine.NodeApprove).
+		Count(&totalApprovals).Error; err != nil {
+		t.Fatalf("count approvals: %v", err)
+	}
+	if totalApprovals != 1 {
+		t.Fatalf("expected only original completed approval, got %d", totalApprovals)
+	}
+}
+
 func TestRejectActivity_SubmitsImmediateSmartContinuationAndStoresReason(t *testing.T) {
 	plan := `{"next_step_type":"process","execution_mode":"single","activities":[{"type":"process","participant_type":"user","participant_id":2,"instructions":"continue"}],"reasoning":"continue flow","confidence":0.4}`
 	f := newSmartServiceFixture(t, plan)
@@ -326,6 +371,13 @@ func TestRejectActivity_SubmitsImmediateSmartContinuationAndStoresReason(t *test
 	}
 	if activity.DecisionReasoning != "need more detail" {
 		t.Fatalf("expected rejection reason to be persisted, got %q", activity.DecisionReasoning)
+	}
+	var ticket Ticket
+	if err := f.db.First(&ticket, f.ticket.ID).Error; err != nil {
+		t.Fatalf("reload ticket: %v", err)
+	}
+	if ticket.CurrentActivityID != nil {
+		t.Fatalf("expected current activity to clear while smart decision is queued, got %d", *ticket.CurrentActivityID)
 	}
 }
 

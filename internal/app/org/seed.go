@@ -22,7 +22,9 @@ func seedOrg(db *gorm.DB, enforcer *casbin.Enforcer, install bool) error {
 
 	// 1. Seed menus: 组织管理 directory
 	var orgDir model.Menu
-	if err := db.Where("permission = ?", "org").First(&orgDir).Error; err != nil {
+	if tx := db.Where("permission = ?", "org").Limit(1).Find(&orgDir); tx.Error != nil {
+		return tx.Error
+	} else if tx.RowsAffected == 0 {
 		orgDir = model.Menu{
 			Name:       "组织管理",
 			Type:       model.MenuTypeDirectory,
@@ -38,7 +40,9 @@ func seedOrg(db *gorm.DB, enforcer *casbin.Enforcer, install bool) error {
 
 	// 部门管理 menu (renamed to 组织架构)
 	var deptMenu model.Menu
-	if err := db.Where("permission = ?", "org:department:list").First(&deptMenu).Error; err != nil {
+	if tx := db.Where("permission = ?", "org:department:list").Limit(1).Find(&deptMenu); tx.Error != nil {
+		return tx.Error
+	} else if tx.RowsAffected == 0 {
 		deptMenu = model.Menu{
 			ParentID:   &orgDir.ID,
 			Name:       "组织架构",
@@ -64,7 +68,10 @@ func seedOrg(db *gorm.DB, enforcer *casbin.Enforcer, install bool) error {
 	}
 	for _, btn := range deptButtons {
 		var existing model.Menu
-		if err := db.Where("permission = ?", btn.Permission).First(&existing).Error; err != nil {
+		if tx := db.Where("permission = ?", btn.Permission).Limit(1).Find(&existing); tx.Error != nil {
+			slog.Error("seed: failed to query button menu", "permission", btn.Permission, "error", tx.Error)
+			continue
+		} else if tx.RowsAffected == 0 {
 			btn.ParentID = &deptMenu.ID
 			if err := db.Create(&btn).Error; err != nil {
 				slog.Error("seed: failed to create button menu", "permission", btn.Permission, "error", err)
@@ -76,7 +83,9 @@ func seedOrg(db *gorm.DB, enforcer *casbin.Enforcer, install bool) error {
 
 	// 岗位管理 menu
 	var posMenu model.Menu
-	if err := db.Where("permission = ?", "org:position:list").First(&posMenu).Error; err != nil {
+	if tx := db.Where("permission = ?", "org:position:list").Limit(1).Find(&posMenu); tx.Error != nil {
+		return tx.Error
+	} else if tx.RowsAffected == 0 {
 		posMenu = model.Menu{
 			ParentID:   &orgDir.ID,
 			Name:       "岗位管理",
@@ -99,7 +108,10 @@ func seedOrg(db *gorm.DB, enforcer *casbin.Enforcer, install bool) error {
 	}
 	for _, btn := range posButtons {
 		var existing model.Menu
-		if err := db.Where("permission = ?", btn.Permission).First(&existing).Error; err != nil {
+		if tx := db.Where("permission = ?", btn.Permission).Limit(1).Find(&existing); tx.Error != nil {
+			slog.Error("seed: failed to query button menu", "permission", btn.Permission, "error", tx.Error)
+			continue
+		} else if tx.RowsAffected == 0 {
 			btn.ParentID = &posMenu.ID
 			if err := db.Create(&btn).Error; err != nil {
 				slog.Error("seed: failed to create button menu", "permission", btn.Permission, "error", err)
@@ -112,7 +124,9 @@ func seedOrg(db *gorm.DB, enforcer *casbin.Enforcer, install bool) error {
 	// 人员分配 menu — removed from UI (merged into department detail page)
 	// Soft-delete if it exists from a previous install
 	var assignMenu model.Menu
-	if err := db.Where("permission = ?", "org:assignment:list").First(&assignMenu).Error; err == nil {
+	if tx := db.Where("permission = ?", "org:assignment:list").Limit(1).Find(&assignMenu); tx.Error != nil {
+		return tx.Error
+	} else if tx.RowsAffected > 0 {
 		db.Delete(&assignMenu)
 		// Also remove child buttons
 		db.Where("parent_id = ?", assignMenu.ID).Delete(&model.Menu{})

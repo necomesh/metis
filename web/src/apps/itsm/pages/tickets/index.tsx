@@ -10,7 +10,6 @@ import { useListPage } from "@/hooks/use-list-page"
 import { withActiveMenuPermission } from "@/lib/navigation-state"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Badge } from "@/components/ui/badge"
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
@@ -25,17 +24,9 @@ import {
   type TicketItem, fetchPriorities, fetchServiceDefs,
 } from "../../api"
 import { SLABadge } from "../../components/sla-badge"
+import { TICKET_STATUS_OPTIONS } from "../../components/ticket-status"
+import { TicketStatusBadge } from "../../components/ticket-status-badge"
 import { TICKET_MENU_PERMISSION } from "./navigation"
-
-const STATUS_MAP: Record<string, { variant: "default" | "secondary" | "destructive" | "outline"; key: string }> = {
-  pending: { variant: "secondary", key: "statusPending" },
-  in_progress: { variant: "default", key: "statusInProgress" },
-  waiting_approval: { variant: "outline", key: "statusWaitingApproval" },
-  waiting_action: { variant: "outline", key: "statusWaitingAction" },
-  completed: { variant: "default", key: "statusCompleted" },
-  failed: { variant: "destructive", key: "statusFailed" },
-  cancelled: { variant: "secondary", key: "statusCancelled" },
-}
 
 export function Component() {
   const { t } = useTranslation(["itsm", "common"])
@@ -96,7 +87,7 @@ export function Component() {
               <SelectTrigger className="w-[140px]"><SelectValue placeholder={t("itsm:tickets.allStatuses")} /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">{t("itsm:tickets.allStatuses")}</SelectItem>
-                {Object.entries(STATUS_MAP).map(([k, v]) => (
+                {Object.entries(TICKET_STATUS_OPTIONS).map(([k, v]) => (
                   <SelectItem key={k} value={k}>{t(`itsm:tickets.${v.key}`)}</SelectItem>
                 ))}
               </SelectContent>
@@ -147,34 +138,31 @@ export function Component() {
             ) : items.length === 0 ? (
               <DataTableEmptyRow colSpan={8} icon={Ticket} title={t("itsm:tickets.empty")} description={canCreate ? t("itsm:tickets.emptyHint") : undefined} />
             ) : (
-              items.map((item) => {
-                const statusInfo = STATUS_MAP[item.status] ?? { variant: "secondary" as const, key: "statusPending" }
-                return (
-                  <TableRow
-                    key={item.id}
-                    className="cursor-pointer"
-                    onClick={() => navigate(`/itsm/tickets/${item.id}`, { state: withActiveMenuPermission(TICKET_MENU_PERMISSION.list) })}
-                  >
-                    <TableCell className="font-mono text-sm whitespace-nowrap">{item.code}</TableCell>
-                    <TableCell className="font-medium">{item.title}</TableCell>
-                    <TableCell>
-                      <span className="inline-flex items-center gap-1.5 text-sm">
-                        <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.priorityColor }} />
-                        {item.priorityName}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={statusInfo.variant}>{t(`itsm:tickets.${statusInfo.key}`)}</Badge>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{item.serviceName}</TableCell>
-                    <TableCell className="text-sm">{item.assigneeName || "—"}</TableCell>
-                    <TableCell>
-                      <SLABadge slaStatus={item.slaStatus} slaResolutionDeadline={item.slaResolutionDeadline} />
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{new Date(item.createdAt).toLocaleString()}</TableCell>
-                  </TableRow>
-                )
-              })
+              items.map((item) => (
+                <TableRow
+                  key={item.id}
+                  className="cursor-pointer"
+                  onClick={() => navigate(`/itsm/tickets/${item.id}`, { state: withActiveMenuPermission(TICKET_MENU_PERMISSION.list) })}
+                >
+                  <TableCell className="font-mono text-sm whitespace-nowrap">{item.code}</TableCell>
+                  <TableCell className="font-medium">{item.title}</TableCell>
+                  <TableCell>
+                    <span className="inline-flex items-center gap-1.5 text-sm">
+                      <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.priorityColor }} />
+                      {item.priorityName}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <TicketStatusBadge ticket={item} />
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{item.serviceName}</TableCell>
+                  <TableCell className="text-sm">{item.assigneeName || "—"}</TableCell>
+                  <TableCell>
+                    <SLABadge slaStatus={item.slaStatus} slaResolutionDeadline={item.slaResolutionDeadline} />
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{new Date(item.createdAt).toLocaleString()}</TableCell>
+                </TableRow>
+              ))
             )}
           </TableBody>
         </Table>

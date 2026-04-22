@@ -159,7 +159,9 @@ func upsertSeedCatalog(db *gorm.DB, cat ServiceCatalog) (bool, error) {
 func seedMenus(db *gorm.DB) error {
 	// ITSM 顶级目录
 	var itsmDir model.Menu
-	if err := db.Where("permission = ?", "itsm").First(&itsmDir).Error; err != nil {
+	if tx := db.Where("permission = ?", "itsm").Limit(1).Find(&itsmDir); tx.Error != nil {
+		return tx.Error
+	} else if tx.RowsAffected == 0 {
 		itsmDir = model.Menu{
 			Name:       "ITSM",
 			Type:       model.MenuTypeDirectory,
@@ -175,7 +177,7 @@ func seedMenus(db *gorm.DB) error {
 
 	// Migrate: flatten old "工单管理" intermediate directory
 	var ticketDir model.Menu
-	if err := db.Where("permission = ?", "itsm:ticket").First(&ticketDir).Error; err == nil {
+	if tx := db.Where("permission = ?", "itsm:ticket").Limit(1).Find(&ticketDir); tx.Error == nil && tx.RowsAffected > 0 {
 		// Move children to ITSM top-level
 		db.Model(&model.Menu{}).Where("parent_id = ?", ticketDir.ID).Update("parent_id", itsmDir.ID)
 		// Soft-delete the intermediate directory
@@ -185,7 +187,7 @@ func seedMenus(db *gorm.DB) error {
 
 	// Migrate: remove standalone "服务目录" menu, catalog management is now inline in services page
 	var oldCatalogMenu model.Menu
-	if err := db.Where("permission = ?", "itsm:catalog:list").First(&oldCatalogMenu).Error; err == nil {
+	if tx := db.Where("permission = ?", "itsm:catalog:list").Limit(1).Find(&oldCatalogMenu); tx.Error == nil && tx.RowsAffected > 0 {
 		// Delete associated buttons
 		db.Where("parent_id = ?", oldCatalogMenu.ID).Delete(&model.Menu{})
 		db.Delete(&oldCatalogMenu)
@@ -194,7 +196,7 @@ func seedMenus(db *gorm.DB) error {
 
 	// Migrate: rename "服务定义" to "服务目录" for unified workspace
 	var existingServiceMenu model.Menu
-	if err := db.Where("permission = ?", "itsm:service:list").First(&existingServiceMenu).Error; err == nil {
+	if tx := db.Where("permission = ?", "itsm:service:list").Limit(1).Find(&existingServiceMenu); tx.Error == nil && tx.RowsAffected > 0 {
 		if existingServiceMenu.Name == "服务定义" {
 			db.Model(&existingServiceMenu).Update("name", "服务目录")
 			slog.Info("seed: renamed service menu to 服务目录")
@@ -253,7 +255,7 @@ func seedMenus(db *gorm.DB) error {
 
 	// 表单管理 - migrated away: remove menu and buttons
 	var formMenu model.Menu
-	if err := db.Where("permission = ?", "itsm:form:list").First(&formMenu).Error; err == nil {
+	if tx := db.Where("permission = ?", "itsm:form:list").Limit(1).Find(&formMenu); tx.Error == nil && tx.RowsAffected > 0 {
 		db.Where("parent_id = ?", formMenu.ID).Delete(&model.Menu{})
 		db.Delete(&formMenu)
 		slog.Info("seed: removed form management menu")
@@ -264,7 +266,10 @@ func seedMenus(db *gorm.DB) error {
 
 func seedMenu(db *gorm.DB, parentID *uint, name string, menuType model.MenuType, path, icon, permission string, sort int) *model.Menu {
 	var menu model.Menu
-	if err := db.Where("permission = ?", permission).First(&menu).Error; err != nil {
+	if tx := db.Where("permission = ?", permission).Limit(1).Find(&menu); tx.Error != nil {
+		slog.Error("seed: failed to query menu", "permission", permission, "error", tx.Error)
+		return nil
+	} else if tx.RowsAffected == 0 {
 		menu = model.Menu{
 			ParentID:   parentID,
 			Name:       name,
@@ -292,7 +297,10 @@ func seedButtons(db *gorm.DB, parent *model.Menu, buttons []model.Menu) {
 	}
 	for _, btn := range buttons {
 		var existing model.Menu
-		if err := db.Where("permission = ?", btn.Permission).First(&existing).Error; err != nil {
+		if tx := db.Where("permission = ?", btn.Permission).Limit(1).Find(&existing); tx.Error != nil {
+			slog.Error("seed: failed to query button", "permission", btn.Permission, "error", tx.Error)
+			continue
+		} else if tx.RowsAffected == 0 {
 			btn.ParentID = &parent.ID
 			if err := db.Create(&btn).Error; err != nil {
 				slog.Error("seed: failed to create button", "permission", btn.Permission, "error", err)

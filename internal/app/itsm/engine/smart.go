@@ -218,7 +218,16 @@ func (e *SmartEngine) Progress(ctx context.Context, tx *gorm.DB, params Progress
 		return fmt.Errorf("ticket not found: %w", err)
 	}
 
-	e.ensureContinuation(tx, &ticket, params.ActivityID)
+	queued, err := e.ensureContinuation(tx, &ticket, params.ActivityID)
+	if err != nil {
+		return err
+	}
+	if queued {
+		if err := tx.Model(&ticketModel{}).Where("id = ?", params.TicketID).
+			Update("current_activity_id", nil).Error; err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -316,7 +325,7 @@ func (e *SmartEngine) runDecisionCycle(ctx context.Context, tx *gorm.DB, ticketI
 	}
 
 	// Validate decision plan
-	if err := e.validateDecisionPlan(tx, plan, svcInfo); err != nil {
+	if err := e.validateDecisionPlan(tx, ticketID, plan, svcInfo); err != nil {
 		return e.handleDecisionFailure(tx, ticketID, fmt.Sprintf("AI 决策校验不通过: %v", err))
 	}
 
@@ -689,7 +698,7 @@ func (e *SmartEngine) pendApprovalDecisionPlan(tx *gorm.DB, ticketID uint, plan 
 
 // --- Validation ---
 
-func (e *SmartEngine) validateDecisionPlan(tx *gorm.DB, plan *DecisionPlan, svc *serviceModel) error {
+func (e *SmartEngine) validateDecisionPlan(tx *gorm.DB, ticketID uint, plan *DecisionPlan, svc *serviceModel) error {
 	if plan == nil {
 		return fmt.Errorf("decision plan is nil")
 	}
@@ -737,6 +746,45 @@ func (e *SmartEngine) validateDecisionPlan(tx *gorm.DB, plan *DecisionPlan, svc 
 		return fmt.Errorf("confidence %.2f 不在 [0, 1] 范围内", plan.Confidence)
 	}
 
+	if err := e.validateNoDuplicateCompletedHumanActivity(tx, ticketID, plan); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (e *SmartEngine) validateNoDuplicateCompletedHumanActivity(tx *gorm.DB, ticketID uint, plan *DecisionPlan) error {
+	for i, da := range plan.Activities {
+		if !isHumanActivityType(da.Type) {
+			continue
+		}
+
+		var completed []activityModel
+		if err := tx.Where("ticket_id = ? AND status = ? AND activity_type = ?", ticketID, ActivityCompleted, da.Type).
+			Order("id ASC").
+			Find(&completed).Error; err != nil {
+			return err
+		}
+
+		plannedName := decisionActivityName(da)
+		plannedInstructions := strings.TrimSpace(da.Instructions)
+		plannedSignatures := participantSignaturesForDecisionActivity(tx, da)
+		data := NewDecisionDataStore(tx)
+
+		for _, existing := range completed {
+			if !sameActivityMeaning(existing, plannedName, plannedInstructions) {
+				continue
+			}
+			assignments, err := data.GetActivityAssignments(existing.ID)
+			if err != nil {
+				return err
+			}
+			existingSignatures := participantSignaturesForAssignments(assignments)
+			if len(plannedSignatures) == 0 || participantSignaturesOverlap(plannedSignatures, existingSignatures) {
+				return fmt.Errorf("activities[%d] 重复创建已完成的人工活动：%s / %s", i, da.Type, plannedName)
+			}
+		}
+	}
 	return nil
 }
 
@@ -805,6 +853,86 @@ func decisionActivityName(da DecisionActivity) string {
 	}
 }
 
+func sameActivityMeaning(existing activityModel, plannedName string, plannedInstructions string) bool {
+	existingName := normalizeActivityText(existing.Name)
+	plannedName = normalizeActivityText(plannedName)
+	if existingName != "" && plannedName != "" && (existingName == plannedName || strings.Contains(existingName, plannedName) || strings.Contains(plannedName, existingName)) {
+		return true
+	}
+
+	if plannedInstructions == "" || existing.AIDecision == "" {
+		return false
+	}
+	var source DecisionPlan
+	if err := json.Unmarshal([]byte(existing.AIDecision), &source); err != nil {
+		return false
+	}
+	for _, a := range source.Activities {
+		if normalizeActivityText(a.Instructions) == normalizeActivityText(plannedInstructions) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeActivityText(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func participantSignaturesForDecisionActivity(tx *gorm.DB, da DecisionActivity) map[string]struct{} {
+	signatures := map[string]struct{}{}
+	if da.ParticipantID != nil && *da.ParticipantID > 0 {
+		signatures[fmt.Sprintf("user:%d", *da.ParticipantID)] = struct{}{}
+	}
+	if da.ParticipantType == "position_department" && da.PositionCode != "" && da.DepartmentCode != "" {
+		positionID, departmentID := resolvePositionDepartmentIDs(tx, da.PositionCode, da.DepartmentCode)
+		if positionID > 0 && departmentID > 0 {
+			signatures[fmt.Sprintf("position_department:%d:%d", positionID, departmentID)] = struct{}{}
+		}
+		signatures["position_department_code:"+normalizeActivityText(da.PositionCode)+":"+normalizeActivityText(da.DepartmentCode)] = struct{}{}
+	}
+	return signatures
+}
+
+func participantSignaturesForAssignments(assignments []ActivityAssignmentInfo) map[string]struct{} {
+	signatures := map[string]struct{}{}
+	for _, a := range assignments {
+		if a.AssigneeID != nil && *a.AssigneeID > 0 {
+			signatures[fmt.Sprintf("user:%d", *a.AssigneeID)] = struct{}{}
+		}
+		if a.UserID != nil && *a.UserID > 0 {
+			signatures[fmt.Sprintf("user:%d", *a.UserID)] = struct{}{}
+		}
+		if a.PositionID != nil && *a.PositionID > 0 && a.DepartmentID != nil && *a.DepartmentID > 0 {
+			signatures[fmt.Sprintf("position_department:%d:%d", *a.PositionID, *a.DepartmentID)] = struct{}{}
+		}
+		if a.PositionID != nil && *a.PositionID > 0 {
+			signatures[fmt.Sprintf("position:%d", *a.PositionID)] = struct{}{}
+		}
+		if a.DepartmentID != nil && *a.DepartmentID > 0 {
+			signatures[fmt.Sprintf("department:%d", *a.DepartmentID)] = struct{}{}
+		}
+	}
+	return signatures
+}
+
+func participantSignaturesOverlap(left, right map[string]struct{}) bool {
+	for sig := range left {
+		if _, ok := right[sig]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func resolvePositionDepartmentIDs(tx *gorm.DB, positionCode, departmentCode string) (uint, uint) {
+	var positionID uint
+	var departmentID uint
+	tx.Table("positions").Where("code = ?", positionCode).Select("id").Scan(&positionID)
+	tx.Table("departments").Where("code = ?", departmentCode).Select("id").Scan(&departmentID)
+	return positionID, departmentID
+}
+
 // serviceModel is a lightweight struct for reading service definition data.
 type serviceModel struct {
 	ID                uint   `gorm:"primaryKey"`
@@ -823,36 +951,40 @@ func (serviceModel) TableName() string { return "itsm_service_definitions" }
 // ensureContinuation checks whether the smart engine should trigger the next
 // decision cycle after an activity completes. It handles terminal states,
 // circuit-breaker, and parallel convergence (with SELECT FOR UPDATE).
-func (e *SmartEngine) ensureContinuation(tx *gorm.DB, ticket *ticketModel, completedActivityID uint) {
+func (e *SmartEngine) ensureContinuation(tx *gorm.DB, ticket *ticketModel, completedActivityID uint) (bool, error) {
 	// 1. Terminal state → nothing to do
 	switch ticket.Status {
 	case "completed", "cancelled", "failed":
-		return
+		return false, nil
 	}
 
 	// 2. Circuit-breaker
 	if ticket.AIFailureCount >= MaxAIFailureCount {
 		slog.Warn("ensureContinuation: AI disabled, skipping", "ticketID", ticket.ID, "failures", ticket.AIFailureCount)
-		return
+		return false, nil
 	}
 
 	// 3. Parallel convergence check
 	if completedActivityID > 0 {
 		var groupID string
-		tx.Model(&activityModel{}).Where("id = ?", completedActivityID).Select("activity_group_id").Scan(&groupID)
+		if err := tx.Model(&activityModel{}).Where("id = ?", completedActivityID).Select("activity_group_id").Scan(&groupID).Error; err != nil {
+			return false, err
+		}
 
 		if groupID != "" {
 			// Lock the group rows and check for incomplete siblings
 			var ids []uint
-			tx.Model(&activityModel{}).
+			if err := tx.Model(&activityModel{}).
 				Clauses(clause.Locking{Strength: "UPDATE"}).
 				Where("activity_group_id = ? AND status NOT IN (?, ?)", groupID, ActivityCompleted, ActivityCancelled).
-				Pluck("id", &ids)
+				Pluck("id", &ids).Error; err != nil {
+				return false, err
+			}
 
 			if len(ids) > 0 {
 				slog.Info("ensureContinuation: parallel group not converged",
 					"ticketID", ticket.ID, "groupID", groupID, "remaining", len(ids))
-				return
+				return false, nil
 			}
 			slog.Info("ensureContinuation: parallel group converged",
 				"ticketID", ticket.ID, "groupID", groupID)
@@ -867,8 +999,11 @@ func (e *SmartEngine) ensureContinuation(tx *gorm.DB, ticket *ticketModel, compl
 		})
 		if err := submitTaskInTx(e.scheduler, tx, "itsm-smart-progress", payload); err != nil {
 			slog.Error("ensureContinuation: failed to submit smart-progress task", "error", err, "ticketID", ticket.ID)
+			return false, err
 		}
+		return true, nil
 	}
+	return false, nil
 }
 
 // uintPtrIf returns a *uint if v > 0, else nil.
@@ -933,13 +1068,14 @@ func (e *SmartEngine) agenticDecision(ctx context.Context, tx *gorm.DB, ticketID
 
 	// Prepare tool context
 	toolCtx := &decisionToolContext{
-		ctx:               ctx,
-		data:              NewDecisionDataStore(tx),
-		ticketID:          ticketID,
-		serviceID:         svc.ID,
-		knowledgeSearcher: e.knowledgeSearcher,
-		resolver:          e.resolver,
-		actionExecutor:    e.actionExecutor,
+		ctx:                 ctx,
+		data:                NewDecisionDataStore(tx),
+		ticketID:            ticketID,
+		serviceID:           svc.ID,
+		knowledgeSearcher:   e.knowledgeSearcher,
+		resolver:            e.resolver,
+		actionExecutor:      e.actionExecutor,
+		completedActivityID: completedActivityID,
 	}
 	if svc.KnowledgeBaseIDs != "" {
 		var kbIDs []uint
@@ -1046,6 +1182,13 @@ func (e *SmartEngine) buildInitialSeed(tx *gorm.DB, ticketID uint, svc *serviceM
 			"current_status":     ticket.Status,
 		},
 	}
+	if completedActivityID != nil && *completedActivityID > 0 {
+		data := NewDecisionDataStore(tx)
+		if completed, err := data.GetActivityByID(ticketID, *completedActivityID); err == nil {
+			assignments, _ := data.GetActivityAssignments(completed.ID)
+			seed["completed_activity"] = activityFactMap(completed, assignments)
+		}
+	}
 	seedJSON, _ := json.MarshalIndent(seed, "", "  ")
 	userMsg := fmt.Sprintf("## 工单信息与策略约束\n\n```json\n%s\n```\n\n请使用可用工具收集所需信息，然后输出最终决策。", seedJSON)
 
@@ -1110,12 +1253,13 @@ const agenticToolGuidance = `## 工具使用指引
 
 1. 必须先用 decision.ticket_context 了解完整上下文，尤其是 current_activities、activity_history、action_progress、parallel_groups 和 is_terminal。
 2. 如果 is_terminal=true，直接输出 complete 或保持终态判断，不要创建新活动。
-3. 用 decision.list_actions 查看是否有可用自动化动作；协作规范要求预检、放行等同步动作时，优先 decision.execute_action，而不是输出 action 活动。
-4. 如需查阅处理规范或知识库，使用 decision.knowledge_search。知识不可用或无命中时可以降级，但要在 reasoning 说明。
-5. 需要人工审批/处理/表单时，必须先用 decision.resolve_participant 解析参与人；count=0 时不得高置信输出该人工活动。
-6. 候选多人时，可用 decision.user_workload 选择负载较低者；SLA 风险明显时可用 decision.sla_status。
-7. 如果需要多角色并行审批（并签），设置 execution_mode 为 "parallel"，在 activities 中列出所有并行角色。
-8. 最终输出决策 JSON（不调用任何工具）。
+3. 当 trigger_reason=activity_completed 时，必须先读取 completed_activity 和 completed_requirements；刚完成的人工活动如果已经满足当前服务规范，不得再次创建同一审批/处理/表单，必须进入下一条件或 complete。
+4. 用 decision.list_actions 查看是否有可用自动化动作；协作规范要求预检、放行等同步动作时，优先 decision.execute_action，而不是输出 action 活动。
+5. 如需查阅处理规范或知识库，使用 decision.knowledge_search。知识不可用或无命中时可以降级，但要在 reasoning 说明。
+6. 需要人工审批/处理/表单时，必须先用 decision.resolve_participant 解析参与人；count=0 时不得高置信输出该人工活动。
+7. 候选多人时，可用 decision.user_workload 选择负载较低者；SLA 风险明显时可用 decision.sla_status。
+8. 如果需要多角色并行审批（并签），设置 execution_mode 为 "parallel"，在 activities 中列出所有并行角色。
+9. 最终输出决策 JSON（不调用任何工具）。
 
 ### 完成判断
 
@@ -1124,6 +1268,7 @@ const agenticToolGuidance = `## 工具使用指引
 - decision.ticket_context.current_activities 为空；
 - decision.ticket_context.parallel_groups 没有未完成项；
 - 必要的审批、处理、表单或自动动作前置条件已经完成。
+- 本轮 completed_activity 已满足服务规范里最后一个待办人工条件。
 
 action_progress.all_completed=true 只说明动作已全部成功执行，不自动代表流程应结束；必须对照服务规范判断。`
 

@@ -60,6 +60,8 @@ func TestBuildInitialSeedIncludesDecisionTrigger(t *testing.T) {
 type fakeDecisionDataProvider struct {
 	ticket       *DecisionTicketData
 	history      []activityModel
+	activityByID map[uint]activityModel
+	assignments  map[uint][]ActivityAssignmentInfo
 	current      []CurrentActivityInfo
 	executed     []ExecutedActionInfo
 	totalActions int64
@@ -73,6 +75,13 @@ func (f fakeDecisionDataProvider) GetTicketContext(uint) (*DecisionTicketData, e
 }
 func (f fakeDecisionDataProvider) GetDecisionHistory(uint) ([]activityModel, error) {
 	return f.history, nil
+}
+func (f fakeDecisionDataProvider) GetActivityByID(_ uint, activityID uint) (*activityModel, error) {
+	activity := f.activityByID[activityID]
+	return &activity, nil
+}
+func (f fakeDecisionDataProvider) GetActivityAssignments(activityID uint) ([]ActivityAssignmentInfo, error) {
+	return f.assignments[activityID], nil
 }
 func (f fakeDecisionDataProvider) GetCurrentActivities(uint) ([]CurrentActivityInfo, error) {
 	return f.current, nil
@@ -124,8 +133,9 @@ func TestDecisionTicketContextReturnsStableDecisionAnchors(t *testing.T) {
 	now := time.Now()
 	def := toolTicketContext()
 	raw, err := def.Handler(&decisionToolContext{
-		ticketID:  42,
-		serviceID: 7,
+		ticketID:            42,
+		serviceID:           7,
+		completedActivityID: uintPtrIf(9),
 		data: fakeDecisionDataProvider{
 			ticket: &DecisionTicketData{
 				Code:                  "TICK-42",
@@ -138,7 +148,13 @@ func TestDecisionTicketContextReturnsStableDecisionAnchors(t *testing.T) {
 				SLAResolutionDeadline: &now,
 			},
 			history: []activityModel{
-				{Name: "审批", ActivityType: "approve", Status: ActivityCompleted, TransitionOutcome: "approved", FinishedAt: &now},
+				{ID: 9, Name: "审批", ActivityType: "approve", Status: ActivityCompleted, TransitionOutcome: "approved", FinishedAt: &now},
+			},
+			activityByID: map[uint]activityModel{
+				9: {ID: 9, Name: "审批", ActivityType: "approve", Status: ActivityCompleted, TransitionOutcome: "approved", FinishedAt: &now},
+			},
+			assignments: map[uint][]ActivityAssignmentInfo{
+				9: {{ParticipantType: "user", UserID: uintPtrIf(1), AssigneeID: uintPtrIf(1), Status: "completed", FinishedAt: &now}},
 			},
 			current: []CurrentActivityInfo{
 				{Name: "处理中", ActivityType: "process", Status: ActivityPending},
@@ -172,6 +188,16 @@ func TestDecisionTicketContextReturnsStableDecisionAnchors(t *testing.T) {
 			GroupID           string   `json:"group_id"`
 			PendingActivities []string `json:"pending_activities"`
 		} `json:"parallel_groups"`
+		CompletedActivity struct {
+			ID           uint `json:"id"`
+			Participants []struct {
+				UserID uint `json:"user_id"`
+			} `json:"participants"`
+		} `json:"completed_activity"`
+		CompletedRequirements []struct {
+			Type      string `json:"type"`
+			Satisfied bool   `json:"satisfied"`
+		} `json:"completed_requirements"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		t.Fatalf("unmarshal context: %v", err)
@@ -187,5 +213,67 @@ func TestDecisionTicketContextReturnsStableDecisionAnchors(t *testing.T) {
 	}
 	if len(resp.ParallelGroups) != 1 || resp.ParallelGroups[0].GroupID != "group-1" || len(resp.ParallelGroups[0].PendingActivities) != 1 {
 		t.Fatalf("expected parallel group progress, got %+v", resp.ParallelGroups)
+	}
+	if resp.CompletedActivity.ID != 9 || len(resp.CompletedActivity.Participants) != 1 || resp.CompletedActivity.Participants[0].UserID != 1 {
+		t.Fatalf("expected completed activity participant facts, got %+v", resp.CompletedActivity)
+	}
+	if len(resp.CompletedRequirements) != 1 || resp.CompletedRequirements[0].Type != "approve" || !resp.CompletedRequirements[0].Satisfied {
+		t.Fatalf("expected completed requirements, got %+v", resp.CompletedRequirements)
+	}
+}
+
+func TestValidateDecisionPlanRejectsDuplicateCompletedHumanActivity(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&ticketModel{}, &activityModel{}, &assignmentModel{}); err != nil {
+		t.Fatalf("migrate db: %v", err)
+	}
+	if err := db.Exec(`CREATE TABLE users (id integer primary key, is_active boolean)`).Error; err != nil {
+		t.Fatalf("create users: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO users (id, is_active) VALUES (1, true)`).Error; err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+
+	ticket := ticketModel{Status: "in_progress", EngineType: "smart"}
+	if err := db.Create(&ticket).Error; err != nil {
+		t.Fatalf("create ticket: %v", err)
+	}
+	activity := activityModel{
+		TicketID:          ticket.ID,
+		Name:              "审批",
+		ActivityType:      NodeApprove,
+		Status:            ActivityCompleted,
+		TransitionOutcome: "approved",
+	}
+	if err := db.Create(&activity).Error; err != nil {
+		t.Fatalf("create activity: %v", err)
+	}
+	if err := db.Create(&assignmentModel{
+		TicketID:        ticket.ID,
+		ActivityID:      activity.ID,
+		ParticipantType: "user",
+		UserID:          uintPtrIf(1),
+		AssigneeID:      uintPtrIf(1),
+		Status:          "completed",
+	}).Error; err != nil {
+		t.Fatalf("create assignment: %v", err)
+	}
+
+	eng := &SmartEngine{}
+	err = eng.validateDecisionPlan(db, ticket.ID, &DecisionPlan{
+		NextStepType:  NodeApprove,
+		ExecutionMode: "single",
+		Activities: []DecisionActivity{{
+			Type:          NodeApprove,
+			ParticipantID: uintPtrIf(1),
+			Instructions:  "再次审批",
+		}},
+		Confidence: 0.95,
+	}, &serviceModel{ID: 1})
+	if err == nil || !strings.Contains(err.Error(), "重复创建已完成的人工活动") {
+		t.Fatalf("expected duplicate human activity validation error, got %v", err)
 	}
 }

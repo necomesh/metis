@@ -497,7 +497,7 @@ func (s *TicketService) populateSmartSummary(resp *TicketResponse, activities ma
 		resp.SmartState = "ai_reasoning"
 		resp.CurrentOwnerType = "ai"
 		resp.CurrentOwnerName = "AI 智能引擎"
-		resp.NextStepSummary = "AI 正在分析下一步"
+		resp.NextStepSummary = "决策中"
 		return
 	}
 	activity, ok := activities[*resp.CurrentActivityID]
@@ -505,7 +505,7 @@ func (s *TicketService) populateSmartSummary(resp *TicketResponse, activities ma
 		resp.SmartState = "ai_reasoning"
 		resp.CurrentOwnerType = "ai"
 		resp.CurrentOwnerName = "AI 智能引擎"
-		resp.NextStepSummary = "AI 正在准备下一步"
+		resp.NextStepSummary = "决策中"
 		return
 	}
 	resp.NextStepSummary = activity.Name
@@ -853,7 +853,13 @@ func (s *TicketService) ConfirmActivity(ticketID uint, activityID uint, operator
 			TicketID:            ticketID,
 			CompletedActivityID: &activityID,
 		})
-		return s.smartEngine.SubmitProgressTaskTx(tx, payload)
+		if err := s.smartEngine.SubmitProgressTaskTx(tx, payload); err != nil {
+			return err
+		}
+		return tx.Model(&Ticket{}).Where("id = ?", ticketID).Updates(map[string]any{
+			"current_activity_id": nil,
+			"assignee_id":         nil,
+		}).Error
 	}); err != nil {
 		return nil, err
 	}
@@ -928,7 +934,13 @@ func (s *TicketService) RejectActivity(ticketID uint, activityID uint, reason st
 			TicketID:            ticketID,
 			CompletedActivityID: &activityID,
 		})
-		return s.smartEngine.SubmitProgressTaskTx(tx, payload)
+		if err := s.smartEngine.SubmitProgressTaskTx(tx, payload); err != nil {
+			return err
+		}
+		return tx.Model(&Ticket{}).Where("id = ?", ticketID).Updates(map[string]any{
+			"current_activity_id": nil,
+			"assignee_id":         nil,
+		}).Error
 	}); err != nil {
 		return nil, err
 	}

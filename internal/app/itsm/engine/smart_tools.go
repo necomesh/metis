@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"metis/internal/llm"
@@ -18,14 +19,15 @@ type decisionToolDef struct {
 
 // decisionToolContext holds the shared context for all decision tool executions.
 type decisionToolContext struct {
-	ctx               context.Context
-	data              DecisionDataProvider
-	ticketID          uint
-	serviceID         uint
-	knowledgeSearcher KnowledgeSearcher
-	resolver          *ParticipantResolver
-	knowledgeBaseIDs  []uint
-	actionExecutor    *ActionExecutor
+	ctx                 context.Context
+	data                DecisionDataProvider
+	ticketID            uint
+	serviceID           uint
+	knowledgeSearcher   KnowledgeSearcher
+	resolver            *ParticipantResolver
+	knowledgeBaseIDs    []uint
+	actionExecutor      *ActionExecutor
+	completedActivityID *uint
 }
 
 // allDecisionTools returns the complete set of decision domain tools.
@@ -106,24 +108,30 @@ func toolTicketContext() decisionToolDef {
 			activities, _ := ctx.data.GetDecisionHistory(ctx.ticketID)
 
 			var history []map[string]any
+			var completedRequirements []map[string]any
 			for _, a := range activities {
-				entry := map[string]any{
-					"type":    a.ActivityType,
-					"name":    a.Name,
-					"outcome": a.TransitionOutcome,
-				}
-				if a.FinishedAt != nil {
-					entry["completed_at"] = a.FinishedAt.Format(time.RFC3339)
-				}
-				if a.AIReasoning != "" {
-					entry["ai_reasoning"] = a.AIReasoning
-				}
-				if a.DecisionReasoning != "" {
-					entry["decision_reasoning"] = a.DecisionReasoning
-				}
+				assignments, _ := ctx.data.GetActivityAssignments(a.ID)
+				entry := activityFactMap(&a, assignments)
 				history = append(history, entry)
+				if a.Status == ActivityCompleted && isHumanActivityType(a.ActivityType) {
+					completedRequirements = append(completedRequirements, map[string]any{
+						"type":         a.ActivityType,
+						"name":         a.Name,
+						"outcome":      a.TransitionOutcome,
+						"participants": assignmentFacts(assignments),
+						"satisfied":    isPositiveActivityOutcome(a.TransitionOutcome),
+					})
+				}
 			}
 			result["activity_history"] = history
+			result["completed_requirements"] = completedRequirements
+
+			if ctx.completedActivityID != nil && *ctx.completedActivityID > 0 {
+				if completed, err := ctx.data.GetActivityByID(ctx.ticketID, *ctx.completedActivityID); err == nil {
+					assignments, _ := ctx.data.GetActivityAssignments(completed.ID)
+					result["completed_activity"] = activityFactMap(completed, assignments)
+				}
+			}
 
 			currentActivities, _ := ctx.data.GetCurrentActivities(ctx.ticketID)
 			var current []map[string]any
@@ -195,6 +203,81 @@ func toolTicketContext() decisionToolDef {
 
 			return json.Marshal(result)
 		},
+	}
+}
+
+func activityFactMap(a *activityModel, assignments []ActivityAssignmentInfo) map[string]any {
+	entry := map[string]any{
+		"id":      a.ID,
+		"type":    a.ActivityType,
+		"name":    a.Name,
+		"status":  a.Status,
+		"outcome": a.TransitionOutcome,
+	}
+	if a.FinishedAt != nil {
+		entry["completed_at"] = a.FinishedAt.Format(time.RFC3339)
+	}
+	if a.AIReasoning != "" {
+		entry["ai_reasoning"] = a.AIReasoning
+	}
+	if a.DecisionReasoning != "" {
+		entry["decision_reasoning"] = a.DecisionReasoning
+	}
+	if a.AIDecision != "" {
+		var decision any
+		if err := json.Unmarshal([]byte(a.AIDecision), &decision); err == nil {
+			entry["source_decision"] = decision
+		}
+	}
+	facts := assignmentFacts(assignments)
+	if len(facts) > 0 {
+		entry["participants"] = facts
+	}
+	return entry
+}
+
+func assignmentFacts(assignments []ActivityAssignmentInfo) []map[string]any {
+	facts := make([]map[string]any, 0, len(assignments))
+	for _, a := range assignments {
+		fact := map[string]any{
+			"participant_type": a.ParticipantType,
+			"status":           a.Status,
+		}
+		if a.UserID != nil {
+			fact["user_id"] = *a.UserID
+		}
+		if a.AssigneeID != nil {
+			fact["assignee_id"] = *a.AssigneeID
+		}
+		if a.PositionID != nil {
+			fact["position_id"] = *a.PositionID
+		}
+		if a.DepartmentID != nil {
+			fact["department_id"] = *a.DepartmentID
+		}
+		if a.FinishedAt != nil {
+			fact["finished_at"] = a.FinishedAt.Format(time.RFC3339)
+		}
+		facts = append(facts, fact)
+	}
+	return facts
+}
+
+func isHumanActivityType(activityType string) bool {
+	switch activityType {
+	case NodeApprove, NodeProcess, NodeForm:
+		return true
+	default:
+		return false
+	}
+}
+
+func isPositiveActivityOutcome(outcome string) bool {
+	switch strings.ToLower(strings.TrimSpace(outcome)) {
+	case "", "approve", "approved", "confirm", "confirmed", "complete", "completed", "process", "processed", "submit", "submitted", "success", "passed":
+		return true
+	default:
+		return false
 	}
 }
 
