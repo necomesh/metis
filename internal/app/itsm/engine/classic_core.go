@@ -146,20 +146,10 @@ func (e *ClassicEngine) Progress(ctx context.Context, tx *gorm.DB, params Progre
 	}
 
 	now := time.Now()
-	var completedAssignment assignmentModel
-	assignmentResult := tx.Model(&assignmentModel{}).
-		Where("activity_id = ? AND assignee_id = ? AND status = ?", activity.ID, params.OperatorID, "pending").
-		Updates(map[string]any{
-			"status":      "completed",
-			"finished_at": now,
-		})
-	if assignmentResult.Error != nil {
-		return assignmentResult.Error
-	}
-	if assignmentResult.RowsAffected > 0 {
-		if err := tx.Where("activity_id = ? AND assignee_id = ? AND status = ?",
-			activity.ID, params.OperatorID, "completed").
-			Order("id DESC").First(&completedAssignment).Error; err == nil && completedAssignment.DelegatedFrom != nil {
+	if completedAssignment, completed, err := completePendingAssignment(tx, e.resolver, activity.ID, params.OperatorID, now); err != nil {
+		return err
+	} else if completed && completedAssignment != nil {
+		if completedAssignment.DelegatedFrom != nil {
 			if err := tx.Model(&assignmentModel{}).
 				Where("id = ? AND status = ?", *completedAssignment.DelegatedFrom, "delegated").
 				Updates(map[string]any{"status": "pending", "is_current": true}).Error; err != nil {
@@ -175,6 +165,9 @@ func (e *ClassicEngine) Progress(ctx context.Context, tx *gorm.DB, params Progre
 		"status":             ActivityCompleted,
 		"transition_outcome": params.Outcome,
 		"finished_at":        now,
+	}
+	if params.Opinion != "" {
+		updates["decision_reasoning"] = params.Opinion
 	}
 	if len(params.Result) > 0 {
 		updates["form_data"] = string(params.Result)
@@ -193,7 +186,10 @@ func (e *ClassicEngine) Progress(ctx context.Context, tx *gorm.DB, params Progre
 
 	// Record timeline
 	msg := fmt.Sprintf("节点 [%s] 完成，结果: %s", nodeLabel(currentNode), params.Outcome)
-	e.recordTimeline(tx, params.TicketID, &params.ActivityID, params.OperatorID, "activity_completed", msg)
+	if params.Opinion != "" {
+		msg = fmt.Sprintf("%s，处理意见: %s", msg, params.Opinion)
+	}
+	e.recordTimelineWithReasoning(tx, params.TicketID, &params.ActivityID, params.OperatorID, "activity_completed", msg, params.Opinion)
 
 	// Cancel any suspended boundary tokens (⑤b itsm-boundary-events)
 	cancelBoundaryTokens(tx, &token)

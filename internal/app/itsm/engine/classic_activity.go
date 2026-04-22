@@ -13,6 +13,9 @@ func (e *ClassicEngine) completeActivity(tx *gorm.DB, activity *activityModel, p
 		"transition_outcome": params.Outcome,
 		"finished_at":        now,
 	}
+	if params.Opinion != "" {
+		updates["decision_reasoning"] = params.Opinion
+	}
 	if len(params.Result) > 0 {
 		updates["form_data"] = string(params.Result)
 	}
@@ -66,12 +69,17 @@ func (e *ClassicEngine) assignParticipants(tx *gorm.DB, ticketID, activityID, _ 
 }
 
 func (e *ClassicEngine) recordTimeline(tx *gorm.DB, ticketID uint, activityID *uint, operatorID uint, eventType, message string) error {
+	return e.recordTimelineWithReasoning(tx, ticketID, activityID, operatorID, eventType, message, "")
+}
+
+func (e *ClassicEngine) recordTimelineWithReasoning(tx *gorm.DB, ticketID uint, activityID *uint, operatorID uint, eventType, message, reasoning string) error {
 	tl := &timelineModel{
 		TicketID:   ticketID,
 		ActivityID: activityID,
 		OperatorID: operatorID,
 		EventType:  eventType,
 		Message:    message,
+		Reasoning:  reasoning,
 	}
 	return tx.Create(tl).Error
 }

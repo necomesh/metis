@@ -305,6 +305,34 @@ func (h *TicketHandler) Mine(c *gin.Context) {
 	h.respondTicketList(c, items, total)
 }
 
+func (h *TicketHandler) PendingApprovals(c *gin.Context) {
+	userID, _ := c.Get("userId")
+	operatorID := userID.(uint)
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
+	items, total, err := h.svc.PendingApprovals(operatorID, c.Query("keyword"), page, pageSize)
+	if err != nil {
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.respondTicketList(c, items, total)
+}
+
+func (h *TicketHandler) ApprovalHistory(c *gin.Context) {
+	userID, _ := c.Get("userId")
+	operatorID := userID.(uint)
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
+	items, total, err := h.svc.ApprovalHistory(operatorID, c.Query("keyword"), page, pageSize)
+	if err != nil {
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.respondTicketList(c, items, total)
+}
+
 func (h *TicketHandler) Timeline(c *gin.Context) {
 	id, err := parseID(c)
 	if err != nil {
@@ -328,6 +356,7 @@ func (h *TicketHandler) Timeline(c *gin.Context) {
 type ProgressTicketRequest struct {
 	ActivityID uint            `json:"activityId" binding:"required"`
 	Outcome    string          `json:"outcome" binding:"required"`
+	Opinion    string          `json:"opinion"`
 	Result     json.RawMessage `json:"result"`
 }
 
@@ -351,12 +380,14 @@ func (h *TicketHandler) Progress(c *gin.Context) {
 	c.Set("audit_resource", "ticket")
 	c.Set("audit_resource_id", c.Param("id"))
 
-	ticket, err := h.svc.Progress(id, req.ActivityID, req.Outcome, req.Result, operatorID)
+	ticket, err := h.svc.Progress(id, req.ActivityID, req.Outcome, req.Opinion, req.Result, operatorID)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrTicketNotFound):
 			handler.Fail(c, http.StatusNotFound, err.Error())
 		case errors.Is(err, ErrTicketTerminal):
+			handler.Fail(c, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrOpinionRequired), errors.Is(err, ErrInvalidProgressOutcome):
 			handler.Fail(c, http.StatusBadRequest, err.Error())
 		case errors.Is(err, engine.ErrActivityNotFound), errors.Is(err, engine.ErrActivityNotActive):
 			handler.Fail(c, http.StatusBadRequest, err.Error())

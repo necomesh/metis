@@ -37,6 +37,7 @@ type ProgressParams struct {
 	ActivityID uint
 	Outcome    string
 	Result     json.RawMessage // form data or processing result
+	Opinion    string          // human approval / rejection opinion
 	OperatorID uint
 }
 

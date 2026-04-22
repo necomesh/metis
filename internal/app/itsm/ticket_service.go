@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/samber/do/v2"
@@ -30,6 +31,8 @@ var (
 	ErrNoActiveAssignment   = errors.New("no active pending assignment for this activity")
 	ErrNotRequester         = errors.New("only the ticket requester can withdraw")
 	ErrTicketClaimed        = errors.New("ticket has been claimed and cannot be withdrawn")
+	ErrOpinionRequired      = errors.New("处理意见不能为空")
+	ErrInvalidProgressOutcome = errors.New("人工节点只能提交 approved 或 rejected")
 )
 
 type TicketService struct {
@@ -223,7 +226,7 @@ func (s *TicketService) CreateFromAgent(ctx context.Context, req tools.AgentTick
 }
 
 // Progress advances a workflow ticket. The operator must be the assignee or have admin privileges.
-func (s *TicketService) Progress(ticketID uint, activityID uint, outcome string, result json.RawMessage, operatorID uint) (*Ticket, error) {
+func (s *TicketService) Progress(ticketID uint, activityID uint, outcome string, opinion string, result json.RawMessage, operatorID uint) (*Ticket, error) {
 	t, err := s.ticketRepo.FindByID(ticketID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -234,6 +237,10 @@ func (s *TicketService) Progress(ticketID uint, activityID uint, outcome string,
 	if t.IsTerminal() {
 		return nil, ErrTicketTerminal
 	}
+	opinion = strings.TrimSpace(opinion)
+	if err := s.validateHumanProgress(ticketID, activityID, outcome, opinion, operatorID); err != nil {
+		return nil, err
+	}
 
 	eng := s.engineFor(t.EngineType)
 	if err := s.ticketRepo.DB().Transaction(func(tx *gorm.DB) error {
@@ -242,6 +249,7 @@ func (s *TicketService) Progress(ticketID uint, activityID uint, outcome string,
 			ActivityID: activityID,
 			Outcome:    outcome,
 			Result:     result,
+			Opinion:    opinion,
 			OperatorID: operatorID,
 		})
 	}); err != nil {
@@ -566,6 +574,46 @@ func (s *TicketService) Mine(requesterID uint, keyword, status string, startDate
 		PageSize:    pageSize,
 	}
 	return s.ticketRepo.List(params)
+}
+
+func (s *TicketService) PendingApprovals(operatorID uint, keyword string, page, pageSize int) ([]Ticket, int64, error) {
+	positionIDs, departmentIDs := s.resolveUserOrg(operatorID)
+	return s.ticketRepo.ListPendingApprovals(TicketApprovalListParams{
+		Keyword:  keyword,
+		Page:     page,
+		PageSize: pageSize,
+	}, operatorID, positionIDs, departmentIDs)
+}
+
+func (s *TicketService) ApprovalHistory(operatorID uint, keyword string, page, pageSize int) ([]Ticket, int64, error) {
+	return s.ticketRepo.ListApprovalHistory(TicketApprovalListParams{
+		Keyword:  keyword,
+		Page:     page,
+		PageSize: pageSize,
+	}, operatorID)
+}
+
+func (s *TicketService) validateHumanProgress(ticketID uint, activityID uint, outcome string, opinion string, operatorID uint) error {
+	if operatorID == 0 {
+		return nil
+	}
+
+	var activity TicketActivity
+	if err := s.ticketRepo.DB().Where("ticket_id = ? AND id = ?", ticketID, activityID).First(&activity).Error; err != nil {
+		return engine.ErrActivityNotFound
+	}
+	if activity.ActivityType != engine.NodeProcess && activity.ActivityType != engine.NodeForm {
+		return nil
+	}
+	switch strings.TrimSpace(outcome) {
+	case "approved", "rejected":
+	default:
+		return ErrInvalidProgressOutcome
+	}
+	if opinion == "" {
+		return ErrOpinionRequired
+	}
+	return nil
 }
 
 func (s *TicketService) Assign(id uint, assigneeID uint, operatorID uint) (*Ticket, error) {

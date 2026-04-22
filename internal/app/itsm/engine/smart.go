@@ -197,10 +197,17 @@ func (e *SmartEngine) Progress(ctx context.Context, tx *gorm.DB, params Progress
 	}
 
 	now := time.Now()
+	if _, _, err := completePendingAssignment(tx, e.resolver, activity.ID, params.OperatorID, now); err != nil {
+		return err
+	}
+
 	updates := map[string]any{
 		"status":             ActivityCompleted,
 		"transition_outcome": params.Outcome,
 		"finished_at":        now,
+	}
+	if params.Opinion != "" {
+		updates["decision_reasoning"] = params.Opinion
 	}
 	if len(params.Result) > 0 {
 		updates["form_data"] = string(params.Result)
@@ -210,7 +217,7 @@ func (e *SmartEngine) Progress(ctx context.Context, tx *gorm.DB, params Progress
 	}
 
 	e.recordTimeline(tx, params.TicketID, &params.ActivityID, params.OperatorID, "activity_completed",
-		fmt.Sprintf("活动 [%s] 完成，结果: %s", activity.Name, params.Outcome), "")
+		humanProgressMessage(activity.Name, params.Outcome, params.Opinion), params.Opinion)
 
 	// Load ticket for ensureContinuation
 	var ticket ticketModel
@@ -869,6 +876,14 @@ func decisionActivityName(da DecisionActivity) string {
 	default:
 		return da.Type
 	}
+}
+
+func humanProgressMessage(activityName, outcome, opinion string) string {
+	msg := fmt.Sprintf("活动 [%s] 完成，结果: %s", activityName, outcome)
+	if opinion != "" {
+		msg = fmt.Sprintf("%s，处理意见: %s", msg, opinion)
+	}
+	return msg
 }
 
 func sameActivityMeaning(existing activityModel, plannedName string, plannedInstructions string) bool {

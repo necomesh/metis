@@ -122,6 +122,12 @@ type TicketListParams struct {
 	DeptScope   *[]uint
 }
 
+type TicketApprovalListParams struct {
+	Keyword  string
+	Page     int
+	PageSize int
+}
+
 func (r *TicketRepo) List(params TicketListParams) ([]Ticket, int64, error) {
 	query := r.db.Model(&Ticket{})
 
@@ -166,6 +172,55 @@ func (r *TicketRepo) List(params TicketListParams) ([]Ticket, int64, error) {
 	var items []Ticket
 	offset := (params.Page - 1) * params.PageSize
 	if err := query.Offset(offset).Limit(params.PageSize).Order("id DESC").Find(&items).Error; err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
+}
+
+func (r *TicketRepo) ListPendingApprovals(params TicketApprovalListParams, operatorID uint, positionIDs []uint, departmentIDs []uint) ([]Ticket, int64, error) {
+	query := r.db.Model(&Ticket{}).
+		Joins("JOIN itsm_ticket_activities AS act ON act.ticket_id = itsm_tickets.id").
+		Joins("JOIN itsm_ticket_assignments AS assign ON assign.ticket_id = itsm_tickets.id AND assign.activity_id = act.id").
+		Where("itsm_tickets.status NOT IN ?", []string{TicketStatusCompleted, TicketStatusFailed, TicketStatusCancelled}).
+		Where("act.activity_type IN ? AND act.status IN ?", []string{"form", "process"}, []string{"pending", "in_progress"}).
+		Where("assign.status = ?", AssignmentPending).
+		Where(r.assignmentOperatorCondition("assign", operatorID, positionIDs, departmentIDs))
+
+	return r.listApprovalQuery(query, params, "itsm_priorities.value ASC, itsm_tickets.created_at ASC, itsm_tickets.id ASC")
+}
+
+func (r *TicketRepo) ListApprovalHistory(params TicketApprovalListParams, operatorID uint) ([]Ticket, int64, error) {
+	query := r.db.Model(&Ticket{}).
+		Joins("JOIN itsm_ticket_activities AS act ON act.ticket_id = itsm_tickets.id").
+		Joins("JOIN itsm_ticket_assignments AS assign ON assign.ticket_id = itsm_tickets.id AND assign.activity_id = act.id").
+		Where("act.activity_type IN ?", []string{"form", "process"}).
+		Where("assign.status = ? AND assign.assignee_id = ?", AssignmentCompleted, operatorID)
+
+	return r.listApprovalQuery(query, params, "assign.finished_at DESC, itsm_tickets.id DESC")
+}
+
+func (r *TicketRepo) listApprovalQuery(query *gorm.DB, params TicketApprovalListParams, order string) ([]Ticket, int64, error) {
+	query = query.Joins("LEFT JOIN itsm_priorities ON itsm_priorities.id = itsm_tickets.priority_id")
+	if params.Keyword != "" {
+		like := "%" + params.Keyword + "%"
+		query = query.Where("itsm_tickets.code LIKE ? OR itsm_tickets.title LIKE ? OR itsm_tickets.description LIKE ?", like, like, like)
+	}
+
+	var total int64
+	if err := query.Session(&gorm.Session{}).Distinct("itsm_tickets.id").Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	if params.Page < 1 {
+		params.Page = 1
+	}
+	if params.PageSize < 1 {
+		params.PageSize = 20
+	}
+
+	var items []Ticket
+	offset := (params.Page - 1) * params.PageSize
+	if err := query.Distinct("itsm_tickets.*").Offset(offset).Limit(params.PageSize).Order(order).Find(&items).Error; err != nil {
 		return nil, 0, err
 	}
 	return items, total, nil

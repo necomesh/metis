@@ -118,6 +118,7 @@ func toolTicketContext() decisionToolDef {
 						"type":         a.ActivityType,
 						"name":         a.Name,
 						"outcome":      a.TransitionOutcome,
+						"operator_opinion": a.DecisionReasoning,
 						"participants": assignmentFacts(assignments),
 						"satisfied":    isPositiveActivityOutcome(a.TransitionOutcome),
 					})
@@ -222,6 +223,7 @@ func activityFactMap(a *activityModel, assignments []ActivityAssignmentInfo) map
 	}
 	if a.DecisionReasoning != "" {
 		entry["decision_reasoning"] = a.DecisionReasoning
+		entry["operator_opinion"] = a.DecisionReasoning
 	}
 	if a.AIDecision != "" {
 		var decision any
@@ -274,7 +276,7 @@ func isHumanActivityType(activityType string) bool {
 
 func isPositiveActivityOutcome(outcome string) bool {
 	switch strings.ToLower(strings.TrimSpace(outcome)) {
-	case "", "complete", "completed", "process", "processed", "submit", "submitted", "success", "passed":
+	case "", "approve", "approved", "complete", "completed", "process", "processed", "submit", "submitted", "success", "passed":
 		return true
 	default:
 		return false
