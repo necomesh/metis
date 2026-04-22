@@ -211,9 +211,11 @@ func seedMenus(db *gorm.DB) error {
 
 	// 我的工单
 	seedMenu(db, &itsmDir.ID, "我的工单", model.MenuTypeMenu, "/itsm/tickets/mine", "User", "itsm:ticket:mine", 3)
+	seedMenu(db, &itsmDir.ID, "待审批工单", model.MenuTypeMenu, "/itsm/tickets/approvals/pending", "ClipboardCheck", "itsm:ticket:approval:pending", 4)
+	seedMenu(db, &itsmDir.ID, "审批历史", model.MenuTypeMenu, "/itsm/tickets/approvals/history", "History", "itsm:ticket:approval:history", 5)
 
 	// 工单管理
-	allTicketMenu := seedMenu(db, &itsmDir.ID, "工单管理", model.MenuTypeMenu, "/itsm/tickets", "List", "itsm:ticket:list", 4)
+	allTicketMenu := seedMenu(db, &itsmDir.ID, "工单管理", model.MenuTypeMenu, "/itsm/tickets", "List", "itsm:ticket:list", 6)
 	seedButtons(db, allTicketMenu, []model.Menu{
 		{Name: "指派工单", Type: model.MenuTypeButton, Permission: "itsm:ticket:assign", Sort: 1},
 		{Name: "取消工单", Type: model.MenuTypeButton, Permission: "itsm:ticket:cancel", Sort: 3},
@@ -221,7 +223,7 @@ func seedMenus(db *gorm.DB) error {
 	})
 
 	// 服务目录 (unified workspace: catalogs + services)
-	serviceMenu := seedMenu(db, &itsmDir.ID, "服务目录", model.MenuTypeMenu, "/itsm/services", "Cog", "itsm:service:list", 5)
+	serviceMenu := seedMenu(db, &itsmDir.ID, "服务目录", model.MenuTypeMenu, "/itsm/services", "Cog", "itsm:service:list", 7)
 	seedButtons(db, serviceMenu, []model.Menu{
 		{Name: "新增服务", Type: model.MenuTypeButton, Permission: "itsm:service:create", Sort: 0},
 		{Name: "编辑服务", Type: model.MenuTypeButton, Permission: "itsm:service:update", Sort: 1},
@@ -232,7 +234,7 @@ func seedMenus(db *gorm.DB) error {
 	})
 
 	// SLA 管理
-	slaMenu := seedMenu(db, &itsmDir.ID, "SLA 管理", model.MenuTypeMenu, "/itsm/sla", "Timer", "itsm:sla:list", 7)
+	slaMenu := seedMenu(db, &itsmDir.ID, "SLA 管理", model.MenuTypeMenu, "/itsm/sla", "Timer", "itsm:sla:list", 9)
 	seedButtons(db, slaMenu, []model.Menu{
 		{Name: "新增SLA", Type: model.MenuTypeButton, Permission: "itsm:sla:create", Sort: 0},
 		{Name: "编辑SLA", Type: model.MenuTypeButton, Permission: "itsm:sla:update", Sort: 1},
@@ -362,6 +364,8 @@ func seedPolicies(enforcer *casbin.Enforcer) error {
 		// Tickets
 		{"admin", "/api/v1/itsm/tickets", "GET"},
 		{"admin", "/api/v1/itsm/tickets/mine", "GET"},
+		{"admin", "/api/v1/itsm/tickets/approvals/pending", "GET"},
+		{"admin", "/api/v1/itsm/tickets/approvals/history", "GET"},
 		{"admin", "/api/v1/itsm/tickets/:id", "GET"},
 		{"admin", "/api/v1/itsm/tickets/:id/assign", "PUT"},
 		{"admin", "/api/v1/itsm/tickets/:id/cancel", "PUT"},
@@ -393,6 +397,8 @@ func seedPolicies(enforcer *casbin.Enforcer) error {
 		{"admin", "itsm:ticket:cancel", "read"},
 		{"admin", "itsm:ticket:override", "read"},
 		{"admin", "itsm:ticket:mine", "read"},
+		{"admin", "itsm:ticket:approval:pending", "read"},
+		{"admin", "itsm:ticket:approval:history", "read"},
 		{"admin", "itsm:priority:list", "read"},
 		{"admin", "itsm:priority:create", "read"},
 		{"admin", "itsm:priority:update", "read"},

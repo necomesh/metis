@@ -47,9 +47,12 @@ export function Component() {
   })
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h2 className="text-lg font-semibold">{t("itsm:tickets.mine")}</h2>
+    <div className="workspace-page">
+      <div className="workspace-page-header">
+        <div>
+          <h2 className="workspace-page-title">{t("itsm:tickets.mine")}</h2>
+          <p className="workspace-page-description">{t("itsm:tickets.mineDesc")}</p>
+        </div>
       </div>
 
       <DataTableToolbar>

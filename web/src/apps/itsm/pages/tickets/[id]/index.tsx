@@ -87,6 +87,7 @@ const ACTIVE_STATUSES = new Set(["pending", "in_progress", "waiting_action"])
 const TERMINAL_STATUSES = new Set(["completed", "cancelled", "failed"])
 const HUMAN_ACTIVITY_TYPES = new Set(["form", "process"])
 const DEFAULT_DECISIONING_MESSAGE = "决策引擎正在生成下一步，页面会自动刷新。"
+type ApprovalOutcome = "approved" | "rejected"
 
 const DEFAULT_EVENT_STYLE = { icon: Clock, bg: "bg-muted", fg: "text-muted-foreground" }
 const TIMELINE_EVENT_STYLE: Record<string, { icon: LucideIcon; bg: string; fg: string }> = {
@@ -143,11 +144,20 @@ function useCancelSchema() {
   })
 }
 
-function getNodeOutcomes(activityType: string): string[] {
+function useApprovalSchema() {
+  const { t } = useTranslation("itsm")
+  return z.object({
+    opinion: z.string().min(1, t("validation.opinionRequired")),
+  })
+}
+
+function getNodeOutcomes(activityType: string): ApprovalOutcome[] {
   switch (activityType) {
-    case "form": return ["submitted"]
-    case "process": return ["completed"]
-    default: return ["completed"]
+    case "form":
+    case "process":
+      return ["approved", "rejected"]
+    default:
+      return ["approved", "rejected"]
   }
 }
 
@@ -203,10 +213,10 @@ function ownerName(ticket: TicketItem, activity?: ActivityItem | null) {
 
 function decisioningMessageForOutcome(outcome?: string) {
   switch (outcome) {
-    case "submitted":
-      return "已提交处理结果，后台决策中。"
-    case "completed":
-      return "已完成当前处理，后台决策中。"
+    case "approved":
+      return "已通过当前审批，后台决策中。"
+    case "rejected":
+      return "已驳回当前审批，后台决策中。"
     default:
       return "已处理，后台决策中。"
   }
@@ -244,8 +254,8 @@ function DecisionButtonContent({ icon: Icon, children }: { icon: LucideIcon; chi
 }
 
 function outcomeLabel(activity: ActivityItem, outcome: string, t: (key: string) => string) {
-  if (activity.activityType === "form") return t("itsm:tickets.submitProcessing")
-  if (outcome === "completed") return t("itsm:tickets.processComplete")
+  if (outcome === "approved") return t("itsm:tickets.approve")
+  if (outcome === "rejected") return t("itsm:tickets.reject")
   return `${activity.name}: ${outcome}`
 }
 
@@ -411,6 +421,9 @@ export function Component() {
   const ticketId = Number(id)
   const [assignOpen, setAssignOpen] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
+  const [approvalOpen, setApprovalOpen] = useState(false)
+  const [approvalOutcome, setApprovalOutcome] = useState<ApprovalOutcome>("approved")
+  const [approvalActivityId, setApprovalActivityId] = useState<number | null>(null)
   const [decisioningMessage, setDecisioningMessage] = useState(DEFAULT_DECISIONING_MESSAGE)
 
   const canAssign = usePermission("itsm:ticket:assign")
@@ -421,6 +434,7 @@ export function Component() {
 
   const assignSchema = useAssignSchema()
   const cancelSchema = useCancelSchema()
+  const approvalSchema = useApprovalSchema()
 
   const { data: ticket, isLoading } = useQuery({
     queryKey: ["itsm-ticket", ticketId],
@@ -462,6 +476,12 @@ export function Component() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     resolver: zodResolver(cancelSchema as any),
     defaultValues: { reason: "" },
+  })
+
+  const approvalForm = useForm<{ opinion: string }>({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    resolver: zodResolver(approvalSchema as any),
+    defaultValues: { opinion: "" },
   })
 
   const invalidateTicket = () => {
@@ -509,10 +529,13 @@ export function Component() {
   })
 
   const progressMut = useMutation({
-    mutationFn: (data: { activityId: number; outcome: string }) => progressTicket(ticketId, data),
+    mutationFn: (data: { activityId: number; outcome: ApprovalOutcome; opinion: string }) => progressTicket(ticketId, data),
     onMutate: (data) => markSmartDecisioning(decisioningMessageForOutcome(data.outcome)),
     onSuccess: () => {
       invalidateTicket()
+      setApprovalOpen(false)
+      setApprovalActivityId(null)
+      approvalForm.reset({ opinion: "" })
       toast.success(t("itsm:tickets.progressSuccess"))
     },
     onError: (err) => {
@@ -520,6 +543,13 @@ export function Component() {
       toast.error(err.message)
     },
   })
+
+  const openApprovalSheet = (activityId: number, outcome: ApprovalOutcome) => {
+    setApprovalActivityId(activityId)
+    setApprovalOutcome(outcome)
+    approvalForm.reset({ opinion: "" })
+    setApprovalOpen(true)
+  }
 
   useEffect(() => {
     if (ticket?.engineType !== "smart" || ticket.smartState !== "ai_reasoning") return
@@ -737,12 +767,12 @@ export function Component() {
                   <Button
                     key={`${activeHumanActivity.id}-${outcome}`}
                     size="sm"
-                    className="w-full"
-                    variant="default"
+                    className={outcome === "rejected" ? "w-full text-destructive" : "w-full"}
+                    variant={outcome === "approved" ? "default" : "outline"}
                     disabled={progressMut.isPending}
-                    onClick={() => progressMut.mutate({ activityId: activeHumanActivity.id, outcome })}
+                    onClick={() => openApprovalSheet(activeHumanActivity.id, outcome)}
                   >
-                    <DecisionButtonContent icon={CheckCircle2}>{outcomeLabel(activeHumanActivity, outcome, t)}</DecisionButtonContent>
+                    <DecisionButtonContent icon={outcome === "approved" ? CheckCircle2 : CircleX}>{outcomeLabel(activeHumanActivity, outcome, t)}</DecisionButtonContent>
                   </Button>
                 ))}
 
@@ -811,6 +841,48 @@ export function Component() {
               <SheetFooter>
                 <Button type="submit" size="sm" disabled={assignMut.isPending}>
                   {assignMut.isPending ? t("common:saving") : t("itsm:tickets.assign")}
+                </Button>
+              </SheetFooter>
+            </form>
+          </Form>
+        </SheetContent>
+      </Sheet>
+
+      <Sheet open={approvalOpen} onOpenChange={setApprovalOpen}>
+        <SheetContent className="sm:max-w-md">
+          <SheetHeader>
+            <SheetTitle>{approvalOutcome === "approved" ? t("itsm:tickets.approve") : t("itsm:tickets.reject")}</SheetTitle>
+            <SheetDescription>{t("itsm:tickets.approvalOpinionDesc")}</SheetDescription>
+          </SheetHeader>
+          <Form {...approvalForm}>
+            <form
+              onSubmit={approvalForm.handleSubmit((v) => {
+                if (!approvalActivityId) return
+                progressMut.mutate({
+                  activityId: approvalActivityId,
+                  outcome: approvalOutcome,
+                  opinion: v.opinion,
+                })
+              })}
+              className="flex flex-1 flex-col gap-5 px-4"
+            >
+              <FormField control={approvalForm.control} name="opinion" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t("itsm:tickets.approvalOpinion")}</FormLabel>
+                  <FormControl>
+                    <Textarea rows={4} placeholder={t("itsm:tickets.approvalOpinionPlaceholder")} {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <SheetFooter>
+                <Button
+                  type="submit"
+                  size="sm"
+                  variant={approvalOutcome === "approved" ? "default" : "destructive"}
+                  disabled={progressMut.isPending}
+                >
+                  {progressMut.isPending ? t("common:saving") : approvalOutcome === "approved" ? t("itsm:tickets.confirmApprove") : t("itsm:tickets.confirmReject")}
                 </Button>
               </SheetFooter>
             </form>

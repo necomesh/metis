@@ -13,6 +13,8 @@ registerApp({
       items: [
         "itsm:service-desk:use",
         "itsm:ticket:mine",
+        "itsm:ticket:approval:pending",
+        "itsm:ticket:approval:history",
       ],
     },
     { label: "serviceManagement", items: ["itsm:ticket:list", "itsm:service:list"] },
@@ -71,6 +73,24 @@ registerApp({
         {
           index: true,
           lazy: () => import("./pages/tickets/mine/index"),
+        },
+      ],
+    },
+    {
+      path: "itsm/tickets/approvals/pending",
+      children: [
+        {
+          index: true,
+          lazy: () => import("./pages/tickets/approvals/pending"),
+        },
+      ],
+    },
+    {
+      path: "itsm/tickets/approvals/history",
+      children: [
+        {
+          index: true,
+          lazy: () => import("./pages/tickets/approvals/history"),
         },
       ],
     },

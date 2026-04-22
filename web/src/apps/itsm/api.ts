@@ -369,10 +369,6 @@ export function assignTicket(id: number, assigneeId: number) {
   })
 }
 
-export function completeTicket(id: number) {
-  return api.put<TicketItem>(`/api/v1/itsm/tickets/${id}/complete`, {})
-}
-
 export function cancelTicket(id: number, reason: string) {
   return api.put<TicketItem>(`/api/v1/itsm/tickets/${id}/cancel`, { reason })
 }
@@ -532,7 +528,7 @@ export function fetchTicketActivities(ticketId: number) {
   return api.get<ActivityItem[]>(`/api/v1/itsm/tickets/${ticketId}/activities`).then((r) => r ?? [])
 }
 
-export function progressTicket(ticketId: number, data: { activityId: number; outcome: string; result?: unknown }) {
+export function progressTicket(ticketId: number, data: { activityId: number; outcome: "approved" | "rejected"; opinion: string; result?: unknown }) {
   return api.post<TicketItem>(`/api/v1/itsm/tickets/${ticketId}/progress`, data)
 }
 
