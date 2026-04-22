@@ -37,7 +37,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import {
   Card,
@@ -76,7 +75,6 @@ import { useAuthStore } from "@/stores/auth"
 import {
   assignTicket,
   cancelTicket,
-  completeTicket,
   confirmActivity,
   fetchTicket,
   fetchTicketActivities,
@@ -424,7 +422,6 @@ export function Component() {
   const [rejectAiOpen, setRejectAiOpen] = useState(false)
 
   const canAssign = usePermission("itsm:ticket:assign")
-  const canComplete = usePermission("itsm:ticket:complete")
   const canCancel = usePermission("itsm:ticket:cancel")
   const canOverride = usePermission("itsm:ticket:override")
   const currentUser = useAuthStore((s) => s.user)
@@ -454,7 +451,7 @@ export function Component() {
   const { data: tokens = [] } = useQuery({
     queryKey: ["itsm-ticket-tokens", ticketId],
     queryFn: () => fetchTicketTokens(ticketId),
-    enabled: ticketId > 0,
+    enabled: ticketId > 0 && ticket?.engineType === "classic" && Boolean(ticket.workflowJson),
   })
 
   const { data: users = [] } = useQuery({
@@ -487,15 +484,6 @@ export function Component() {
       invalidateTicket()
       setAssignOpen(false)
       toast.success(t("itsm:tickets.assignSuccess"))
-    },
-    onError: (err) => toast.error(err.message),
-  })
-
-  const completeMut = useMutation({
-    mutationFn: () => completeTicket(ticketId),
-    onSuccess: () => {
-      invalidateTicket()
-      toast.success(t("itsm:tickets.completeSuccess"))
     },
     onError: (err) => toast.error(err.message),
   })
@@ -776,26 +764,6 @@ export function Component() {
                       triggerClassName="h-8 w-full text-xs"
                     />
                   </div>
-                )}
-
-                {isActive && canComplete && (
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button size="sm" variant="outline" className="w-full">
-                        <DecisionButtonContent icon={CheckCircle}>{t("itsm:tickets.complete")}</DecisionButtonContent>
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>{t("itsm:tickets.complete")}</AlertDialogTitle>
-                        <AlertDialogDescription>{t("itsm:tickets.code")}: {ticket.code}</AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel size="sm">{t("common:cancel")}</AlertDialogCancel>
-                        <AlertDialogAction size="sm" onClick={() => completeMut.mutate()} disabled={completeMut.isPending}>{t("itsm:tickets.complete")}</AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
                 )}
 
                 {isActive && canCancel && (

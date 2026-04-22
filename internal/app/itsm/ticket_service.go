@@ -853,7 +853,7 @@ func (s *TicketService) ConfirmActivity(ticketID uint, activityID uint, operator
 			TicketID:            ticketID,
 			CompletedActivityID: &activityID,
 		})
-		return s.smartEngine.SubmitProgressTask(payload)
+		return s.smartEngine.SubmitProgressTaskTx(tx, payload)
 	}); err != nil {
 		return nil, err
 	}
@@ -928,7 +928,7 @@ func (s *TicketService) RejectActivity(ticketID uint, activityID uint, reason st
 			TicketID:            ticketID,
 			CompletedActivityID: &activityID,
 		})
-		return s.smartEngine.SubmitProgressTask(payload)
+		return s.smartEngine.SubmitProgressTaskTx(tx, payload)
 	}); err != nil {
 		return nil, err
 	}

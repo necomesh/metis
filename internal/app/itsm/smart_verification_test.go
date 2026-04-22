@@ -19,15 +19,27 @@ import (
 )
 
 type recordingSubmitter struct {
-	payloads []engine.SmartProgressPayload
-	count    int
+	payloads    []engine.SmartProgressPayload
+	rawPayloads []json.RawMessage
+	count       int
+	txCount     int
 }
 
 func (r *recordingSubmitter) SubmitTask(name string, payload json.RawMessage) error {
+	return r.record(name, payload)
+}
+
+func (r *recordingSubmitter) SubmitTaskTx(_ *gorm.DB, name string, payload json.RawMessage) error {
+	r.txCount++
+	return r.record(name, payload)
+}
+
+func (r *recordingSubmitter) record(name string, payload json.RawMessage) error {
 	if name != "itsm-smart-progress" {
 		return nil
 	}
 	r.count++
+	r.rawPayloads = append(r.rawPayloads, append(json.RawMessage(nil), payload...))
 	var p engine.SmartProgressPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return err
@@ -262,8 +274,36 @@ func TestConfirmActivity_SubmitsImmediateSmartContinuation(t *testing.T) {
 	if f.submitter.count != 1 {
 		t.Fatalf("expected one smart-progress submission, got %d", f.submitter.count)
 	}
+	if f.submitter.txCount != 1 {
+		t.Fatalf("expected smart-progress submission to use current transaction, got %d tx submissions", f.submitter.txCount)
+	}
 	if len(f.submitter.payloads) != 1 || f.submitter.payloads[0].CompletedActivityID == nil || *f.submitter.payloads[0].CompletedActivityID != f.activity.ID {
 		t.Fatalf("expected payload to include completed activity id %d, got %+v", f.activity.ID, f.submitter.payloads)
+	}
+}
+
+func TestConfirmedSmartProgressTaskCompletesTicketWhenDecisionIsComplete(t *testing.T) {
+	plan := `{"next_step_type":"process","execution_mode":"single","activities":[{"type":"process","participant_type":"user","participant_id":2,"instructions":"continue"}],"reasoning":"continue flow","confidence":0.4}`
+	f := newSmartServiceFixture(t, plan)
+
+	if _, err := f.service.ConfirmActivity(f.ticket.ID, f.activity.ID, f.approver.ID); err != nil {
+		t.Fatalf("confirm activity: %v", err)
+	}
+	if len(f.submitter.rawPayloads) != 1 {
+		t.Fatalf("expected one raw smart-progress payload, got %d", len(f.submitter.rawPayloads))
+	}
+
+	handler := engine.HandleSmartProgress(f.db, f.smart)
+	if err := handler(context.Background(), f.submitter.rawPayloads[0]); err != nil {
+		t.Fatalf("handle smart progress: %v", err)
+	}
+
+	var ticket Ticket
+	if err := f.db.First(&ticket, f.ticket.ID).Error; err != nil {
+		t.Fatalf("reload ticket: %v", err)
+	}
+	if ticket.Status != TicketStatusCompleted {
+		t.Fatalf("expected ticket to be completed, got %s", ticket.Status)
 	}
 }
 
@@ -276,6 +316,9 @@ func TestRejectActivity_SubmitsImmediateSmartContinuationAndStoresReason(t *test
 	}
 	if f.submitter.count != 1 {
 		t.Fatalf("expected one smart-progress submission, got %d", f.submitter.count)
+	}
+	if f.submitter.txCount != 1 {
+		t.Fatalf("expected smart-progress submission to use current transaction, got %d tx submissions", f.submitter.txCount)
 	}
 	var activity TicketActivity
 	if err := f.db.First(&activity, f.activity.ID).Error; err != nil {

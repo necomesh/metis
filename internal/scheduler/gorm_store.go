@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -19,7 +20,9 @@ func NewGormStore(db *gorm.DB) *GormStore {
 }
 
 func (s *GormStore) SaveTaskState(ctx context.Context, state *model.TaskState) error {
-	return s.db.WithContext(ctx).Save(state).Error
+	return withSQLiteBusyRetry(func() error {
+		return s.db.WithContext(ctx).Save(state).Error
+	})
 }
 
 func (s *GormStore) GetTaskState(ctx context.Context, name string) (*model.TaskState, error) {
@@ -43,33 +46,40 @@ func (s *GormStore) ListTaskStates(ctx context.Context, taskType string) ([]*mod
 }
 
 func (s *GormStore) Enqueue(ctx context.Context, exec *model.TaskExecution) error {
-	return s.db.WithContext(ctx).Create(exec).Error
+	return withSQLiteBusyRetry(func() error {
+		return s.db.WithContext(ctx).Create(exec).Error
+	})
 }
 
 func (s *GormStore) Dequeue(ctx context.Context, limit int) ([]*model.TaskExecution, error) {
 	var execs []*model.TaskExecution
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("status = ?", ExecPending).
-			Order("created_at").
-			Limit(limit).
-			Find(&execs).Error; err != nil {
-			return err
-		}
-		for _, e := range execs {
-			now := time.Now()
-			e.Status = ExecRunning
-			e.StartedAt = &now
-			if err := tx.Save(e).Error; err != nil {
+	err := withSQLiteBusyRetry(func() error {
+		execs = nil
+		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := tx.Where("status = ?", ExecPending).
+				Order("created_at").
+				Limit(limit).
+				Find(&execs).Error; err != nil {
 				return err
 			}
-		}
-		return nil
+			for _, e := range execs {
+				now := time.Now()
+				e.Status = ExecRunning
+				e.StartedAt = &now
+				if err := tx.Save(e).Error; err != nil {
+					return err
+				}
+			}
+			return nil
+		})
 	})
 	return execs, err
 }
 
 func (s *GormStore) UpdateExecution(ctx context.Context, exec *model.TaskExecution) error {
-	return s.db.WithContext(ctx).Save(exec).Error
+	return withSQLiteBusyRetry(func() error {
+		return s.db.WithContext(ctx).Save(exec).Error
+	})
 }
 
 func (s *GormStore) ListExecutions(ctx context.Context, filter ExecutionFilter) ([]*model.TaskExecution, int64, error) {
@@ -170,8 +180,38 @@ func (s *GormStore) Close() error {
 
 // DeleteOlderThan removes execution records older than the given time.
 func (s *GormStore) DeleteOlderThan(ctx context.Context, before time.Time) (int64, error) {
-	result := s.db.WithContext(ctx).
-		Where("created_at < ?", before).
-		Delete(&model.TaskExecution{})
-	return result.RowsAffected, result.Error
+	var rows int64
+	err := withSQLiteBusyRetry(func() error {
+		result := s.db.WithContext(ctx).
+			Where("created_at < ?", before).
+			Delete(&model.TaskExecution{})
+		rows = result.RowsAffected
+		return result.Error
+	})
+	return rows, err
+}
+
+func withSQLiteBusyRetry(fn func() error) error {
+	const maxAttempts = 5
+	delay := 10 * time.Millisecond
+	var err error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		err = fn()
+		if err == nil || !isSQLiteBusyError(err) || attempt == maxAttempts {
+			return err
+		}
+		time.Sleep(delay)
+		delay *= 2
+	}
+	return err
+}
+
+func isSQLiteBusyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "database is locked") ||
+		strings.Contains(msg, "sqlite_busy") ||
+		strings.Contains(msg, "sqlite_locked")
 }

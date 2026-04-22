@@ -388,6 +388,16 @@ func (s *schedulerSubmitter) SubmitTask(name string, payload json.RawMessage) er
 	return s.db.Create(exec).Error
 }
 
+func (s *schedulerSubmitter) SubmitTaskTx(tx *gorm.DB, name string, payload json.RawMessage) error {
+	exec := &model.TaskExecution{
+		TaskName: name,
+		Trigger:  scheduler.TriggerAPI,
+		Status:   scheduler.ExecPending,
+		Payload:  string(payload),
+	}
+	return tx.Create(exec).Error
+}
+
 // Ensure schedulerSubmitter implements engine.TaskSubmitter at compile time
 var _ engine.TaskSubmitter = (*schedulerSubmitter)(nil)
 

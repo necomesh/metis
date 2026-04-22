@@ -28,6 +28,20 @@ type TaskSubmitter interface {
 	SubmitTask(name string, payload json.RawMessage) error
 }
 
+type transactionalTaskSubmitter interface {
+	SubmitTaskTx(tx *gorm.DB, name string, payload json.RawMessage) error
+}
+
+func submitTaskInTx(submitter TaskSubmitter, tx *gorm.DB, name string, payload json.RawMessage) error {
+	if submitter == nil {
+		return nil
+	}
+	if txSubmitter, ok := submitter.(transactionalTaskSubmitter); ok && tx != nil {
+		return txSubmitter.SubmitTaskTx(tx, name, payload)
+	}
+	return submitter.SubmitTask(name, payload)
+}
+
 func NewClassicEngine(resolver *ParticipantResolver, scheduler TaskSubmitter, notifier NotificationSender) *ClassicEngine {
 	return &ClassicEngine{resolver: resolver, scheduler: scheduler, notifier: notifier}
 }

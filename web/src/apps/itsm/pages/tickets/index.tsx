@@ -24,6 +24,7 @@ import {
 import {
   type TicketItem, fetchPriorities, fetchServiceDefs,
 } from "../../api"
+import { SLABadge } from "../../components/sla-badge"
 import { TICKET_MENU_PERMISSION } from "./navigation"
 
 const STATUS_MAP: Record<string, { variant: "default" | "secondary" | "destructive" | "outline"; key: string }> = {
@@ -34,12 +35,6 @@ const STATUS_MAP: Record<string, { variant: "default" | "secondary" | "destructi
   completed: { variant: "default", key: "statusCompleted" },
   failed: { variant: "destructive", key: "statusFailed" },
   cancelled: { variant: "secondary", key: "statusCancelled" },
-}
-
-const SLA_VARIANT: Record<string, "default" | "secondary" | "destructive"> = {
-  normal: "default",
-  warning: "secondary",
-  breached: "destructive",
 }
 
 export function Component() {
@@ -136,13 +131,13 @@ export function Component() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-[120px]">{t("itsm:tickets.code")}</TableHead>
+              <TableHead className="w-[180px] min-w-[180px]">{t("itsm:tickets.code")}</TableHead>
               <TableHead className="min-w-[200px]">{t("itsm:tickets.ticketTitle")}</TableHead>
               <TableHead className="w-[100px]">{t("itsm:tickets.priority")}</TableHead>
               <TableHead className="w-[100px]">{t("itsm:tickets.status")}</TableHead>
               <TableHead className="w-[100px]">{t("itsm:tickets.service")}</TableHead>
               <TableHead className="w-[80px]">{t("itsm:tickets.assignee")}</TableHead>
-              <TableHead className="w-[80px]">{t("itsm:tickets.slaStatus")}</TableHead>
+              <TableHead className="w-[160px]">{t("itsm:tickets.slaStatus")}</TableHead>
               <TableHead className="w-[140px]">{t("itsm:tickets.createdAt")}</TableHead>
             </TableRow>
           </TableHeader>
@@ -160,7 +155,7 @@ export function Component() {
                     className="cursor-pointer"
                     onClick={() => navigate(`/itsm/tickets/${item.id}`, { state: withActiveMenuPermission(TICKET_MENU_PERMISSION.list) })}
                   >
-                    <TableCell className="font-mono text-sm">{item.code}</TableCell>
+                    <TableCell className="font-mono text-sm whitespace-nowrap">{item.code}</TableCell>
                     <TableCell className="font-medium">{item.title}</TableCell>
                     <TableCell>
                       <span className="inline-flex items-center gap-1.5 text-sm">
@@ -174,11 +169,7 @@ export function Component() {
                     <TableCell className="text-sm text-muted-foreground">{item.serviceName}</TableCell>
                     <TableCell className="text-sm">{item.assigneeName || "—"}</TableCell>
                     <TableCell>
-                      {item.slaStatus && (
-                        <Badge variant={SLA_VARIANT[item.slaStatus] ?? "secondary"}>
-                          {t(`itsm:tickets.sla${item.slaStatus.charAt(0).toUpperCase() + item.slaStatus.slice(1)}`)}
-                        </Badge>
-                      )}
+                      <SLABadge slaStatus={item.slaStatus} slaResolutionDeadline={item.slaResolutionDeadline} />
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">{new Date(item.createdAt).toLocaleString()}</TableCell>
                   </TableRow>

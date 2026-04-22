@@ -450,7 +450,9 @@ func (e *SmartEngine) executeParallelPlan(tx *gorm.DB, ticketID uint, plan *Deci
 				"activity_id": act.ID,
 				"action_id":   *da.ActionID,
 			})
-			e.scheduler.SubmitTask("itsm-action-execute", payload)
+			if err := submitTaskInTx(e.scheduler, tx, "itsm-action-execute", payload); err != nil {
+				slog.Error("failed to submit action task", "error", err, "ticketID", ticketID)
+			}
 		}
 
 		e.recordTimeline(tx, ticketID, &act.ID, 0, "ai_decision_executed",
@@ -521,7 +523,9 @@ func (e *SmartEngine) executeSinglePlan(tx *gorm.DB, ticketID uint, plan *Decisi
 			"activity_id": act.ID,
 			"action_id":   *da.ActionID,
 		})
-		e.scheduler.SubmitTask("itsm-action-execute", payload)
+		if err := submitTaskInTx(e.scheduler, tx, "itsm-action-execute", payload); err != nil {
+			slog.Error("failed to submit action task", "error", err, "ticketID", ticketID)
+		}
 	}
 
 	e.recordTimeline(tx, ticketID, &act.ID, 0, "ai_decision_executed",
@@ -861,7 +865,7 @@ func (e *SmartEngine) ensureContinuation(tx *gorm.DB, ticket *ticketModel, compl
 			TicketID:            ticket.ID,
 			CompletedActivityID: uintPtrIf(completedActivityID),
 		})
-		if err := e.scheduler.SubmitTask("itsm-smart-progress", payload); err != nil {
+		if err := submitTaskInTx(e.scheduler, tx, "itsm-smart-progress", payload); err != nil {
 			slog.Error("ensureContinuation: failed to submit smart-progress task", "error", err, "ticketID", ticket.ID)
 		}
 	}
@@ -889,6 +893,10 @@ func (e *SmartEngine) SubmitProgressTask(payload json.RawMessage) error {
 		return e.scheduler.SubmitTask("itsm-smart-progress", payload)
 	}
 	return nil
+}
+
+func (e *SmartEngine) SubmitProgressTaskTx(tx *gorm.DB, payload json.RawMessage) error {
+	return submitTaskInTx(e.scheduler, tx, "itsm-smart-progress", payload)
 }
 
 // RunDecisionCycleForTicket runs the decision cycle for a ticket (used by scheduler task).

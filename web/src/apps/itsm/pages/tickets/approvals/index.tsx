@@ -78,14 +78,14 @@ export function Component() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-[120px]">{t("itsm:tickets.code")}</TableHead>
+              <TableHead className="w-[180px] min-w-[180px]">{t("itsm:tickets.code")}</TableHead>
               <TableHead className="min-w-[180px]">{t("itsm:tickets.ticketTitle")}</TableHead>
               <TableHead className="w-[100px]">{t("itsm:tickets.priority")}</TableHead>
               <TableHead className="w-[100px]">{t("itsm:tickets.service")}</TableHead>
               <TableHead className="w-[120px]">{t("itsm:approval.activityName")}</TableHead>
-              <TableHead className="w-[100px]">{t("itsm:tickets.slaStatus")}</TableHead>
+              <TableHead className="w-[160px]">{t("itsm:tickets.slaStatus")}</TableHead>
               <TableHead className="w-[140px]">{t("itsm:tickets.createdAt")}</TableHead>
-              <TableHead className="w-[140px] text-right">{t("common:actions")}</TableHead>
+              <TableHead className="w-[132px] text-center">{t("common:actions")}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -145,7 +145,7 @@ function ApprovalRow({
 
   return (
     <TableRow>
-      <TableCell className="font-mono text-sm cursor-pointer hover:underline" onClick={onNavigate}>
+      <TableCell className="font-mono text-sm cursor-pointer whitespace-nowrap hover:underline" onClick={onNavigate}>
         {item.ticketCode}
       </TableCell>
       <TableCell className="font-medium cursor-pointer hover:underline" onClick={onNavigate}>
@@ -163,26 +163,26 @@ function ApprovalRow({
         <SLABadge slaStatus={item.slaStatus} slaResolutionDeadline={item.slaResolutionDeadline} />
       </TableCell>
       <TableCell className="text-sm text-muted-foreground">{new Date(item.createdAt).toLocaleString()}</TableCell>
-      <TableCell className="text-right">
-        <div className="flex items-center justify-end gap-1">
+      <TableCell className="text-center">
+        <div className="flex items-center justify-center gap-1.5">
           <Button
-            size="sm"
+            size="xs"
             variant="default"
             disabled={approving || denying}
             onClick={(e) => { e.stopPropagation(); onApprove() }}
           >
-            <CheckCircle className="mr-1 h-3.5 w-3.5" />
+            <CheckCircle className="h-3.5 w-3.5" />
             {t("itsm:approval.approve")}
           </Button>
           <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
               <Button
-                size="sm"
+                size="xs"
                 variant="destructive"
                 disabled={approving || denying}
                 onClick={(e) => e.stopPropagation()}
               >
-                <X className="mr-1 h-3.5 w-3.5" />
+                <X className="h-3.5 w-3.5" />
                 {t("itsm:approval.deny")}
               </Button>
             </PopoverTrigger>
@@ -232,8 +232,8 @@ function AIConfirmRow({
 
   return (
     <TableRow className="bg-amber-50/50">
-      <TableCell className="font-mono text-sm cursor-pointer hover:underline" onClick={onNavigate}>
-        <span className="inline-flex items-center gap-1">
+      <TableCell className="font-mono text-sm cursor-pointer whitespace-nowrap hover:underline" onClick={onNavigate}>
+        <span className="inline-flex items-center gap-1 whitespace-nowrap">
           <Bot className="h-3.5 w-3.5 text-amber-600" />
           {item.ticketCode}
         </span>
@@ -262,26 +262,26 @@ function AIConfirmRow({
         <SLABadge slaStatus={item.slaStatus} slaResolutionDeadline={item.slaResolutionDeadline} />
       </TableCell>
       <TableCell className="text-sm text-muted-foreground">{new Date(item.createdAt).toLocaleString()}</TableCell>
-      <TableCell className="text-right">
-        <div className="flex items-center justify-end gap-1">
+      <TableCell className="text-center">
+        <div className="flex items-center justify-center gap-1.5">
           <Button
-            size="sm"
+            size="xs"
             variant="default"
             disabled={confirming || rejecting}
             onClick={(e) => { e.stopPropagation(); onConfirm() }}
           >
-            <CheckCircle className="mr-1 h-3.5 w-3.5" />
+            <CheckCircle className="h-3.5 w-3.5" />
             {t("itsm:smart.confirm")}
           </Button>
           <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
               <Button
-                size="sm"
+                size="xs"
                 variant="outline"
                 disabled={confirming || rejecting}
                 onClick={(e) => e.stopPropagation()}
               >
-                <X className="mr-1 h-3.5 w-3.5" />
+                <X className="h-3.5 w-3.5" />
                 {t("itsm:smart.reject")}
               </Button>
             </PopoverTrigger>

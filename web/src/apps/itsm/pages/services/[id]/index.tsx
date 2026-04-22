@@ -505,23 +505,23 @@ function BasicInfoForm({ service, catalogs, slaTemplates }: {
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit((v) => updateMut.mutate(v))} className="space-y-4">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-12">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-[minmax(240px,1.25fr)_minmax(240px,1.15fr)_220px_190px_150px]">
           <FormField control={form.control} name="name" render={({ field }) => (
-            <FormItem className="xl:col-span-3">
+            <FormItem>
               <FormLabel>{t("itsm:services.name")}</FormLabel>
               <FormControl><Input placeholder={t("itsm:services.namePlaceholder")} {...field} /></FormControl>
               <FormMessage />
             </FormItem>
           )} />
-          <div className="space-y-1.5 xl:col-span-3">
+          <div className="space-y-1.5">
             <label className="text-sm font-medium">{t("itsm:services.code")}</label>
             <Input value={service.code} disabled />
           </div>
           <FormField control={form.control} name="catalogId" render={({ field }) => (
-            <FormItem className="xl:col-span-2">
+            <FormItem>
               <FormLabel>{t("itsm:services.catalog")}</FormLabel>
               <Select onValueChange={(v) => field.onChange(Number(v))} value={String(field.value)}>
-                <FormControl><SelectTrigger className="w-full xl:max-w-[220px]"><SelectValue placeholder={t("itsm:services.catalogPlaceholder")} /></SelectTrigger></FormControl>
+                <FormControl><SelectTrigger className="w-full"><SelectValue placeholder={t("itsm:services.catalogPlaceholder")} /></SelectTrigger></FormControl>
                 <SelectContent>
                   {catalogs.map((parent) => (
                     <SelectGroup key={parent.id}>
@@ -541,10 +541,10 @@ function BasicInfoForm({ service, catalogs, slaTemplates }: {
             </FormItem>
           )} />
           <FormField control={form.control} name="slaId" render={({ field }) => (
-            <FormItem className="xl:col-span-2">
+            <FormItem>
               <FormLabel>{t("itsm:services.sla")}</FormLabel>
               <Select onValueChange={(v) => field.onChange(v === "0" ? null : Number(v))} value={String(field.value ?? 0)}>
-                <FormControl><SelectTrigger className="w-full xl:max-w-[180px]"><SelectValue placeholder={t("itsm:services.slaPlaceholder")} /></SelectTrigger></FormControl>
+                <FormControl><SelectTrigger className="w-full"><SelectValue placeholder={t("itsm:services.slaPlaceholder")} /></SelectTrigger></FormControl>
                 <SelectContent>
                   <SelectItem value="0">—</SelectItem>
                   {slaTemplates.map((s) => (
@@ -555,20 +555,12 @@ function BasicInfoForm({ service, catalogs, slaTemplates }: {
               <FormMessage />
             </FormItem>
           )} />
-          <div className="space-y-1.5 xl:col-span-1">
-            <label className="text-sm font-medium">{t("itsm:services.engineType")}</label>
-            <div className="flex h-9 items-center">
-              <Badge variant={service.engineType === "smart" ? "default" : "outline"}>
-                {service.engineType === "smart" ? t("itsm:services.engineSmart") : t("itsm:services.engineClassic")}
-              </Badge>
-            </div>
-          </div>
           <FormField control={form.control} name="isActive" render={({ field }) => (
-            <FormItem className="xl:col-span-1">
+            <FormItem>
               <FormLabel>{t("itsm:services.status")}</FormLabel>
-              <div className="flex h-9 items-center gap-3">
+              <div className="flex h-9 items-center justify-between gap-2 rounded-md border border-border/70 bg-background/42 px-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.62)]">
                 <Switch checked={field.value} onCheckedChange={field.onChange} />
-                <span className="text-sm text-muted-foreground">
+                <span className="min-w-10 text-right text-sm text-muted-foreground">
                   {field.value ? t("itsm:services.active") : t("itsm:services.inactive")}
                 </span>
               </div>
