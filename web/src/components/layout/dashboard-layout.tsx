@@ -8,8 +8,9 @@ export function DashboardLayout() {
   const collapsed = useUiStore((s) => s.sidebarCollapsed)
   const location = useLocation()
 
-  // Chat uses a full-height shell for both the empty state and active sessions.
-  const isChatSessionRoute = /^\/ai\/chat(?:\/\d+)?$/.test(location.pathname)
+  // Chat and service desk use fixed-height shells with internal scroll regions.
+  const isFullHeightWorkspaceRoute = /^\/ai\/chat(?:\/\d+)?$/.test(location.pathname)
+    || location.pathname === "/itsm/service-desk"
 
   return (
     <div className="workspace-shell-bg min-h-screen">
@@ -19,12 +20,12 @@ export function DashboardLayout() {
         className={cn(
           "pt-14 transition-all duration-200",
           collapsed ? "pl-12" : "pl-52",
-          isChatSessionRoute && "h-screen overflow-hidden",
+          isFullHeightWorkspaceRoute && "h-screen overflow-hidden",
         )}
       >
         <div className={cn(
           "flex h-full flex-col",
-          !isChatSessionRoute && "p-4 sm:p-5 lg:p-6",
+          !isFullHeightWorkspaceRoute && "p-4 sm:p-5 lg:p-6",
         )}>
           <Outlet />
         </div>

@@ -276,6 +276,20 @@ func (gw *AgentGateway) Run(ctx context.Context, sessionID, userID uint) (io.Rea
 						Source:  MemorySourceAgentGenerated,
 					})
 
+				case EventTypeUISurface:
+					var payload any
+					if len(evt.SurfaceData) > 0 {
+						_ = json.Unmarshal(evt.SurfaceData, &payload)
+					}
+					meta, _ := json.Marshal(map[string]any{
+						"ui_surface": map[string]any{
+							"surfaceId":   evt.SurfaceID,
+							"surfaceType": evt.SurfaceType,
+							"payload":     payload,
+						},
+					})
+					_, _ = gw.sessionSvc.StoreMessage(sessionID, MessageRoleAssistant, "", meta, 0)
+
 				case EventTypeDone:
 					finalized = true
 					persistPartialAssistant(evt.OutputTokens)

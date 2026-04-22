@@ -349,6 +349,7 @@ func seedPolicies(enforcer *casbin.Enforcer) error {
 		{"admin", "/api/v1/itsm/workflows/generate", "POST"},
 		// Service Desk
 		{"admin", "/api/v1/itsm/service-desk/sessions/:sid/state", "GET"},
+		{"admin", "/api/v1/itsm/service-desk/sessions/:sid/draft/submit", "POST"},
 		// Priorities
 		{"admin", "/api/v1/itsm/priorities", "POST"},
 		{"admin", "/api/v1/itsm/priorities", "GET"},

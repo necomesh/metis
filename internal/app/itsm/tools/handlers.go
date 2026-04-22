@@ -148,7 +148,9 @@ type ServiceDetail struct {
 	RequestedID        uint              `json:"requested_service_id,omitempty"`
 	ResolvedFrom       string            `json:"resolved_from,omitempty"`
 	Name               string            `json:"name"`
+	EngineType         string            `json:"engine_type"`
 	CollaborationSpec  string            `json:"collaboration_spec"`
+	FormSchema         any               `json:"form_schema,omitempty"`
 	FormFields         []FormField       `json:"form_fields"`
 	Actions            []ActionInfo      `json:"actions"`
 	RoutingFieldHint   *RoutingFieldHint `json:"routing_field_hint,omitempty"`
@@ -232,6 +234,149 @@ type ParticipantValidation struct {
 	FailureReason string `json:"failure_reason,omitempty"`
 	NodeLabel     string `json:"node_label,omitempty"`
 	Guidance      string `json:"guidance,omitempty"`
+}
+
+type DraftWarning struct {
+	Type           string          `json:"type"`
+	Field          string          `json:"field"`
+	Message        string          `json:"message"`
+	ResolvedValues []ResolvedValue `json:"resolved_values,omitempty"`
+}
+
+type ResolvedValue struct {
+	Value string `json:"value"`
+	Route string `json:"route"`
+}
+
+type DraftSubmitRequest struct {
+	DraftVersion int            `json:"draftVersion"`
+	Summary      string         `json:"summary"`
+	FormData     map[string]any `json:"formData"`
+}
+
+type DraftSubmitResult struct {
+	OK            bool                  `json:"ok"`
+	TicketID      uint                  `json:"ticketId,omitempty"`
+	TicketCode    string                `json:"ticketCode,omitempty"`
+	Status        string                `json:"status,omitempty"`
+	Message       string                `json:"message,omitempty"`
+	FailureReason string                `json:"failureReason,omitempty"`
+	NodeLabel     string                `json:"nodeLabel,omitempty"`
+	Guidance      string                `json:"guidance,omitempty"`
+	Warnings      []DraftWarning        `json:"warnings,omitempty"`
+	MissingFields []FieldCollectionItem `json:"missingRequiredFields,omitempty"`
+	State         *ServiceDeskState     `json:"state,omitempty"`
+	Surface       map[string]any        `json:"surface,omitempty"`
+}
+
+func SubmitDraft(op ServiceDeskOperator, store StateStore, sessionID uint, userID uint, req DraftSubmitRequest) (*DraftSubmitResult, error) {
+	state, err := store.GetState(sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("get state: %w", err)
+	}
+	if state == nil || state.Stage != "awaiting_confirmation" {
+		return nil, fmt.Errorf("当前阶段不允许提交草稿，请先完成草稿整理")
+	}
+	if state.LoadedServiceID == 0 {
+		return nil, fmt.Errorf("请先加载服务")
+	}
+	if req.DraftVersion == 0 || req.DraftVersion != state.DraftVersion {
+		return nil, fmt.Errorf("草稿已变更（当前版本 %d，提交版本 %d），请重新确认表单", state.DraftVersion, req.DraftVersion)
+	}
+
+	detail, err := op.LoadService(state.LoadedServiceID)
+	if err != nil {
+		return nil, fmt.Errorf("load service for submit: %w", err)
+	}
+	if detail.EngineType != "smart" {
+		return nil, fmt.Errorf("仅支持 Agentic 服务提交")
+	}
+	if detail.FieldsHash != state.FieldsHash {
+		return nil, fmt.Errorf("服务表单字段已变更，请重新整理草稿")
+	}
+
+	formData := normalizeFormDataKeys(req.FormData, detail.FormFields)
+	if len(formData) == 0 && len(state.DraftFormData) > 0 {
+		formData = normalizeFormDataKeys(state.DraftFormData, detail.FormFields)
+	}
+	formData = mergePrefillFormData(formData, state.PrefillFormData)
+
+	summary := strings.TrimSpace(req.Summary)
+	if summary == "" {
+		summary = state.DraftSummary
+	}
+	warnings, missingRequired, blocking := validateDraftData(detail, formData)
+	if blocking {
+		return &DraftSubmitResult{
+			OK:            false,
+			Message:       "表单还有必填项或无效值，请补充后再提交。",
+			Warnings:      warnings,
+			MissingFields: missingRequired,
+			State:         state,
+		}, nil
+	}
+
+	validation, err := op.ValidateParticipants(state.LoadedServiceID, formData)
+	if err != nil {
+		return nil, fmt.Errorf("validate participants: %w", err)
+	}
+	if validation != nil && !validation.OK {
+		return &DraftSubmitResult{
+			OK:            false,
+			Message:       "参与者预检未通过，工单未创建。",
+			FailureReason: validation.FailureReason,
+			NodeLabel:     validation.NodeLabel,
+			Guidance:      validation.Guidance,
+			Warnings:      warnings,
+			State:         state,
+		}, nil
+	}
+
+	state.DraftSummary = summary
+	state.DraftFormData = formData
+	state.ConfirmedDraftVersion = state.DraftVersion
+	if err := state.TransitionTo("confirmed"); err != nil {
+		return nil, err
+	}
+	if err := store.SaveState(sessionID, state); err != nil {
+		return nil, fmt.Errorf("save confirmed state: %w", err)
+	}
+
+	ticket, err := op.CreateTicket(userID, state.LoadedServiceID, summary, formData, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("create ticket: %w", err)
+	}
+
+	resetState := defaultState()
+	if err := store.SaveState(sessionID, resetState); err != nil {
+		return nil, fmt.Errorf("save reset state: %w", err)
+	}
+
+	surfacePayload := map[string]any{
+		"status":     "submitted",
+		"serviceId":  detail.ServiceID,
+		"title":      detail.Name,
+		"summary":    summary,
+		"values":     formData,
+		"ticketId":   ticket.TicketID,
+		"ticketCode": ticket.TicketCode,
+		"message":    "工单已提交",
+	}
+	surface := map[string]any{
+		"surfaceId":   fmt.Sprintf("itsm-draft-form-submitted-%d", ticket.TicketID),
+		"surfaceType": "itsm.draft_form",
+		"payload":     surfacePayload,
+	}
+	return &DraftSubmitResult{
+		OK:         true,
+		TicketID:   ticket.TicketID,
+		TicketCode: ticket.TicketCode,
+		Status:     ticket.Status,
+		Message:    "工单已提交",
+		Warnings:   warnings,
+		State:      resetState,
+		Surface:    surface,
+	}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -439,6 +584,89 @@ func mergePrefillFormData(data map[string]any, prefill map[string]any) map[strin
 		}
 	}
 	return merged
+}
+
+func validateDraftData(detail *ServiceDetail, formData map[string]any) ([]DraftWarning, []FieldCollectionItem, bool) {
+	var warnings []DraftWarning
+	var missingRequired []FieldCollectionItem
+	blocking := false
+
+	for _, f := range detail.FormFields {
+		raw, ok := formData[f.Key]
+		value := strings.TrimSpace(fmt.Sprintf("%v", raw))
+		if f.Required && (!ok || raw == nil || value == "") {
+			blocking = true
+			missingRequired = append(missingRequired, FieldCollectionItem{
+				Key:      f.Key,
+				Label:    f.Label,
+				Type:     f.Type,
+				Required: f.Required,
+			})
+			warnings = append(warnings, DraftWarning{
+				Type:    "missing_required",
+				Field:   f.Key,
+				Message: fmt.Sprintf("缺少必填字段：%s", f.Label),
+			})
+			continue
+		}
+		if value == "" || (f.Type != "select" && f.Type != "radio") {
+			continue
+		}
+
+		optionRoutes := map[string]string{}
+		if detail.RoutingFieldHint != nil && detail.RoutingFieldHint.FieldKey == f.Key {
+			optionRoutes = detail.RoutingFieldHint.OptionRouteMap
+		}
+
+		allowed := make(map[string]struct{}, len(f.Options)*2)
+		for _, opt := range f.Options {
+			if opt.Value != "" {
+				allowed[opt.Value] = struct{}{}
+			}
+			if opt.Label != "" {
+				allowed[opt.Label] = struct{}{}
+			}
+		}
+
+		values := []string{value}
+		if strings.Contains(value, ",") || strings.Contains(value, "，") {
+			values = strings.FieldsFunc(value, func(r rune) bool {
+				return r == ',' || r == '，'
+			})
+			resolvedValues := make([]ResolvedValue, 0, len(values))
+			for _, item := range values {
+				item = strings.TrimSpace(item)
+				if item == "" {
+					continue
+				}
+				if route := optionRoutes[item]; route != "" {
+					resolvedValues = append(resolvedValues, ResolvedValue{Value: item, Route: route})
+				}
+			}
+			warnings = append(warnings, DraftWarning{
+				Type:           "multivalue_on_single_field",
+				Field:          f.Key,
+				Message:        fmt.Sprintf("%s 是单选字段，但草稿中包含多个值，请确认最终选择。", f.Label),
+				ResolvedValues: resolvedValues,
+			})
+		}
+
+		for _, item := range values {
+			item = strings.TrimSpace(item)
+			if item == "" || len(allowed) == 0 {
+				continue
+			}
+			if _, ok := allowed[item]; !ok {
+				blocking = true
+				warnings = append(warnings, DraftWarning{
+					Type:    "invalid_option",
+					Field:   f.Key,
+					Message: fmt.Sprintf("%s 的值 %q 不在可选项中", f.Label, item),
+				})
+			}
+		}
+	}
+	return warnings, missingRequired, blocking
 }
 
 func buildPrefillSuggestions(requestText string, fields []FormField) map[string]any {
@@ -877,102 +1105,7 @@ func draftPrepareHandler(op ServiceDeskOperator, store StateStore) ToolHandler {
 		p.FormData = normalizeFormDataKeys(p.FormData, detail.FormFields)
 		p.FormData = mergePrefillFormData(p.FormData, state.PrefillFormData)
 
-		// Build field index.
-		fieldMap := make(map[string]FormField, len(detail.FormFields))
-		for _, f := range detail.FormFields {
-			fieldMap[f.Key] = f
-		}
-
-		// Validate form_data and collect warnings.
-		type resolvedValue struct {
-			Value string `json:"value"`
-			Route string `json:"route"`
-		}
-		type warning struct {
-			Type           string          `json:"type"`
-			Field          string          `json:"field"`
-			Message        string          `json:"message"`
-			ResolvedValues []resolvedValue `json:"resolved_values,omitempty"`
-		}
-		var warnings []warning
-		var missingRequired []FieldCollectionItem
-		blocking := false
-
-		// Check for missing required fields.
-		for _, f := range detail.FormFields {
-			if !f.Required {
-				continue
-			}
-			val, exists := p.FormData[f.Key]
-			if !exists || val == nil || val == "" {
-				warnings = append(warnings, warning{
-					Type:    "missing_required",
-					Field:   f.Key,
-					Message: fmt.Sprintf("必填字段 [%s] 未填写", f.Label),
-				})
-				missingRequired = append(missingRequired, FieldCollectionItem{
-					Key:      f.Key,
-					Label:    f.Label,
-					Type:     f.Type,
-					Required: true,
-				})
-				blocking = true
-			}
-		}
-
-		// Check select/radio field values.
-		for key, val := range p.FormData {
-			f, ok := fieldMap[key]
-			if !ok {
-				continue
-			}
-			strVal := fmt.Sprintf("%v", val)
-			if strVal == "" {
-				continue
-			}
-
-			if (f.Type == "select" || f.Type == "radio") && len(f.Options) > 0 {
-				// Check for comma-separated values in single-select fields.
-				if strings.Contains(strVal, ",") {
-					w := warning{
-						Type:    "multivalue_on_single_field",
-						Field:   key,
-						Message: fmt.Sprintf("字段 [%s] 为单选，不支持多个值", f.Label),
-					}
-					// If this is the routing field, resolve each value to its route branch.
-					if hint := detail.RoutingFieldHint; hint != nil && key == hint.FieldKey {
-						parts := strings.Split(strVal, ",")
-						rv := make([]resolvedValue, 0, len(parts))
-						for _, p := range parts {
-							v := strings.TrimSpace(p)
-							if v == "" {
-								continue
-							}
-							rv = append(rv, resolvedValue{Value: v, Route: hint.OptionRouteMap[v]})
-						}
-						w.ResolvedValues = rv
-					}
-					warnings = append(warnings, w)
-					continue
-				}
-				// Check if value is a valid option.
-				valid := false
-				for _, opt := range f.Options {
-					if opt.Value == strVal || opt.Label == strVal {
-						valid = true
-						break
-					}
-				}
-				if !valid {
-					warnings = append(warnings, warning{
-						Type:    "invalid_option",
-						Field:   key,
-						Message: fmt.Sprintf("字段 [%s] 的值 [%s] 不在可选项中", f.Label, strVal),
-					})
-					blocking = true
-				}
-			}
-		}
+		warnings, missingRequired, blocking := validateDraftData(detail, p.FormData)
 
 		if blocking {
 			return mustMarshal(map[string]any{
@@ -1010,8 +1143,12 @@ func draftPrepareHandler(op ServiceDeskOperator, store StateStore) ToolHandler {
 			"recommended_next_step":   "show_draft_for_confirmation",
 			"missing_required_fields": []FieldCollectionItem{},
 			"draft_version":           state.DraftVersion,
+			"service_id":              detail.ServiceID,
+			"service_name":            detail.Name,
+			"service_engine_type":     detail.EngineType,
 			"summary":                 p.Summary,
 			"form_data":               p.FormData,
+			"form_schema":             detail.FormSchema,
 			"warnings":                warnings,
 		}), nil
 	}

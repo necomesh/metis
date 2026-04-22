@@ -52,6 +52,7 @@ func (e *ReactExecutor) Execute(ctx context.Context, req ExecuteRequest) (<-chan
 
 		tools := buildLLMTools(req.Tools)
 		var totalInput, totalOutput int
+		var currentITSMServiceEngine string
 
 		for turn := 1; turn <= maxTurns; turn++ {
 			select {
@@ -132,6 +133,9 @@ func (e *ReactExecutor) Execute(ctx context.Context, req ExecuteRequest) (<-chan
 					ToolName:   tc.Name,
 					ToolArgs:   json.RawMessage(tc.Arguments),
 				})
+				if tc.Name == "itsm.draft_prepare" && currentITSMServiceEngine == "smart" {
+					emit(makeITSMDraftLoadingSurface(tc.ID))
+				}
 
 				start := time.Now()
 				toolCtx := context.WithValue(ctx, app.UserMessageKey, latestLLMUserMessage(messages))
@@ -156,6 +160,14 @@ func (e *ReactExecutor) Execute(ctx context.Context, req ExecuteRequest) (<-chan
 					DurationMs:  durationMs,
 					ToolIsError: isError,
 				})
+				if !isError && tc.Name == "itsm.service_load" {
+					currentITSMServiceEngine = parseITSMServiceEngine(output)
+				}
+				if !isError && tc.Name == "itsm.draft_prepare" {
+					if surface, ok := makeITSMDraftReadySurface(tc.ID, output); ok {
+						emit(surface)
+					}
+				}
 
 				// Add tool result to messages
 				messages = append(messages, llm.Message{

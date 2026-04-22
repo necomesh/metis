@@ -426,9 +426,62 @@ export interface ServiceDeskSessionState {
   nextExpectedAction: string
 }
 
+export interface AgenticUISurface<TPayload = unknown> {
+  surfaceId: string
+  surfaceType: string
+  payload: TPayload
+}
+
+export interface ITSMDraftFormSurfacePayload {
+  status: "loading" | "ready" | "submitted"
+  serviceId?: number
+  title?: string
+  summary?: string
+  schema?: unknown
+  values?: Record<string, unknown>
+  draftVersion?: number
+  submitAction?: {
+    method?: string
+    kind?: string
+  }
+  ticketId?: number
+  ticketCode?: string
+  message?: string
+}
+
+export type ITSMDraftFormSurface = AgenticUISurface<ITSMDraftFormSurfacePayload>
+
+export interface SubmitDraftRequest {
+  draftVersion: number
+  summary: string
+  formData: Record<string, unknown>
+}
+
+export interface SubmitDraftResponse {
+  ok: boolean
+  ticketId?: number
+  ticketCode?: string
+  status?: string
+  message?: string
+  failureReason?: string
+  nodeLabel?: string
+  guidance?: string
+  warnings?: Array<{ type: string; field: string; message: string }>
+  missingRequiredFields?: Array<{ key: string; label: string; type: string; required: boolean }>
+  state?: ServiceDeskState
+  surface?: AgenticUISurface
+}
+
 export function fetchServiceDeskSessionState(sessionId: number) {
   return api.get<ServiceDeskSessionState>(
     `/api/v1/itsm/service-desk/sessions/${sessionId}/state`,
+  )
+}
+
+export function submitServiceDeskDraft(sessionId: number, data: SubmitDraftRequest) {
+  return api.post<SubmitDraftResponse>(
+    `/api/v1/itsm/service-desk/sessions/${sessionId}/draft/submit`,
+    data,
   )
 }
 

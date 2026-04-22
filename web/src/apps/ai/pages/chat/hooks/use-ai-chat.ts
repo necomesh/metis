@@ -15,6 +15,14 @@ export function sessionMessagesToUIMessages(messages: SessionMessage[]): UIMessa
       parts: [{ type: "text", text: m.content || "", state: "done" }],
     }
 
+    const uiSurface = m.metadata?.ui_surface
+    if (uiSurface && typeof uiSurface === "object") {
+      base.parts.push({
+        type: "data-ui-surface",
+        data: uiSurface,
+      } as UIMessage["parts"][number])
+    }
+
     if (m.role === "user" && m.metadata && Array.isArray(m.metadata.images)) {
       const images = m.metadata.images as string[]
       for (const url of images) {

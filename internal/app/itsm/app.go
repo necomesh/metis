@@ -300,6 +300,7 @@ func (a *ITSMApp) Routes(api *gin.RouterGroup) {
 
 		// Service Desk
 		g.GET("/service-desk/sessions/:sid/state", serviceDeskH.State)
+		g.POST("/service-desk/sessions/:sid/draft/submit", serviceDeskH.SubmitDraft)
 
 		// Priorities
 		g.POST("/priorities", priorityH.Create)

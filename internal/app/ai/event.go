@@ -17,6 +17,7 @@ const (
 	EventTypeCancelled     = "cancelled"
 	EventTypeError         = "error"
 	EventTypeMemoryUpdate  = "memory_update"
+	EventTypeUISurface     = "ui_surface"
 )
 
 // Event is the unified event emitted by all executors.
@@ -59,6 +60,11 @@ type Event struct {
 	// memory_update
 	MemoryKey     string `json:"memory_key,omitempty"`
 	MemoryContent string `json:"memory_content,omitempty"`
+
+	// ui_surface
+	SurfaceID   string          `json:"surface_id,omitempty"`
+	SurfaceType string          `json:"surface_type,omitempty"`
+	SurfaceData json.RawMessage `json:"surface_data,omitempty"`
 }
 
 // PlanStep represents a step in a Plan & Execute plan.

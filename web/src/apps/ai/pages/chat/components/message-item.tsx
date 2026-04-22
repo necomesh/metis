@@ -19,6 +19,8 @@ interface QAPairProps {
   onEditMessage?: (messageId: number, content: string) => void
   doneMetrics?: { durationMs?: number; inputTokens?: number; outputTokens?: number }
   streamingExtras?: React.ReactNode
+  renderDataPart?: (part: UIMessage["parts"][number]) => React.ReactNode
+  suppressTextWhenDataPart?: boolean
 }
 
 // User query — right-aligned pill (ChatGPT style)
@@ -219,6 +221,10 @@ function isChatToolPart(part: UIMessage["parts"][number]): part is ChatToolPart 
   return part.type === "dynamic-tool" || part.type.startsWith("tool-")
 }
 
+function isDataPart(part: UIMessage["parts"][number]) {
+  return part.type.startsWith("data-")
+}
+
 function getToolName(part: ChatToolPart) {
   return part.type === "dynamic-tool" ? part.toolName : part.type.split("-").slice(1).join("-")
 }
@@ -407,6 +413,8 @@ export function QAPair({
   onEditMessage,
   doneMetrics,
   streamingExtras,
+  renderDataPart,
+  suppressTextWhenDataPart,
 }: QAPairProps) {
   const userImages = (userMessage.metadata as { images?: string[] } | undefined)?.images
   const userText = userMessage.parts
@@ -421,6 +429,12 @@ export function QAPair({
 
   const mainAiMessage = mainAiMessages[mainAiMessages.length - 1]
   const toolActivities = collectToolActivities(aiMessages, mainAiMessage)
+  const dataParts = mainAiMessages.flatMap((message) => message.parts?.filter(isDataPart) ?? [])
+  const renderedDataParts = renderDataPart
+    ? dataParts
+        .map((part, index) => ({ key: `${part.type}-${index}`, node: renderDataPart(part) }))
+        .filter((item) => item.node != null)
+    : []
 
   const mainContent = streamingContent || (
     mainAiMessage?.parts
@@ -428,6 +442,7 @@ export function QAPair({
       .map((p) => p.text)
       .join("") || ""
   )
+  const showMainResponse = !suppressTextWhenDataPart || renderedDataParts.length === 0
 
   return (
     <div className="py-6">
@@ -445,8 +460,12 @@ export function QAPair({
         <ToolActivityRow key={activity.id} activity={activity} />
       ))}
 
+      {renderedDataParts.map((item) => (
+        <div key={item.key}>{item.node}</div>
+      ))}
+
       {/* AI response */}
-      {(mainAiMessage || streamingContent) && (
+      {showMainResponse && (mainAiMessage || streamingContent) && (
         <AIResponse
           content={mainContent}
           agentName={agentName}

@@ -128,6 +128,23 @@ func (enc *UIMessageStreamEncoder) Encode(evt Event) error {
 			},
 		})
 
+	case EventTypeUISurface:
+		var data any
+		if len(evt.SurfaceData) > 0 {
+			_ = json.Unmarshal(evt.SurfaceData, &data)
+		}
+		if data == nil {
+			data = map[string]any{}
+		}
+		return enc.writeLine(map[string]any{
+			"type": "data-ui-surface",
+			"data": map[string]any{
+				"surfaceId":   evt.SurfaceID,
+				"surfaceType": evt.SurfaceType,
+				"payload":     data,
+			},
+		})
+
 	case EventTypeToolCall:
 		if enc.textBlock.started {
 			enc.textBlock.started = false

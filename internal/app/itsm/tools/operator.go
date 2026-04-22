@@ -42,6 +42,7 @@ func (o *Operator) LoadService(serviceID uint) (*ServiceDetail, error) {
 	type svcRow struct {
 		ID                uint
 		Name              string
+		EngineType        string
 		CollaborationSpec string
 		IntakeFormSchema  string
 		WorkflowJSON      string
@@ -56,12 +57,17 @@ func (o *Operator) LoadService(serviceID uint) (*ServiceDetail, error) {
 	detail := &ServiceDetail{
 		ServiceID:         svc.ID,
 		Name:              svc.Name,
+		EngineType:        svc.EngineType,
 		CollaborationSpec: svc.CollaborationSpec,
 	}
 
 	// Load form fields from inline intake form schema.
 	if svc.IntakeFormSchema != "" {
 		detail.FormFields = parseFormFields(svc.IntakeFormSchema)
+		var schema any
+		if err := json.Unmarshal([]byte(svc.IntakeFormSchema), &schema); err == nil {
+			detail.FormSchema = schema
+		}
 	}
 
 	// Load actions.
