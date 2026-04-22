@@ -15,9 +15,10 @@ registerApp({
         "itsm:ticket:mine",
         "itsm:ticket:approval:pending",
         "itsm:ticket:approval:history",
+        "itsm:ticket:list",
+        "itsm:service:list",
       ],
     },
-    { label: "serviceManagement", items: ["itsm:ticket:list", "itsm:service:list"] },
     { label: "systemConfig", items: ["itsm:sla:list", "itsm:priority:list", "itsm:engine:config"] },
   ],
   routes: [

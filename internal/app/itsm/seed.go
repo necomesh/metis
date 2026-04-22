@@ -210,12 +210,12 @@ func seedMenus(db *gorm.DB) error {
 	seedMenu(db, &itsmDir.ID, "服务台", model.MenuTypeMenu, "/itsm/service-desk", "MessageSquare", "itsm:service-desk:use", 0)
 
 	// 我的工单
-	seedMenu(db, &itsmDir.ID, "我的工单", model.MenuTypeMenu, "/itsm/tickets/mine", "User", "itsm:ticket:mine", 3)
-	seedMenu(db, &itsmDir.ID, "待审批工单", model.MenuTypeMenu, "/itsm/tickets/approvals/pending", "ClipboardCheck", "itsm:ticket:approval:pending", 4)
-	seedMenu(db, &itsmDir.ID, "审批历史", model.MenuTypeMenu, "/itsm/tickets/approvals/history", "History", "itsm:ticket:approval:history", 5)
+	seedMenu(db, &itsmDir.ID, "我的工单", model.MenuTypeMenu, "/itsm/tickets/mine", "User", "itsm:ticket:mine", 1)
+	seedMenu(db, &itsmDir.ID, "待审批工单", model.MenuTypeMenu, "/itsm/tickets/approvals/pending", "ClipboardCheck", "itsm:ticket:approval:pending", 2)
+	seedMenu(db, &itsmDir.ID, "审批历史", model.MenuTypeMenu, "/itsm/tickets/approvals/history", "History", "itsm:ticket:approval:history", 3)
 
 	// 工单管理
-	allTicketMenu := seedMenu(db, &itsmDir.ID, "工单管理", model.MenuTypeMenu, "/itsm/tickets", "List", "itsm:ticket:list", 6)
+	allTicketMenu := seedMenu(db, &itsmDir.ID, "工单管理", model.MenuTypeMenu, "/itsm/tickets", "List", "itsm:ticket:list", 4)
 	seedButtons(db, allTicketMenu, []model.Menu{
 		{Name: "指派工单", Type: model.MenuTypeButton, Permission: "itsm:ticket:assign", Sort: 1},
 		{Name: "取消工单", Type: model.MenuTypeButton, Permission: "itsm:ticket:cancel", Sort: 3},
@@ -223,7 +223,7 @@ func seedMenus(db *gorm.DB) error {
 	})
 
 	// 服务目录 (unified workspace: catalogs + services)
-	serviceMenu := seedMenu(db, &itsmDir.ID, "服务目录", model.MenuTypeMenu, "/itsm/services", "Cog", "itsm:service:list", 7)
+	serviceMenu := seedMenu(db, &itsmDir.ID, "服务目录", model.MenuTypeMenu, "/itsm/services", "Cog", "itsm:service:list", 5)
 	seedButtons(db, serviceMenu, []model.Menu{
 		{Name: "新增服务", Type: model.MenuTypeButton, Permission: "itsm:service:create", Sort: 0},
 		{Name: "编辑服务", Type: model.MenuTypeButton, Permission: "itsm:service:update", Sort: 1},
