@@ -44,6 +44,8 @@ type EngineConfigProvider interface {
 	DecisionMode() string
 	// DecisionAgentID returns the configured decision agent ID (0 = not configured).
 	DecisionAgentID() uint
+	// AuditLevel returns how much AI reasoning is written to the ticket timeline.
+	AuditLevel() string
 }
 
 // ParticipantCandidate is a user available for assignment.
@@ -835,9 +837,31 @@ func (e *SmartEngine) recordTimeline(tx *gorm.DB, ticketID uint, activityID *uin
 		OperatorID: operatorID,
 		EventType:  eventType,
 		Message:    message,
-		Reasoning:  reasoning,
+		Reasoning:  e.auditReasoning(reasoning),
 	}
 	return tx.Create(tl).Error
+}
+
+func (e *SmartEngine) auditReasoning(reasoning string) string {
+	if reasoning == "" || e.configProvider == nil {
+		return reasoning
+	}
+	switch e.configProvider.AuditLevel() {
+	case "off":
+		return ""
+	case "summary":
+		return truncateReasoning(reasoning, 240)
+	default:
+		return reasoning
+	}
+}
+
+func truncateReasoning(reasoning string, limit int) string {
+	reasoning = strings.TrimSpace(reasoning)
+	if len(reasoning) <= limit {
+		return reasoning
+	}
+	return reasoning[:limit] + "..."
 }
 
 func parseDecisionPlan(content string) (*DecisionPlan, error) {
@@ -1086,7 +1110,7 @@ func (e *SmartEngine) agenticDecision(ctx context.Context, tx *gorm.DB, ticketID
 		agentID = e.configProvider.DecisionAgentID()
 	}
 	if agentID == 0 {
-		return nil, fmt.Errorf("决策智能体未配置")
+		return nil, fmt.Errorf("决策引擎未配置智能体")
 	}
 
 	// Build seed messages (domain context)

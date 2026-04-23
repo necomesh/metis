@@ -630,23 +630,36 @@ export interface EngineAgentSelector {
   agentName: string
 }
 
+export interface EnginePathConfig extends EngineAgentConfig {
+  maxRetries: number
+  timeoutSeconds: number
+}
+
+export interface EngineHealthItem {
+  key: string
+  label: string
+  status: "pass" | "warn" | "fail"
+  message: string
+}
+
 export interface EngineConfig {
-  generator: EngineAgentConfig
-  servicedesk: EngineAgentSelector
-  decision: EngineAgentSelector & { decisionMode: string }
-  general: {
-    maxRetries: number
-    timeoutSeconds: number
-    reasoningLog: string
+  intake: EngineAgentSelector
+  decision: EngineAgentSelector & { mode: string }
+  path: EnginePathConfig
+  guard: {
+    auditLevel: string
     fallbackAssignee: number
+  }
+  health: {
+    items: EngineHealthItem[]
   }
 }
 
 export interface EngineConfigUpdate {
-  generator: { modelId: number; temperature: number }
-  servicedesk: { agentId: number }
-  decision: { agentId: number; decisionMode: string }
-  general: { maxRetries: number; timeoutSeconds: number; reasoningLog: string; fallbackAssignee: number }
+  intake: { agentId: number }
+  decision: { agentId: number; mode: string }
+  path: { modelId: number; temperature: number; maxRetries: number; timeoutSeconds: number }
+  guard: { auditLevel: string; fallbackAssignee: number }
 }
 
 export function fetchEngineConfig() {

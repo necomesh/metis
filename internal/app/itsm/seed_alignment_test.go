@@ -36,7 +36,7 @@ func newSeedAlignmentDB(t *testing.T) *gorm.DB {
 		&ServiceCatalog{}, &ServiceDefinition{}, &ServiceAction{}, &Priority{}, &SLATemplate{},
 		&org.Department{}, &org.Position{}, &org.DepartmentPosition{}, &org.UserPosition{},
 		&coremodel.User{}, &coremodel.Role{}, &coremodel.Menu{}, &coremodel.SystemConfig{},
-		&aiapp.Agent{}, &aiapp.Tool{}, &aiapp.AgentTool{},
+		&aiapp.Provider{}, &aiapp.AIModel{}, &aiapp.Agent{}, &aiapp.Tool{}, &aiapp.AgentTool{},
 	); err != nil {
 		t.Fatalf("migrate db: %v", err)
 	}
@@ -262,11 +262,11 @@ func TestBuiltInSmartSeedsAlignParticipantsAndInstallAdminIdentity(t *testing.T)
 	})
 }
 
-func TestSeedEngineConfigUpdatesExistingWorkflowGeneratorPrompt(t *testing.T) {
+func TestSeedEngineConfigUpdatesExistingPathEnginePrompt(t *testing.T) {
 	db := newSeedAlignmentDB(t)
-	code := "itsm.generator"
+	code := smartTicketPathBuilderAgentKey
 	agent := aiapp.Agent{
-		Name:         "旧工作流解析",
+		Name:         "旧路径引擎",
 		Code:         &code,
 		Type:         aiapp.AgentTypeInternal,
 		Visibility:   aiapp.AgentVisibilityTeam,
@@ -275,7 +275,7 @@ func TestSeedEngineConfigUpdatesExistingWorkflowGeneratorPrompt(t *testing.T) {
 		IsActive:     false,
 	}
 	if err := db.Create(&agent).Error; err != nil {
-		t.Fatalf("create stale generator agent: %v", err)
+		t.Fatalf("create stale path builder agent: %v", err)
 	}
 
 	if err := seedEngineConfig(db); err != nil {
@@ -284,12 +284,89 @@ func TestSeedEngineConfigUpdatesExistingWorkflowGeneratorPrompt(t *testing.T) {
 
 	var got aiapp.Agent
 	if err := db.Where("code = ?", code).First(&got).Error; err != nil {
-		t.Fatalf("load generator agent: %v", err)
+		t.Fatalf("load path builder agent: %v", err)
 	}
-	if got.SystemPrompt != itsmGeneratorSystemPrompt {
-		t.Fatalf("expected generator prompt to be refreshed")
+	if got.SystemPrompt != itsmPathBuilderSystemPrompt {
+		t.Fatalf("expected path engine prompt to be refreshed")
 	}
-	if got.Name != "ITSM 工作流解析" || got.Temperature != 0.3 || !got.IsActive {
-		t.Fatalf("expected generator metadata to be refreshed, got name=%q temp=%v active=%v", got.Name, got.Temperature, got.IsActive)
+	if got.Name != "ITSM 路径引擎" || got.Temperature != 0.3 || !got.IsActive {
+		t.Fatalf("expected path engine metadata to be refreshed, got name=%q temp=%v active=%v", got.Name, got.Temperature, got.IsActive)
+	}
+}
+
+func TestSeedEngineConfigMigratesLegacySmartTicketConfig(t *testing.T) {
+	db := newSeedAlignmentDB(t)
+	legacyCode := "itsm.generator"
+	legacyAgent := aiapp.Agent{
+		Name:         "旧工作流解析",
+		Code:         &legacyCode,
+		Type:         aiapp.AgentTypeInternal,
+		Visibility:   aiapp.AgentVisibilityTeam,
+		SystemPrompt: "stale prompt",
+		Temperature:  0.9,
+		IsActive:     false,
+	}
+	if err := db.Create(&legacyAgent).Error; err != nil {
+		t.Fatalf("create legacy path agent: %v", err)
+	}
+	legacyConfigs := []coremodel.SystemConfig{
+		{Key: "itsm.engine.servicedesk.agent_id", Value: "11"},
+		{Key: "itsm.engine.decision.agent_id", Value: "12"},
+		{Key: "itsm.engine.decision.decision_mode", Value: "ai_only"},
+		{Key: "itsm.engine.general.max_retries", Value: "4"},
+		{Key: "itsm.engine.general.timeout_seconds", Value: "90"},
+		{Key: "itsm.engine.general.reasoning_log", Value: "summary"},
+		{Key: "itsm.engine.general.fallback_assignee", Value: "13"},
+	}
+	for _, cfg := range legacyConfigs {
+		if err := db.Create(&cfg).Error; err != nil {
+			t.Fatalf("create legacy config %s: %v", cfg.Key, err)
+		}
+	}
+
+	if err := seedEngineConfig(db); err != nil {
+		t.Fatalf("seed engine config: %v", err)
+	}
+
+	expected := map[string]string{
+		smartTicketIntakeAgentKey:     "11",
+		smartTicketDecisionAgentKey:   "12",
+		smartTicketDecisionModeKey:    "ai_only",
+		smartTicketPathMaxRetriesKey:  "4",
+		smartTicketPathTimeoutKey:     "90",
+		smartTicketGuardAuditLevelKey: "summary",
+		smartTicketGuardFallbackKey:   "13",
+	}
+	for key, value := range expected {
+		var got coremodel.SystemConfig
+		if err := db.Where("\"key\" = ?", key).First(&got).Error; err != nil {
+			t.Fatalf("load migrated config %s: %v", key, err)
+		}
+		if got.Value != value {
+			t.Fatalf("expected %s=%s, got %s", key, value, got.Value)
+		}
+	}
+	for _, cfg := range legacyConfigs {
+		var count int64
+		if err := db.Model(&coremodel.SystemConfig{}).Where("\"key\" = ?", cfg.Key).Count(&count).Error; err != nil {
+			t.Fatalf("count legacy config %s: %v", cfg.Key, err)
+		}
+		if count != 0 {
+			t.Fatalf("expected legacy config %s to be deleted", cfg.Key)
+		}
+	}
+	var pathAgent aiapp.Agent
+	if err := db.Where("code = ?", smartTicketPathBuilderAgentKey).First(&pathAgent).Error; err != nil {
+		t.Fatalf("load migrated path agent: %v", err)
+	}
+	if pathAgent.Name != "ITSM 路径引擎" || pathAgent.SystemPrompt != itsmPathBuilderSystemPrompt {
+		t.Fatalf("path agent was not migrated cleanly")
+	}
+	var legacyCount int64
+	if err := db.Model(&aiapp.Agent{}).Where("code = ?", legacyCode).Count(&legacyCount).Error; err != nil {
+		t.Fatalf("count legacy path agent: %v", err)
+	}
+	if legacyCount != 0 {
+		t.Fatalf("expected legacy path agent code to be removed")
 	}
 }

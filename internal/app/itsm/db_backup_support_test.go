@@ -74,7 +74,7 @@ func generateDbBackupWorkflow(cfg llmConfig) (json.RawMessage, error) {
 		resp, err := client.Chat(ctx, llm.ChatRequest{
 			Model: cfg.model,
 			Messages: []llm.Message{
-				{Role: llm.RoleSystem, Content: itsmGeneratorSystemPrompt},
+				{Role: llm.RoleSystem, Content: itsmPathBuilderSystemPrompt},
 				{Role: llm.RoleUser, Content: userMsg},
 			},
 			MaxTokens: 4096,

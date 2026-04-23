@@ -243,19 +243,22 @@ func (s *ServiceDefService) computePublishHealthCheck(svc *ServiceDefinition) *S
 		add("service_agent", "服务 Agent", "fail", "绑定的 Agent 不存在或未启用")
 	}
 
-	decisionAgentID := strings.TrimSpace(s.systemConfigValue("itsm.engine.decision.agent_id"))
+	decisionAgentID := strings.TrimSpace(s.systemConfigValue(smartTicketDecisionAgentKey))
 	if decisionAgentID == "" || decisionAgentID == "0" {
-		add("decision_agent", "决策 Agent", "fail", "全局决策 Agent 未配置")
+		add("decision_agent", "决策引擎", "fail", "决策引擎未绑定智能体")
 	} else {
 		id, err := strconv.ParseUint(decisionAgentID, 10, 64)
 		if err != nil {
-			add("decision_agent", "决策 Agent", "fail", "全局决策 Agent 配置值不是有效 Agent ID")
+			add("decision_agent", "决策引擎", "fail", "决策引擎配置值不是有效智能体 ID")
 		} else if agentID := uint(id); agentID == 0 || s.validateAgent(&agentID) != nil {
-			add("decision_agent", "决策 Agent", "fail", "全局决策 Agent 不存在或未启用")
+			add("decision_agent", "决策引擎", "fail", "决策引擎绑定的智能体不存在或未启用")
 		}
 	}
 
-	decisionMode := normalizedHealthDecisionMode(s.systemConfigValue("itsm.engine.decision.decision_mode"))
+	decisionMode := normalizedHealthDecisionMode(s.systemConfigValue(smartTicketDecisionModeKey))
+	if issue := s.checkPathEngineRisk(); issue != nil {
+		add(issue.Key, issue.Label, issue.Status, issue.Message)
+	}
 	if issue := s.checkReferencePathRisk(svc, decisionMode); issue != nil {
 		add(issue.Key, issue.Label, issue.Status, issue.Message)
 	}
@@ -265,6 +268,30 @@ func (s *ServiceDefService) computePublishHealthCheck(svc *ServiceDefinition) *S
 	}
 
 	return check
+}
+
+func (s *ServiceDefService) checkPathEngineRisk() *ServiceHealthItem {
+	var row struct {
+		ID      uint
+		ModelID *uint
+	}
+	if err := s.db.Table("ai_agents").Where("code = ?", smartTicketPathBuilderAgentKey).Select("id, model_id").First(&row).Error; err != nil {
+		return &ServiceHealthItem{
+			Key:     "path_engine",
+			Label:   "路径引擎",
+			Status:  "fail",
+			Message: "路径引擎不存在，无法生成协作路径",
+		}
+	}
+	if row.ModelID == nil || *row.ModelID == 0 {
+		return &ServiceHealthItem{
+			Key:     "path_engine",
+			Label:   "路径引擎",
+			Status:  "fail",
+			Message: "路径引擎未配置模型，无法生成协作路径",
+		}
+	}
+	return nil
 }
 
 func (s *ServiceDefService) systemConfigValue(key string) string {
@@ -497,7 +524,7 @@ func (s *ServiceDefService) checkParticipantRisk(nodeID string, participant engi
 }
 
 func (s *ServiceDefService) checkFallbackRisk() *ServiceHealthItem {
-	fallback := strings.TrimSpace(s.systemConfigValue("itsm.engine.general.fallback_assignee"))
+	fallback := strings.TrimSpace(s.systemConfigValue(smartTicketGuardFallbackKey))
 	if fallback == "" || fallback == "0" {
 		return nil
 	}

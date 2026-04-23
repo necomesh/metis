@@ -14,7 +14,7 @@ import (
 )
 
 type ServiceMatchConfigProvider interface {
-	ServicedeskAgentID() uint
+	IntakeAgentID() uint
 }
 
 type LLMClientFactory func(protocol, baseURL, apiKey string) (llm.Client, error)
@@ -68,16 +68,16 @@ func (m *LLMServiceMatcher) MatchServices(ctx context.Context, query string) ([]
 		return nil, tools.MatchDecision{}, fmt.Errorf("service matcher agent provider is not configured")
 	}
 
-	agentID := m.config.ServicedeskAgentID()
+	agentID := m.config.IntakeAgentID()
 	if agentID == 0 {
-		return nil, tools.MatchDecision{}, fmt.Errorf("服务台智能体未配置")
+		return nil, tools.MatchDecision{}, fmt.Errorf("受理引擎未配置智能体")
 	}
 	agentCfg, err := m.agentProvider.GetAgentConfig(agentID)
 	if err != nil {
 		return nil, tools.MatchDecision{}, fmt.Errorf("load service desk agent config: %w", err)
 	}
 	if agentCfg == nil || agentCfg.Model == "" || agentCfg.Protocol == "" {
-		return nil, tools.MatchDecision{}, fmt.Errorf("服务台智能体模型未配置")
+		return nil, tools.MatchDecision{}, fmt.Errorf("受理引擎智能体模型未配置")
 	}
 
 	candidates, err := m.loadCandidates()

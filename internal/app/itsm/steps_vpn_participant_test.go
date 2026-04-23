@@ -31,6 +31,10 @@ func (p *testConfigProvider) DecisionAgentID() uint {
 	return 0
 }
 
+func (p *testConfigProvider) AuditLevel() string {
+	return "full"
+}
+
 var _ engine.EngineConfigProvider = (*testConfigProvider)(nil)
 
 // registerParticipantSteps registers participant validation step definitions.

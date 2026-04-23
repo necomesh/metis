@@ -264,7 +264,7 @@ function NotOnDutyState({ loading }: { loading: boolean }) {
         )}
         <h2 className="mt-4 text-lg font-semibold">服务台智能体未配置</h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          需要在引擎配置中绑定 itsm.servicedesk 默认智能体。
+          需要在智能工单引擎配置中绑定受理引擎智能体。
         </p>
         <Button className="mt-5" onClick={() => navigate("/itsm/engine-config")}>
           前往引擎配置
@@ -643,8 +643,8 @@ export function Component() {
     queryFn: fetchEngineConfig,
   })
 
-  const serviceDeskAgentId = config?.servicedesk?.agentId ?? 0
-  const serviceDeskAgentName = config?.servicedesk?.agentName || "IT 服务台"
+  const serviceDeskAgentId = config?.intake?.agentId ?? 0
+  const serviceDeskAgentName = config?.intake?.agentName || "IT 服务台"
 
   const sessionsQuery = useQuery({
     queryKey: ["ai-sessions", serviceDeskAgentId],

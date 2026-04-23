@@ -14,11 +14,11 @@ import (
 )
 
 type fakeServiceMatchConfigProvider struct {
-	servicedeskAgentID uint
+	intakeAgentID uint
 }
 
-func (f fakeServiceMatchConfigProvider) ServicedeskAgentID() uint {
-	return f.servicedeskAgentID
+func (f fakeServiceMatchConfigProvider) IntakeAgentID() uint {
+	return f.intakeAgentID
 }
 
 type fakeServiceMatchAgentProvider struct {
@@ -81,7 +81,7 @@ func newTestLLMServiceMatcher(t *testing.T, client *fakeServiceMatchLLMClient, a
 	t.Helper()
 	return NewLLMServiceMatcher(
 		db,
-		fakeServiceMatchConfigProvider{servicedeskAgentID: agentID},
+		fakeServiceMatchConfigProvider{intakeAgentID: agentID},
 		fakeServiceMatchAgentProvider{cfg: &app.AIAgentConfig{Model: "test-model", Protocol: llm.ProtocolOpenAI, APIKey: "key", Temperature: 0.2, MaxTokens: 128}},
 		func(protocol, baseURL, apiKey string) (llm.Client, error) {
 			return client, nil

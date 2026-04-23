@@ -319,7 +319,7 @@ func createServiceHealthUser(t *testing.T, db *gorm.DB, username string, active 
 
 func setServiceHealthDecisionAgent(t *testing.T, db *gorm.DB, agentID uint) {
 	t.Helper()
-	cfg := model.SystemConfig{Key: "itsm.engine.decision.agent_id", Value: fmt.Sprintf("%d", agentID)}
+	cfg := model.SystemConfig{Key: smartTicketDecisionAgentKey, Value: fmt.Sprintf("%d", agentID)}
 	if err := db.Save(&cfg).Error; err != nil {
 		t.Fatalf("set decision agent config: %v", err)
 	}

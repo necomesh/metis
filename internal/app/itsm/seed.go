@@ -714,7 +714,7 @@ func seedServiceDefinitions(db *gorm.DB) error {
 	return nil
 }
 
-// seedEngineConfig creates internal agents and default SystemConfig for ITSM engine.
+// seedEngineConfig creates internal agents and default SystemConfig for the smart ticket engine.
 func seedEngineConfig(db *gorm.DB) error {
 	type agentSeed struct {
 		Name         string
@@ -725,10 +725,10 @@ func seedEngineConfig(db *gorm.DB) error {
 
 	agents := []agentSeed{
 		{
-			Name:         "ITSM 工作流解析",
-			Code:         "itsm.generator",
+			Name:         "ITSM 路径引擎",
+			Code:         smartTicketPathBuilderAgentKey,
 			Temperature:  0.3,
-			SystemPrompt: itsmGeneratorSystemPrompt,
+			SystemPrompt: itsmPathBuilderSystemPrompt,
 		},
 	}
 
@@ -749,6 +749,25 @@ func seedEngineConfig(db *gorm.DB) error {
 			slog.Info("seed: updated internal agent", "code", a.Code, "name", a.Name)
 			continue
 		}
+		if a.Code == smartTicketPathBuilderAgentKey {
+			var legacy struct{ ID uint }
+			if err := db.Table("ai_agents").Where("code = ?", "itsm.generator").Select("id").First(&legacy).Error; err == nil {
+				if err := db.Table("ai_agents").Where("id = ?", legacy.ID).Updates(map[string]any{
+					"name":          a.Name,
+					"code":          a.Code,
+					"type":          "internal",
+					"system_prompt": a.SystemPrompt,
+					"temperature":   a.Temperature,
+					"is_active":     true,
+					"visibility":    "team",
+				}).Error; err != nil {
+					slog.Error("seed: failed to migrate internal agent", "from", "itsm.generator", "to", a.Code, "error", err)
+					continue
+				}
+				slog.Info("seed: migrated internal agent", "from", "itsm.generator", "to", a.Code, "name", a.Name)
+				continue
+			}
+		}
 		if err := db.Table("ai_agents").Create(map[string]any{
 			"name":          a.Name,
 			"code":          a.Code,
@@ -764,12 +783,16 @@ func seedEngineConfig(db *gorm.DB) error {
 		}
 		slog.Info("seed: created internal agent", "code", a.Code, "name", a.Name)
 	}
+	deleteLegacyPathBuilderAgent(db)
+
+	migrateSmartTicketEngineConfig(db)
 
 	defaults := map[string]string{
-		"itsm.engine.decision.decision_mode":  "direct_first",
-		"itsm.engine.general.max_retries":     "3",
-		"itsm.engine.general.timeout_seconds": "120",
-		"itsm.engine.general.reasoning_log":   "full",
+		smartTicketDecisionModeKey:    "direct_first",
+		smartTicketPathMaxRetriesKey:  "3",
+		smartTicketPathTimeoutKey:     "120",
+		smartTicketGuardAuditLevelKey: "full",
+		smartTicketGuardFallbackKey:   "0",
 	}
 
 	for key, value := range defaults {
@@ -785,10 +808,10 @@ func seedEngineConfig(db *gorm.DB) error {
 		slog.Info("seed: created system config", "key", key, "value", value)
 	}
 
-	// Seed default agent_id for servicedesk and decision from preset agents
+	// Seed default agent_id for intake and decision engines from preset agents.
 	agentDefaults := map[string]string{
-		"itsm.engine.servicedesk.agent_id": "itsm.servicedesk",
-		"itsm.engine.decision.agent_id":    "itsm.decision",
+		smartTicketIntakeAgentKey:   "itsm.servicedesk",
+		smartTicketDecisionAgentKey: "itsm.decision",
 	}
 	for configKey, agentCode := range agentDefaults {
 		var existing model.SystemConfig
@@ -808,10 +831,78 @@ func seedEngineConfig(db *gorm.DB) error {
 		slog.Info("seed: created system config", "key", configKey, "value", value)
 	}
 
+	deleteLegacySmartTicketEngineConfig(db)
+
 	return nil
 }
 
-const itsmGeneratorSystemPrompt = `你是 ITSM 工作流解析引擎。根据用户的协作规范（Collaboration Spec）生成工作流 JSON。
+func migrateSmartTicketEngineConfig(db *gorm.DB) {
+	keyMap := map[string]string{
+		"itsm.engine.servicedesk.agent_id":      smartTicketIntakeAgentKey,
+		"itsm.engine.decision.agent_id":         smartTicketDecisionAgentKey,
+		"itsm.engine.decision.decision_mode":    smartTicketDecisionModeKey,
+		"itsm.engine.general.max_retries":       smartTicketPathMaxRetriesKey,
+		"itsm.engine.general.timeout_seconds":   smartTicketPathTimeoutKey,
+		"itsm.engine.general.reasoning_log":     smartTicketGuardAuditLevelKey,
+		"itsm.engine.general.fallback_assignee": smartTicketGuardFallbackKey,
+	}
+	for legacyKey, newKey := range keyMap {
+		var existing model.SystemConfig
+		if err := db.Where("\"key\" = ?", newKey).First(&existing).Error; err == nil {
+			continue
+		}
+		var legacy model.SystemConfig
+		if err := db.Where("\"key\" = ?", legacyKey).First(&legacy).Error; err != nil {
+			continue
+		}
+		cfg := model.SystemConfig{Key: newKey, Value: legacy.Value}
+		if err := db.Create(&cfg).Error; err != nil {
+			slog.Error("seed: failed to migrate system config", "from", legacyKey, "to", newKey, "error", err)
+			continue
+		}
+		slog.Info("seed: migrated system config", "from", legacyKey, "to", newKey)
+	}
+}
+
+func deleteLegacySmartTicketEngineConfig(db *gorm.DB) {
+	legacyKeys := []string{
+		"itsm.engine.servicedesk.agent_id",
+		"itsm.engine.decision.agent_id",
+		"itsm.engine.decision.decision_mode",
+		"itsm.engine.general.max_retries",
+		"itsm.engine.general.timeout_seconds",
+		"itsm.engine.general.reasoning_log",
+		"itsm.engine.general.fallback_assignee",
+	}
+	if err := db.Where("\"key\" IN ?", legacyKeys).Delete(&model.SystemConfig{}).Error; err != nil {
+		slog.Warn("seed: failed to delete legacy smart ticket engine config", "error", err)
+	}
+}
+
+func deleteLegacyPathBuilderAgent(db *gorm.DB) {
+	type agentRef struct {
+		ID      uint
+		ModelID *uint
+	}
+	var current agentRef
+	if err := db.Table("ai_agents").Where("code = ?", smartTicketPathBuilderAgentKey).Select("id", "model_id").First(&current).Error; err != nil {
+		return
+	}
+	var legacy agentRef
+	if err := db.Table("ai_agents").Where("code = ?", "itsm.generator").Select("id", "model_id").First(&legacy).Error; err != nil {
+		return
+	}
+	if current.ModelID == nil && legacy.ModelID != nil {
+		if err := db.Table("ai_agents").Where("id = ?", current.ID).Update("model_id", *legacy.ModelID).Error; err != nil {
+			slog.Warn("seed: failed to preserve legacy path model", "error", err)
+		}
+	}
+	if err := db.Exec("DELETE FROM ai_agents WHERE id = ?", legacy.ID).Error; err != nil {
+		slog.Warn("seed: failed to delete legacy path agent", "error", err)
+	}
+}
+
+const itsmPathBuilderSystemPrompt = `你是 ITSM 路径引擎。根据用户的协作规范（Collaboration Spec）生成工作流 JSON。
 
 ## 输出格式
 
