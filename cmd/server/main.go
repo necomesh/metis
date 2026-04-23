@@ -40,11 +40,14 @@ func main() {
 		case "seed":
 			runSeed(os.Args[2:])
 			return
+		case "seed-dev":
+			runSeedDevCommand(os.Args[2:])
+			return
 		case "-config", "-host", "-port", "--help", "-h", "-test.v":
 			// Known flags — fall through to normal startup
 		default:
 			if os.Args[1][0] != '-' {
-				fmt.Fprintf(os.Stderr, "unknown command: %s\nUsage: server [seed] [-config path] [-host addr] [-port num]\n", os.Args[1])
+				fmt.Fprintf(os.Stderr, "unknown command: %s\nUsage: server [seed|seed-dev] [-config path] [-host addr] [-port num]\n", os.Args[1])
 				os.Exit(1)
 			}
 		}
@@ -60,6 +63,16 @@ func main() {
 	if err != nil && !errors.Is(err, config.ErrConfigNotFound) {
 		slog.Error("failed to load config", "error", err)
 		os.Exit(1)
+	}
+	if ran, err := maybeRunSeedDev(*configPath, devAIConfigPath, cfg); err != nil {
+		slog.Error("seed-dev auto install failed", "error", err)
+		os.Exit(1)
+	} else if ran {
+		cfg, err = config.Load(*configPath)
+		if err != nil {
+			slog.Error("failed to reload config after seed-dev", "error", err)
+			os.Exit(1)
+		}
 	}
 
 	// 2. IOC container
@@ -167,6 +180,11 @@ func main() {
 					slog.Warn("failed to load app locales", "app", a.Name(), "error", err)
 				}
 			}
+		}
+
+		if err := runDevBootstrap(db.DB, cfg, devAIConfigPath); err != nil {
+			slog.Error("dev bootstrap failed", "error", err)
+			os.Exit(1)
 		}
 
 		// Resolve handler
@@ -307,6 +325,11 @@ func runSeed(args []string) {
 			os.Exit(1)
 		}
 		slog.Info("seed: app seed complete", "app", a.Name())
+	}
+
+	if err := runDevBootstrap(db.DB, cfg, devAIConfigPath); err != nil {
+		slog.Error("seed: dev bootstrap failed", "error", err)
+		os.Exit(1)
 	}
 
 	slog.Info("seed: all done")

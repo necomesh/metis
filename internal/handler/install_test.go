@@ -20,6 +20,7 @@ import (
 	"metis/internal/model"
 	"metis/internal/pkg/token"
 	"metis/internal/repository"
+	"metis/internal/seed"
 	"metis/internal/service"
 )
 
@@ -89,7 +90,7 @@ func TestUpsertInstallAdmin_ReusesExistingUser(t *testing.T) {
 		t.Fatalf("create existing user: %v", err)
 	}
 
-	if err := upsertInstallAdmin(db, "admin", "NewPassword123!", "new@example.com", role.ID); err != nil {
+	if err := seed.UpsertInstallAdmin(db, "admin", "NewPassword123!", "new@example.com", role.ID); err != nil {
 		t.Fatalf("upsert install admin: %v", err)
 	}
 
@@ -122,7 +123,7 @@ func TestAssignInstallAdminOrgIdentity_WaitsForOrgSeedData(t *testing.T) {
 		t.Fatalf("create user: %v", err)
 	}
 
-	if err := assignInstallAdminOrgIdentity(db, "admin"); err != nil {
+	if err := seed.AssignInstallAdminOrgIdentity(db, "admin"); err != nil {
 		t.Fatalf("assign before org seed should not fail: %v", err)
 	}
 
@@ -141,7 +142,7 @@ func TestAssignInstallAdminOrgIdentity_WaitsForOrgSeedData(t *testing.T) {
 		t.Fatalf("create position: %v", err)
 	}
 
-	if err := assignInstallAdminOrgIdentity(db, "admin"); err != nil {
+	if err := seed.AssignInstallAdminOrgIdentity(db, "admin"); err != nil {
 		t.Fatalf("assign after org seed: %v", err)
 	}
 
@@ -171,10 +172,10 @@ func TestAssignInstallAdminOrgIdentity_AssignsAllBuiltinITSMTestPositions(t *tes
 		}
 	}
 
-	if err := assignInstallAdminOrgIdentity(db, "admin"); err != nil {
+	if err := seed.AssignInstallAdminOrgIdentity(db, "admin"); err != nil {
 		t.Fatalf("assign admin identities: %v", err)
 	}
-	if err := assignInstallAdminOrgIdentity(db, "admin"); err != nil {
+	if err := seed.AssignInstallAdminOrgIdentity(db, "admin"); err != nil {
 		t.Fatalf("repeat assign admin identities: %v", err)
 	}
 

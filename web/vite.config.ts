@@ -3,6 +3,8 @@ import react, { reactCompilerPreset } from '@vitejs/plugin-react'
 import babel from '@rolldown/plugin-babel'
 import tailwindcss from '@tailwindcss/vite'
 
+const apiTarget = process.env.VITE_API_TARGET || 'http://localhost:8080'
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
@@ -18,7 +20,7 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': 'http://localhost:8080',
+      '/api': apiTarget,
     },
   },
 })

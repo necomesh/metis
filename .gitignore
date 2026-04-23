@@ -33,9 +33,10 @@ coverage.html
 test-report.xml
 test-llm-report.xml
 
-# Env (legacy, no longer used)
+# Env
 .env
 .env.local
+.env.dev
 .env.test
 server
 sidecar
