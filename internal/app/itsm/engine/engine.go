@@ -51,20 +51,20 @@ type CancelParams struct {
 
 // Errors
 var (
-	ErrNoStartNode       = errors.New("workflow: no start node found")
-	ErrMultipleStartNodes = errors.New("workflow: multiple start nodes found")
-	ErrNoEndNode         = errors.New("workflow: no end node found")
-	ErrNoOutgoingEdge    = errors.New("workflow: no matching outgoing edge for outcome")
-	ErrMaxDepthExceeded  = errors.New("workflow: automatic step depth exceeded maximum (50)")
-	ErrInvalidNodeType   = errors.New("workflow: invalid node type")
-	ErrActivityNotFound  = errors.New("workflow: activity not found")
-	ErrActivityNotActive = errors.New("workflow: activity is not in an active state")
-	ErrNodeNotFound      = errors.New("workflow: referenced node not found in workflow")
-	ErrTokenNotFound     = errors.New("workflow: execution token not found")
-	ErrTokenNotActive    = errors.New("workflow: execution token is not in active state")
-	ErrNodeNotImplemented = errors.New("workflow: node type registered but execution logic not yet implemented")
-	ErrGatewayNoOutEdge   = errors.New("workflow: gateway node has no outgoing edges")
-	ErrGatewayJoinIncomplete = errors.New("workflow: not all sibling tokens have completed at join")
+	ErrNoStartNode             = errors.New("workflow: no start node found")
+	ErrMultipleStartNodes      = errors.New("workflow: multiple start nodes found")
+	ErrNoEndNode               = errors.New("workflow: no end node found")
+	ErrNoOutgoingEdge          = errors.New("workflow: no matching outgoing edge for outcome")
+	ErrMaxDepthExceeded        = errors.New("workflow: automatic step depth exceeded maximum (50)")
+	ErrInvalidNodeType         = errors.New("workflow: invalid node type")
+	ErrActivityNotFound        = errors.New("workflow: activity not found")
+	ErrActivityNotActive       = errors.New("workflow: activity is not in an active state")
+	ErrNodeNotFound            = errors.New("workflow: referenced node not found in workflow")
+	ErrTokenNotFound           = errors.New("workflow: execution token not found")
+	ErrTokenNotActive          = errors.New("workflow: execution token is not in active state")
+	ErrNodeNotImplemented      = errors.New("workflow: node type registered but execution logic not yet implemented")
+	ErrGatewayNoOutEdge        = errors.New("workflow: gateway node has no outgoing edges")
+	ErrGatewayJoinIncomplete   = errors.New("workflow: not all sibling tokens have completed at join")
 	ErrGatewayMissingDirection = errors.New("workflow: parallel/inclusive node missing gateway_direction (fork or join)")
 )
 
@@ -73,6 +73,7 @@ const (
 	NodeStart   = "start"
 	NodeEnd     = "end"
 	NodeForm    = "form"
+	NodeApprove = "approve"
 	NodeProcess = "process"
 	NodeAction  = "action"
 	NodeNotify  = "notify"
@@ -86,15 +87,15 @@ const (
 	// Advanced node types — registered only, execution logic in ⑤ itsm-advanced-nodes
 	NodeScript     = "script"
 	NodeSubprocess = "subprocess"
-	NodeTimer      = "timer"  // intermediate timer event
-	NodeSignal     = "signal" // intermediate signal event
+	NodeTimer      = "timer"   // intermediate timer event
+	NodeSignal     = "signal"  // intermediate signal event
 	NodeBTimer     = "b_timer" // boundary timer event
 	NodeBError     = "b_error" // boundary error event
 )
 
 var ValidNodeTypes = map[string]bool{
 	NodeStart: true, NodeEnd: true, NodeForm: true,
-	NodeProcess: true, NodeAction: true,
+	NodeApprove: true, NodeProcess: true, NodeAction: true,
 	NodeExclusive: true, NodeParallel: true, NodeInclusive: true,
 	NodeNotify: true, NodeWait: true,
 	NodeScript: true, NodeSubprocess: true,
@@ -114,13 +115,13 @@ func IsAutoNode(nodeType string) bool {
 
 // IsHumanNode returns true for node types that require human interaction.
 func IsHumanNode(nodeType string) bool {
-	return nodeType == NodeForm || nodeType == NodeProcess || nodeType == NodeWait
+	return nodeType == NodeForm || nodeType == NodeApprove || nodeType == NodeProcess || nodeType == NodeWait
 }
 
 // Token status constants
 const (
 	TokenActive    = "active"
-	TokenWaiting   = "waiting"   // fork: parent waits for children — ④ itsm-gateway-parallel
+	TokenWaiting   = "waiting" // fork: parent waits for children — ④ itsm-gateway-parallel
 	TokenCompleted = "completed"
 	TokenCancelled = "cancelled"
 	TokenSuspended = "suspended" // reserved for ⑤ itsm-advanced-nodes (boundary event suspend/resume)
@@ -146,10 +147,10 @@ const (
 
 // Activity status constants
 const (
-	ActivityPending         = "pending"
-	ActivityInProgress      = "in_progress"
-	ActivityCompleted       = "completed"
-	ActivityCancelled       = "cancelled"
+	ActivityPending    = "pending"
+	ActivityInProgress = "in_progress"
+	ActivityCompleted  = "completed"
+	ActivityCancelled  = "cancelled"
 )
 
 // Smart engine errors

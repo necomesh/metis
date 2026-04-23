@@ -182,7 +182,7 @@ func (r *TicketRepo) ListPendingApprovals(params TicketApprovalListParams, opera
 		Joins("JOIN itsm_ticket_activities AS act ON act.ticket_id = itsm_tickets.id").
 		Joins("JOIN itsm_ticket_assignments AS assign ON assign.ticket_id = itsm_tickets.id AND assign.activity_id = act.id").
 		Where("itsm_tickets.status NOT IN ?", []string{TicketStatusCompleted, TicketStatusFailed, TicketStatusCancelled}).
-		Where("act.activity_type IN ? AND act.status IN ?", []string{"form", "process"}, []string{"pending", "in_progress"}).
+		Where("act.activity_type IN ? AND act.status IN ?", []string{"approve", "form", "process"}, []string{"pending", "in_progress"}).
 		Where("assign.status = ?", AssignmentPending).
 		Where(r.assignmentOperatorCondition("assign", operatorID, positionIDs, departmentIDs))
 
@@ -193,7 +193,7 @@ func (r *TicketRepo) ListApprovalHistory(params TicketApprovalListParams, operat
 	query := r.db.Model(&Ticket{}).
 		Joins("JOIN itsm_ticket_activities AS act ON act.ticket_id = itsm_tickets.id").
 		Joins("JOIN itsm_ticket_assignments AS assign ON assign.ticket_id = itsm_tickets.id AND assign.activity_id = act.id").
-		Where("act.activity_type IN ?", []string{"form", "process"}).
+		Where("act.activity_type IN ?", []string{"approve", "form", "process"}).
 		Where("assign.status = ? AND assign.assignee_id = ?", AssignmentCompleted, operatorID)
 
 	return r.listApprovalQuery(query, params, "assign.finished_at DESC, itsm_tickets.id DESC")

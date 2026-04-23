@@ -304,6 +304,12 @@ func (e *ClassicEngine) processNode(
 		}
 		return e.attachBoundaryEvents(tx, def, token, node)
 
+	case NodeApprove:
+		if err := e.handleApprove(tx, token, operatorID, node, nodeData); err != nil {
+			return err
+		}
+		return e.attachBoundaryEvents(tx, def, token, node)
+
 	case NodeProcess:
 		if err := e.handleProcess(tx, token, operatorID, node, nodeData); err != nil {
 			return err

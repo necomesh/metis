@@ -86,7 +86,7 @@ func ParseSmartServiceConfig(raw string) SmartServiceConfig {
 
 // DecisionPlan is the structured output from the AI agent.
 type DecisionPlan struct {
-	NextStepType  string             `json:"next_step_type"` // process|action|notify|form|complete|escalate
+	NextStepType  string             `json:"next_step_type"` // approve|process|action|notify|form|complete|escalate
 	ExecutionMode string             `json:"execution_mode"` // ""|"single"|"parallel"
 	Activities    []DecisionActivity `json:"activities"`
 	Reasoning     string             `json:"reasoning"`
@@ -106,7 +106,7 @@ type DecisionActivity struct {
 
 // Allowed next_step_types for smart engine.
 var AllowedSmartStepTypes = map[string]bool{
-	"process": true, "action": true,
+	"approve": true, "process": true, "action": true,
 	"notify": true, "form": true, "complete": true, "escalate": true,
 }
 
@@ -529,7 +529,7 @@ func (e *SmartEngine) executeSinglePlan(tx *gorm.DB, ticketID uint, plan *Decisi
 		}
 	} else if da.ParticipantType == "position_department" && da.PositionCode != "" && da.DepartmentCode != "" {
 		e.createPositionAssignment(tx, ticketID, act.ID, da.PositionCode, da.DepartmentCode)
-	} else if da.Type == "process" || da.Type == "form" {
+	} else if da.Type == NodeApprove || da.Type == NodeProcess || da.Type == NodeForm {
 		e.tryFallbackAssignment(tx, ticketID, act.ID)
 	}
 
@@ -1309,7 +1309,7 @@ const agenticOutputFormat = "## 输出要求\n\n" +
 	"当你完成信息收集和推理后，直接输出以下 JSON 格式的决策（不要再调用任何工具）：\n\n" +
 	"```json\n" +
 	"{\n" +
-	"  \"next_step_type\": \"process|action|notify|form|complete|escalate\",\n" +
+	"  \"next_step_type\": \"approve|process|action|notify|form|complete|escalate\",\n" +
 	"  \"execution_mode\": \"single|parallel\",\n" +
 	"  \"activities\": [\n" +
 	"    {\n" +

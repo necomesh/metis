@@ -3,6 +3,7 @@ package itsm
 import (
 	"log/slog"
 	"strconv"
+	"time"
 
 	"github.com/casbin/casbin/v2"
 	"gorm.io/gorm"
@@ -36,7 +37,80 @@ func seedITSM(db *gorm.DB, enforcer *casbin.Enforcer) error {
 	if err := seedEngineConfig(db); err != nil {
 		return err
 	}
-	return seedServiceDefinitions(db)
+	if err := seedServiceDefinitions(db); err != nil {
+		return err
+	}
+	return repairCompletedHumanAssignments(db)
+}
+
+func repairCompletedHumanAssignments(db *gorm.DB) error {
+	if !db.Migrator().HasTable(&TicketAssignment{}) ||
+		!db.Migrator().HasTable(&TicketActivity{}) ||
+		!db.Migrator().HasTable(&TicketTimeline{}) {
+		return nil
+	}
+
+	type repairRow struct {
+		AssignmentID       uint
+		OperatorID         uint
+		ActivityFinishedAt *time.Time
+		TimelineCreatedAt  *time.Time
+	}
+
+	var rows []repairRow
+	err := db.Table("itsm_ticket_assignments AS assign").
+		Select(`
+			assign.id AS assignment_id,
+			tl.operator_id AS operator_id,
+			act.finished_at AS activity_finished_at,
+			tl.created_at AS timeline_created_at
+		`).
+		Joins("JOIN itsm_ticket_activities AS act ON act.id = assign.activity_id").
+		Joins("JOIN itsm_ticket_timelines AS tl ON tl.ticket_id = act.ticket_id AND tl.activity_id = act.id").
+		Where("act.activity_type IN ?", []string{"approve", "form", "process"}).
+		Where("act.status = ?", "completed").
+		Where("assign.status = ?", "pending").
+		Where("tl.event_type = ? AND tl.operator_id > 0", "activity_completed").
+		Where("assign.user_id = tl.operator_id OR assign.assignee_id = tl.operator_id").
+		Scan(&rows).Error
+	if err != nil {
+		return err
+	}
+
+	repaired := 0
+	seen := make(map[uint]struct{}, len(rows))
+	for _, row := range rows {
+		if _, ok := seen[row.AssignmentID]; ok {
+			continue
+		}
+		seen[row.AssignmentID] = struct{}{}
+
+		finishedAt := row.ActivityFinishedAt
+		if finishedAt == nil {
+			finishedAt = row.TimelineCreatedAt
+		}
+		updates := map[string]any{
+			"assignee_id": row.OperatorID,
+			"status":      "completed",
+			"is_current":  false,
+		}
+		if finishedAt != nil {
+			updates["finished_at"] = *finishedAt
+		}
+		result := db.Model(&TicketAssignment{}).
+			Where("id = ? AND status = ?", row.AssignmentID, AssignmentPending).
+			Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected > 0 {
+			repaired++
+		}
+	}
+	if repaired > 0 {
+		slog.Info("seed: repaired completed ITSM assignments", "count", repaired)
+	}
+	return nil
 }
 
 func seedCatalogs(db *gorm.DB) error {

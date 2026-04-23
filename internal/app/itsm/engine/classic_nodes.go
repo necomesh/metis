@@ -107,6 +107,28 @@ func (e *ClassicEngine) handleForm(tx *gorm.DB, token *executionTokenModel, oper
 	return e.assignParticipants(tx, token.TicketID, act.ID, operatorID, data.Participants)
 }
 
+func (e *ClassicEngine) handleApprove(tx *gorm.DB, token *executionTokenModel, operatorID uint, node *WFNode, data *NodeData) error {
+	now := time.Now()
+
+	act := &activityModel{
+		TicketID:      token.TicketID,
+		TokenID:       &token.ID,
+		Name:          labelOrDefault(data, "审批"),
+		ActivityType:  NodeApprove,
+		Status:        ActivityPending,
+		NodeID:        node.ID,
+		ExecutionMode: "single",
+		StartedAt:     &now,
+	}
+	if err := tx.Create(act).Error; err != nil {
+		return err
+	}
+
+	tx.Model(&ticketModel{}).Where("id = ?", token.TicketID).Update("current_activity_id", act.ID)
+
+	return e.assignParticipants(tx, token.TicketID, act.ID, operatorID, data.Participants)
+}
+
 func (e *ClassicEngine) handleProcess(tx *gorm.DB, token *executionTokenModel, operatorID uint, node *WFNode, data *NodeData) error {
 	now := time.Now()
 
