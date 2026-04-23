@@ -178,8 +178,6 @@ export interface PriorityItem {
   value: number
   color: string
   description: string
-  defaultResponseMinutes: number
-  defaultResolutionMinutes: number
   isActive: boolean
   createdAt: string
   updatedAt: string
@@ -195,8 +193,6 @@ export function createPriority(data: {
   value: number
   color: string
   description?: string
-  defaultResponseMinutes?: number
-  defaultResolutionMinutes?: number
 }) {
   return api.post<PriorityItem>("/api/v1/itsm/priorities", data)
 }

@@ -262,6 +262,27 @@ func TestBuiltInSmartSeedsAlignParticipantsAndInstallAdminIdentity(t *testing.T)
 	})
 }
 
+func TestMigratePriorityCommitmentColumnsDropsLegacyColumns(t *testing.T) {
+	db := newSeedAlignmentDB(t)
+
+	for _, column := range []string{"default_response_minutes", "default_resolution_minutes"} {
+		if err := db.Exec("ALTER TABLE itsm_priorities ADD COLUMN " + column + " INTEGER DEFAULT 0").Error; err != nil {
+			t.Fatalf("add legacy column %s: %v", column, err)
+		}
+		if !db.Migrator().HasColumn("itsm_priorities", column) {
+			t.Fatalf("expected legacy column %s to exist before migration", column)
+		}
+	}
+
+	migratePriorityCommitmentColumns(db)
+
+	for _, column := range []string{"default_response_minutes", "default_resolution_minutes"} {
+		if db.Migrator().HasColumn("itsm_priorities", column) {
+			t.Fatalf("expected legacy column %s to be dropped", column)
+		}
+	}
+}
+
 func TestSeedEngineConfigUpdatesExistingPathEnginePrompt(t *testing.T) {
 	db := newSeedAlignmentDB(t)
 	code := smartTicketPathBuilderAgentKey

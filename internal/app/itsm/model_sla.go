@@ -9,45 +9,39 @@ import (
 // Priority 工单优先级
 type Priority struct {
 	model.BaseModel
-	Name                     string `json:"name" gorm:"size:64;not null"`
-	Code                     string `json:"code" gorm:"size:16;uniqueIndex;not null"` // P0, P1, P2, P3, P4
-	Value                    int    `json:"value" gorm:"not null"`                    // lower = more urgent
-	Color                    string `json:"color" gorm:"size:16;not null"`            // hex color
-	Description              string `json:"description" gorm:"size:255"`
-	DefaultResponseMinutes   int    `json:"defaultResponseMinutes" gorm:"default:0"`
-	DefaultResolutionMinutes int    `json:"defaultResolutionMinutes" gorm:"default:0"`
-	IsActive                 bool   `json:"isActive" gorm:"not null;default:true"`
+	Name        string `json:"name" gorm:"size:64;not null"`
+	Code        string `json:"code" gorm:"size:16;uniqueIndex;not null"` // P0, P1, P2, P3, P4
+	Value       int    `json:"value" gorm:"not null"`                    // lower = more urgent
+	Color       string `json:"color" gorm:"size:16;not null"`            // hex color
+	Description string `json:"description" gorm:"size:255"`
+	IsActive    bool   `json:"isActive" gorm:"not null;default:true"`
 }
 
 func (Priority) TableName() string { return "itsm_priorities" }
 
 type PriorityResponse struct {
-	ID                       uint      `json:"id"`
-	Name                     string    `json:"name"`
-	Code                     string    `json:"code"`
-	Value                    int       `json:"value"`
-	Color                    string    `json:"color"`
-	Description              string    `json:"description"`
-	DefaultResponseMinutes   int       `json:"defaultResponseMinutes"`
-	DefaultResolutionMinutes int       `json:"defaultResolutionMinutes"`
-	IsActive                 bool      `json:"isActive"`
-	CreatedAt                time.Time `json:"createdAt"`
-	UpdatedAt                time.Time `json:"updatedAt"`
+	ID          uint      `json:"id"`
+	Name        string    `json:"name"`
+	Code        string    `json:"code"`
+	Value       int       `json:"value"`
+	Color       string    `json:"color"`
+	Description string    `json:"description"`
+	IsActive    bool      `json:"isActive"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 func (p *Priority) ToResponse() PriorityResponse {
 	return PriorityResponse{
-		ID:                       p.ID,
-		Name:                     p.Name,
-		Code:                     p.Code,
-		Value:                    p.Value,
-		Color:                    p.Color,
-		Description:              p.Description,
-		DefaultResponseMinutes:   p.DefaultResponseMinutes,
-		DefaultResolutionMinutes: p.DefaultResolutionMinutes,
-		IsActive:                 p.IsActive,
-		CreatedAt:                p.CreatedAt,
-		UpdatedAt:                p.UpdatedAt,
+		ID:          p.ID,
+		Name:        p.Name,
+		Code:        p.Code,
+		Value:       p.Value,
+		Color:       p.Color,
+		Description: p.Description,
+		IsActive:    p.IsActive,
+		CreatedAt:   p.CreatedAt,
+		UpdatedAt:   p.UpdatedAt,
 	}
 }
 

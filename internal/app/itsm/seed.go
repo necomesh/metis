@@ -13,6 +13,8 @@ import (
 )
 
 func seedITSM(db *gorm.DB, enforcer *casbin.Enforcer) error {
+	migratePriorityCommitmentColumns(db)
+
 	if err := seedMenus(db); err != nil {
 		return err
 	}
@@ -41,6 +43,23 @@ func seedITSM(db *gorm.DB, enforcer *casbin.Enforcer) error {
 		return err
 	}
 	return repairCompletedHumanAssignments(db)
+}
+
+func migratePriorityCommitmentColumns(db *gorm.DB) {
+	if !db.Migrator().HasTable(&Priority{}) {
+		return
+	}
+
+	for _, column := range []string{"default_response_minutes", "default_resolution_minutes"} {
+		if !db.Migrator().HasColumn("itsm_priorities", column) {
+			continue
+		}
+		if err := db.Exec("ALTER TABLE itsm_priorities DROP COLUMN " + column).Error; err != nil {
+			slog.Warn("seed: failed to drop priority commitment column", "column", column, "error", err)
+			continue
+		}
+		slog.Info("seed: dropped priority commitment column", "column", column)
+	}
 }
 
 func repairCompletedHumanAssignments(db *gorm.DB) error {
@@ -504,11 +523,11 @@ func seedPolicies(enforcer *casbin.Enforcer) error {
 
 func seedPriorities(db *gorm.DB) error {
 	priorities := []Priority{
-		{Name: "紧急", Code: "P0", Value: 1, Color: "#FF0000", Description: "紧急问题，需要立即处理", DefaultResponseMinutes: 15, DefaultResolutionMinutes: 120, IsActive: true},
-		{Name: "高", Code: "P1", Value: 2, Color: "#FF6600", Description: "高优先级，需要尽快处理", DefaultResponseMinutes: 60, DefaultResolutionMinutes: 480, IsActive: true},
-		{Name: "中", Code: "P2", Value: 3, Color: "#FFAA00", Description: "中等优先级", DefaultResponseMinutes: 240, DefaultResolutionMinutes: 1440, IsActive: true},
-		{Name: "低", Code: "P3", Value: 4, Color: "#00AA00", Description: "低优先级", DefaultResponseMinutes: 480, DefaultResolutionMinutes: 4320, IsActive: true},
-		{Name: "最低", Code: "P4", Value: 5, Color: "#888888", Description: "最低优先级", DefaultResponseMinutes: 1440, DefaultResolutionMinutes: 10080, IsActive: true},
+		{Name: "紧急", Code: "P0", Value: 1, Color: "#FF0000", Description: "紧急问题，需要立即处理", IsActive: true},
+		{Name: "高", Code: "P1", Value: 2, Color: "#FF6600", Description: "高优先级，需要尽快处理", IsActive: true},
+		{Name: "中", Code: "P2", Value: 3, Color: "#FFAA00", Description: "中等优先级", IsActive: true},
+		{Name: "低", Code: "P3", Value: 4, Color: "#00AA00", Description: "低优先级", IsActive: true},
+		{Name: "最低", Code: "P4", Value: 5, Color: "#888888", Description: "最低优先级", IsActive: true},
 	}
 
 	for _, p := range priorities {

@@ -141,6 +141,7 @@ func TestServiceDefServiceRefreshPublishHealthCheck_SavesSnapshot(t *testing.T) 
 	serviceAgent := createServiceHealthAgent(t, db, "service-agent", true)
 	decisionAgent := createServiceHealthAgent(t, db, "decision-agent", true)
 	setServiceHealthDecisionAgent(t, db, decisionAgent.ID)
+	seedServiceHealthPathEngine(t, db)
 	service, err := svc.Create(&ServiceDefinition{
 		Name:              "Smart",
 		Code:              "smart-health-snapshot",
@@ -222,6 +223,18 @@ func TestServiceDefServiceRefreshPublishHealthCheck_CoreFailures(t *testing.T) {
 			wantKey:    "decision_agent",
 			wantStatus: "fail",
 		},
+		{
+			name: "path engine model missing",
+			setup: func(t *testing.T, db *gorm.DB, service *ServiceDefinition, serviceAgent *ai.Agent, decisionAgent *ai.Agent) {
+				if err := db.Model(&ai.Agent{}).
+					Where("code = ?", smartTicketPathBuilderAgentKey).
+					Update("model_id", gorm.Expr("NULL")).Error; err != nil {
+					t.Fatalf("clear path engine model: %v", err)
+				}
+			},
+			wantKey:    "path_engine",
+			wantStatus: "fail",
+		},
 	}
 
 	for i, tt := range tests {
@@ -234,6 +247,7 @@ func TestServiceDefServiceRefreshPublishHealthCheck_CoreFailures(t *testing.T) {
 			serviceAgent := createServiceHealthAgent(t, db, "service-agent", true)
 			decisionAgent := createServiceHealthAgent(t, db, "decision-agent", true)
 			setServiceHealthDecisionAgent(t, db, decisionAgent.ID)
+			seedServiceHealthPathEngine(t, db)
 			service, err := svc.Create(&ServiceDefinition{
 				Name:              "Smart",
 				Code:              fmt.Sprintf("smart-core-%d", i),
@@ -274,6 +288,7 @@ func TestServiceDefServiceRefreshPublishHealthCheck_WarnsOnInvalidReferencedActi
 	serviceAgent := createServiceHealthAgent(t, db, "service-agent", true)
 	decisionAgent := createServiceHealthAgent(t, db, "decision-agent", true)
 	setServiceHealthDecisionAgent(t, db, decisionAgent.ID)
+	seedServiceHealthPathEngine(t, db)
 	service, err := svc.Create(&ServiceDefinition{
 		Name:              "Smart",
 		Code:              "smart-invalid-action",
@@ -323,6 +338,25 @@ func setServiceHealthDecisionAgent(t *testing.T, db *gorm.DB, agentID uint) {
 	if err := db.Save(&cfg).Error; err != nil {
 		t.Fatalf("set decision agent config: %v", err)
 	}
+}
+
+func seedServiceHealthPathEngine(t *testing.T, db *gorm.DB) ai.Agent {
+	t.Helper()
+	modelID := uint(1)
+	code := smartTicketPathBuilderAgentKey
+	agent := ai.Agent{
+		Name:       "ITSM 路径引擎",
+		Code:       &code,
+		Type:       ai.AgentTypeInternal,
+		ModelID:    &modelID,
+		IsActive:   true,
+		Visibility: ai.AgentVisibilityTeam,
+		CreatedBy:  1,
+	}
+	if err := db.Create(&agent).Error; err != nil {
+		t.Fatalf("create path engine: %v", err)
+	}
+	return agent
 }
 
 func validServiceHealthWorkflow(userID uint) string {

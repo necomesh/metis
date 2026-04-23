@@ -55,8 +55,6 @@ function usePrioritySchema() {
     value: z.number().min(0),
     color: z.string().min(1),
     description: z.string().optional(),
-    defaultResponseMinutes: z.number().min(0),
-    defaultResolutionMinutes: z.number().min(0),
   })
 }
 
@@ -66,10 +64,6 @@ function matchesQuery(item: Pick<PriorityItem, "name" | "code" | "description">,
   if (!query) return true
   const haystack = `${item.name} ${item.code} ${item.description ?? ""}`.toLowerCase()
   return haystack.includes(query)
-}
-
-function formatMinutes(minutes: number, unit: string) {
-  return `${minutes} ${unit}`
 }
 
 function isHexColor(value: string) {
@@ -104,7 +98,7 @@ export function Component() {
   const form = useForm<FormValues>({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     resolver: zodResolver(schema as any),
-    defaultValues: { name: "", code: "", value: 0, color: "#5b6f8f", description: "", defaultResponseMinutes: 0, defaultResolutionMinutes: 0 },
+    defaultValues: { name: "", code: "", value: 0, color: "#5b6f8f", description: "" },
   })
 
   useEffect(() => {
@@ -116,11 +110,9 @@ export function Component() {
           value: editing.value,
           color: editing.color,
           description: editing.description,
-          defaultResponseMinutes: editing.defaultResponseMinutes,
-          defaultResolutionMinutes: editing.defaultResolutionMinutes,
         })
       } else {
-        form.reset({ name: "", code: "", value: 0, color: "#5b6f8f", description: "", defaultResponseMinutes: 0, defaultResolutionMinutes: 0 })
+        form.reset({ name: "", code: "", value: 0, color: "#5b6f8f", description: "" })
       }
     }
   }, [formOpen, editing, form])
@@ -154,7 +146,6 @@ export function Component() {
   }
 
   const isPending = createMut.isPending || updateMut.isPending
-  const minuteUnit = t("itsm:priorities.minuteShort")
 
   return (
     <div className="workspace-page">
@@ -187,18 +178,17 @@ export function Component() {
             <TableRow>
               <TableHead className="min-w-[220px]">{t("itsm:priorities.name")}</TableHead>
               <TableHead className="w-[96px]">{t("itsm:priorities.value")}</TableHead>
-              <TableHead className="min-w-[220px]">{t("itsm:priorities.defaultCommitment")}</TableHead>
               <TableHead className="w-[96px]">{t("common:status")}</TableHead>
               <DataTableActionsHead className="min-w-24">{t("common:actions")}</DataTableActionsHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <DataTableLoadingRow colSpan={5} />
+              <DataTableLoadingRow colSpan={4} />
             ) : items.length === 0 ? (
-              <DataTableEmptyRow colSpan={5} icon={Flag} title={t("itsm:priorities.empty")} description={canCreate ? t("itsm:priorities.emptyHint") : undefined} />
+              <DataTableEmptyRow colSpan={4} icon={Flag} title={t("itsm:priorities.empty")} description={canCreate ? t("itsm:priorities.emptyHint") : undefined} />
             ) : filteredItems.length === 0 ? (
-              <DataTableEmptyRow colSpan={5} icon={Flag} title={t("itsm:priorities.searchEmpty")} />
+              <DataTableEmptyRow colSpan={4} icon={Flag} title={t("itsm:priorities.searchEmpty")} />
             ) : (
               filteredItems.map((item) => (
                 <TableRow key={item.id} className="hover:bg-muted/22">
@@ -216,12 +206,6 @@ export function Component() {
                     </div>
                   </TableCell>
                   <TableCell className="text-sm tabular-nums">{item.value}</TableCell>
-                  <TableCell className="text-sm">
-                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-foreground/82">
-                      <span>{t("itsm:priorities.responseShort")} {formatMinutes(item.defaultResponseMinutes, minuteUnit)}</span>
-                      <span>{t("itsm:priorities.resolutionShort")} {formatMinutes(item.defaultResolutionMinutes, minuteUnit)}</span>
-                    </div>
-                  </TableCell>
                   <TableCell>
                     <WorkspaceBooleanStatus active={item.isActive} activeLabel={t("itsm:priorities.active")} inactiveLabel={t("itsm:priorities.inactive")} />
                   </TableCell>
@@ -304,24 +288,6 @@ export function Component() {
                     <FormMessage />
                   </FormItem>
                 )} />
-              </WorkspaceFormSection>
-              <WorkspaceFormSection title={t("itsm:priorities.formCommitment")}>
-                <div className="grid grid-cols-2 gap-4">
-                  <FormField control={form.control} name="defaultResponseMinutes" render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>{t("itsm:priorities.defaultResponseMinutes")}</FormLabel>
-                      <FormControl><Input type="number" {...field} onChange={(e) => field.onChange(Number(e.target.value))} /></FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )} />
-                  <FormField control={form.control} name="defaultResolutionMinutes" render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>{t("itsm:priorities.defaultResolutionMinutes")}</FormLabel>
-                      <FormControl><Input type="number" {...field} onChange={(e) => field.onChange(Number(e.target.value))} /></FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )} />
-                </div>
               </WorkspaceFormSection>
               <WorkspaceFormSection title={t("itsm:priorities.formDescription")}>
                 <FormField control={form.control} name="description" render={({ field }) => (
