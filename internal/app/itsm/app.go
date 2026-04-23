@@ -3,8 +3,8 @@ package itsm
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/casbin/casbin/v2"
 	"github.com/gin-gonic/gin"
@@ -148,7 +148,7 @@ func (a *ITSMApp) Providers(i do.Injector) {
 		// Try to resolve NotificationSender (optional — nil if MessageChannel service not available)
 		var notifier engine.NotificationSender
 		if mcSvc, err := do.Invoke[*service.MessageChannelService](i); err == nil && mcSvc != nil {
-			notifier = &notificationAdapter{svc: mcSvc}
+			notifier = &notificationAdapter{svc: mcSvc, db: db.DB}
 			slog.Info("ITSM ClassicEngine: notification sender available")
 		}
 		return engine.NewClassicEngine(resolver, submitter, notifier), nil
@@ -317,6 +317,7 @@ func (a *ITSMApp) Routes(api *gin.RouterGroup) {
 		// SLA Templates
 		g.POST("/sla", slaH.Create)
 		g.GET("/sla", slaH.List)
+		g.GET("/sla/notification-channels", escalationH.NotificationChannels)
 		g.PUT("/sla/:id", slaH.Update)
 		g.DELETE("/sla/:id", slaH.Delete)
 
@@ -363,10 +364,15 @@ func (a *ITSMApp) Tasks() []scheduler.TaskDef {
 	classicEngine := do.MustInvoke[*engine.ClassicEngine](a.injector)
 	smartEngine := do.MustInvoke[*engine.SmartEngine](a.injector)
 	configProvider := do.MustInvoke[*EngineConfigService](a.injector)
+	resolver := do.MustInvoke[*engine.ParticipantResolver](a.injector)
 	knowledgeDocSvc := do.MustInvoke[*KnowledgeDocService](a.injector)
 	var slaAssuranceExecutor app.AIDecisionExecutor
 	if executor, err := do.InvokeAs[app.AIDecisionExecutor](a.injector); err == nil {
 		slaAssuranceExecutor = executor
+	}
+	var notifier engine.NotificationSender
+	if mcSvc, err := do.Invoke[*service.MessageChannelService](a.injector); err == nil && mcSvc != nil {
+		notifier = &notificationAdapter{svc: mcSvc, db: db.DB}
 	}
 
 	return []scheduler.TaskDef{
@@ -405,7 +411,7 @@ func (a *ITSMApp) Tasks() []scheduler.TaskDef {
 			Type:        scheduler.TypeScheduled,
 			CronExpr:    "*/1 * * * *",
 			Description: "Check SLA breaches and trigger escalation rules",
-			Handler:     engine.HandleSLACheck(db.DB, configProvider, slaAssuranceExecutor),
+			Handler:     engine.HandleSLACheck(db.DB, configProvider, slaAssuranceExecutor, resolver, notifier),
 		},
 		{
 			Name:        "itsm-smart-recovery",
@@ -447,18 +453,37 @@ var _ engine.TaskSubmitter = (*schedulerSubmitter)(nil)
 // notificationAdapter adapts service.MessageChannelService to engine.NotificationSender.
 type notificationAdapter struct {
 	svc *service.MessageChannelService
+	db  *gorm.DB
 }
 
 func (n *notificationAdapter) Send(ctx context.Context, channelID uint, subject, body string, recipientIDs []uint) error {
-	// For now, convert user IDs to string placeholders for email recipients.
-	// In a full implementation, you'd look up user emails from the user service.
-	// The channel driver (email) expects actual email addresses in the "to" field.
-	var to []string
-	for _, uid := range recipientIDs {
-		// Use user ID as placeholder — the channel service will need user email resolution
-		to = append(to, fmt.Sprintf("user:%d", uid))
+	if len(recipientIDs) == 0 {
+		return engine.ErrNotificationNoRecipients
 	}
-	return n.svc.SendTest(channelID, to, subject, body)
+	type userEmail struct {
+		ID    uint
+		Email string
+	}
+	var rows []userEmail
+	if err := n.db.WithContext(ctx).
+		Table("users").
+		Select("id, email").
+		Where("id IN ? AND deleted_at IS NULL AND is_active = ?", recipientIDs, true).
+		Find(&rows).Error; err != nil {
+		return err
+	}
+
+	emails := make([]string, 0, len(rows))
+	for _, row := range rows {
+		email := strings.TrimSpace(row.Email)
+		if email != "" {
+			emails = append(emails, email)
+		}
+	}
+	if len(emails) == 0 {
+		return engine.ErrNotificationNoEmail
+	}
+	return n.svc.Send(channelID, emails, subject, body)
 }
 
 var _ engine.NotificationSender = (*notificationAdapter)(nil)

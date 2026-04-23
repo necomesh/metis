@@ -178,7 +178,7 @@ export function ParticipantPicker({ participants, onChange }: ParticipantPickerP
                 key={p.id}
                 type="button"
                 className="flex w-full items-center gap-2 px-2 py-1 text-xs hover:bg-muted"
-                onClick={() => addParticipant({ type: "position", id: p.id, name: p.name, value: p.code })}
+                onClick={() => addParticipant({ type: "position", id: p.id, name: p.name, value: String(p.id) })}
               >
                 <Briefcase size={12} />
                 <span>{p.name}</span>
@@ -199,7 +199,7 @@ export function ParticipantPicker({ participants, onChange }: ParticipantPickerP
                 type="button"
                 className="flex w-full items-center gap-2 px-2 py-1 text-xs hover:bg-muted"
                 style={{ paddingLeft: `${(d.depth ?? 0) * 12 + 8}px` }}
-                onClick={() => addParticipant({ type: "department", id: d.id, name: d.name, value: d.code })}
+                onClick={() => addParticipant({ type: "department", id: d.id, name: d.name, value: String(d.id) })}
               >
                 <Building2 size={12} />
                 <span>{d.name}</span>

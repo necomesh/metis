@@ -7,16 +7,20 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/samber/do/v2"
 
+	"metis/internal/database"
 	"metis/internal/handler"
+	"metis/internal/model"
 )
 
 type EscalationRuleHandler struct {
 	svc *EscalationRuleService
+	db  *database.DB
 }
 
 func NewEscalationRuleHandler(i do.Injector) (*EscalationRuleHandler, error) {
 	svc := do.MustInvoke[*EscalationRuleService](i)
-	return &EscalationRuleHandler{svc: svc}, nil
+	db := do.MustInvoke[*database.DB](i)
+	return &EscalationRuleHandler{svc: svc, db: db}, nil
 }
 
 type CreateEscalationRuleRequest struct {
@@ -56,6 +60,10 @@ func (h *EscalationRuleHandler) Create(c *gin.Context) {
 	if err != nil {
 		if errors.Is(err, ErrEscalationLevelExists) {
 			handler.Fail(c, http.StatusConflict, err.Error())
+			return
+		}
+		if errors.Is(err, ErrEscalationTargetConfig) {
+			handler.Fail(c, http.StatusBadRequest, err.Error())
 			return
 		}
 		handler.Fail(c, http.StatusInternalServerError, err.Error())
@@ -137,6 +145,14 @@ func (h *EscalationRuleHandler) Update(c *gin.Context) {
 			handler.Fail(c, http.StatusNotFound, err.Error())
 			return
 		}
+		if errors.Is(err, ErrEscalationLevelExists) {
+			handler.Fail(c, http.StatusConflict, err.Error())
+			return
+		}
+		if errors.Is(err, ErrEscalationTargetConfig) {
+			handler.Fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
 		handler.Fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -166,4 +182,27 @@ func (h *EscalationRuleHandler) Delete(c *gin.Context) {
 
 	c.Set("audit_summary", "deleted escalation rule")
 	handler.OK(c, nil)
+}
+
+type NotificationChannelOption struct {
+	ID   uint   `json:"id"`
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+func (h *EscalationRuleHandler) NotificationChannels(c *gin.Context) {
+	var channels []model.MessageChannel
+	if err := h.db.Where("enabled = ?", true).Order("created_at DESC").Find(&channels).Error; err != nil {
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	result := make([]NotificationChannelOption, len(channels))
+	for i, channel := range channels {
+		result[i] = NotificationChannelOption{
+			ID:   channel.ID,
+			Name: channel.Name,
+			Type: channel.Type,
+		}
+	}
+	handler.OK(c, result)
 }

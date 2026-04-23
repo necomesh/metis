@@ -170,19 +170,24 @@ func (bc *bddContext) slaTargetConfig(actionType string) ([]byte, error) {
 		if !ok {
 			return nil, fmt.Errorf("当前处理人 not found")
 		}
-		return json.Marshal(map[string]any{"user_ids": []uint{current.ID}})
+		return json.Marshal(map[string]any{
+			"recipients": []map[string]any{{"type": "user", "value": fmt.Sprintf("%d", current.ID)}},
+			"channelId":  1,
+		})
 	case "reassign":
 		target, ok := bc.users["升级处理人"]
 		if !ok {
 			return nil, fmt.Errorf("升级处理人 not found")
 		}
-		return json.Marshal(map[string]any{"user_ids": []uint{target.ID}})
+		return json.Marshal(map[string]any{
+			"assigneeCandidates": []map[string]any{{"type": "user", "value": fmt.Sprintf("%d", target.ID)}},
+		})
 	case "escalate_priority":
 		var urgent Priority
 		if err := bc.db.Where("code = ?", "urgent").First(&urgent).Error; err != nil {
 			return nil, fmt.Errorf("load urgent priority: %w", err)
 		}
-		return json.Marshal(map[string]any{"priority_id": urgent.ID})
+		return json.Marshal(map[string]any{"priorityId": urgent.ID})
 	default:
 		return nil, fmt.Errorf("unsupported SLA action type %q", actionType)
 	}
@@ -191,7 +196,7 @@ func (bc *bddContext) slaTargetConfig(actionType string) ([]byte, error) {
 func (bc *bddContext) whenRunSLAAssuranceScan() error {
 	bc.toolCalls = nil
 	executor := &testDecisionExecutor{db: bc.db, llmCfg: bc.llmCfg, recordToolCall: bc.recordToolCall}
-	handler := engine.HandleSLACheck(bc.db, &bddConfigProvider{bc: bc}, executor)
+	handler := engine.HandleSLACheck(bc.db, &bddConfigProvider{bc: bc}, executor, engine.NewParticipantResolver(nil), nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 	if err := handler(ctx, nil); err != nil {

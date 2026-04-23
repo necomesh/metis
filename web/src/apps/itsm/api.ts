@@ -256,6 +256,16 @@ export interface EscalationRuleItem {
   updatedAt: string
 }
 
+export interface NotificationChannelOption {
+  id: number
+  name: string
+  type: string
+}
+
+export function fetchNotificationChannels() {
+  return api.get<NotificationChannelOption[]>("/api/v1/itsm/sla/notification-channels").then((r) => r ?? [])
+}
+
 export function fetchEscalationRules(slaId: number) {
   return api.get<EscalationRuleItem[]>(`/api/v1/itsm/sla/${slaId}/escalations`).then((r) => r ?? [])
 }

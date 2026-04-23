@@ -479,6 +479,7 @@ func seedPolicies(enforcer *casbin.Enforcer) error {
 		// SLA
 		{"admin", "/api/v1/itsm/sla", "POST"},
 		{"admin", "/api/v1/itsm/sla", "GET"},
+		{"admin", "/api/v1/itsm/sla/notification-channels", "GET"},
 		{"admin", "/api/v1/itsm/sla/:id", "PUT"},
 		{"admin", "/api/v1/itsm/sla/:id", "DELETE"},
 		// Escalation Rules
