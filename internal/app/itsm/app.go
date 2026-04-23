@@ -358,6 +358,10 @@ func (a *ITSMApp) Tasks() []scheduler.TaskDef {
 	smartEngine := do.MustInvoke[*engine.SmartEngine](a.injector)
 	configProvider := do.MustInvoke[*EngineConfigService](a.injector)
 	knowledgeDocSvc := do.MustInvoke[*KnowledgeDocService](a.injector)
+	var slaAssuranceExecutor app.AIDecisionExecutor
+	if executor, err := do.InvokeAs[app.AIDecisionExecutor](a.injector); err == nil {
+		slaAssuranceExecutor = executor
+	}
 
 	return []scheduler.TaskDef{
 		{
@@ -395,7 +399,7 @@ func (a *ITSMApp) Tasks() []scheduler.TaskDef {
 			Type:        scheduler.TypeScheduled,
 			CronExpr:    "*/1 * * * *",
 			Description: "Check SLA breaches and trigger escalation rules",
-			Handler:     engine.HandleSLACheck(db.DB, configProvider),
+			Handler:     engine.HandleSLACheck(db.DB, configProvider, slaAssuranceExecutor),
 		},
 		{
 			Name:        "itsm-smart-recovery",

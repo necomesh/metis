@@ -1,9 +1,89 @@
 package engine
 
 import (
+	"context"
+	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/glebarez/sqlite"
+	"gorm.io/gorm"
+
+	"metis/internal/app"
 )
+
+type fakeSLAAssuranceExecutor struct {
+	trigger bool
+}
+
+func (f fakeSLAAssuranceExecutor) Execute(ctx context.Context, agentID uint, req app.AIDecisionRequest) (*app.AIDecisionResponse, error) {
+	if _, err := req.ToolHandler("sla.ticket_context", json.RawMessage(`{"ticket_id":1}`)); err != nil {
+		return nil, err
+	}
+	if _, err := req.ToolHandler("sla.escalation_rules", json.RawMessage(`{"ticket_id":1}`)); err != nil {
+		return nil, err
+	}
+	if f.trigger {
+		if _, err := req.ToolHandler("sla.trigger_escalation", json.RawMessage(`{"ticket_id":1,"rule_id":7,"reasoning":"命中 0 分钟响应超时升级规则，触发通知动作。"}`)); err != nil {
+			return nil, err
+		}
+	}
+	return &app.AIDecisionResponse{Content: "done", Turns: 1}, nil
+}
+
+func setupSLAAssuranceTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&ticketModel{}, &timelineModel{}); err != nil {
+		t.Fatalf("migrate db: %v", err)
+	}
+	return db
+}
+
+func TestSLAAssuranceAgentTriggersEscalationTool(t *testing.T) {
+	db := setupSLAAssuranceTestDB(t)
+	ticket := &ticketModel{ID: 1, Code: "T-1", Title: "VPN 申请", Status: "in_progress", SLAStatus: slaBreachedResponse}
+	if err := db.Create(ticket).Error; err != nil {
+		t.Fatalf("create ticket: %v", err)
+	}
+
+	rule := &escalationRuleModel{
+		ID:          7,
+		SLAID:       3,
+		TriggerType: "response_timeout",
+		Level:       1,
+		ActionType:  "notify",
+		IsActive:    true,
+	}
+	err := runSLAAssuranceAgent(context.Background(), db, ticket, rule, "response_timeout", 9, "SLA 保障智能体", fakeSLAAssuranceExecutor{trigger: true})
+	if err != nil {
+		t.Fatalf("run agent: %v", err)
+	}
+
+	var timeline timelineModel
+	if err := db.Where("ticket_id = ? AND event_type = ?", ticket.ID, "sla_escalation").First(&timeline).Error; err != nil {
+		t.Fatalf("timeline not written: %v", err)
+	}
+	if timeline.Reasoning == "" {
+		t.Fatal("expected agent reasoning in timeline")
+	}
+}
+
+func TestSLAAssuranceAgentMustTriggerEscalation(t *testing.T) {
+	db := setupSLAAssuranceTestDB(t)
+	ticket := &ticketModel{ID: 1, Code: "T-1", Title: "VPN 申请", Status: "in_progress", SLAStatus: slaBreachedResponse}
+	if err := db.Create(ticket).Error; err != nil {
+		t.Fatalf("create ticket: %v", err)
+	}
+
+	rule := &escalationRuleModel{ID: 7, SLAID: 3, TriggerType: "response_timeout", Level: 1, ActionType: "notify", IsActive: true}
+	if err := runSLAAssuranceAgent(context.Background(), db, ticket, rule, "response_timeout", 9, "SLA 保障智能体", fakeSLAAssuranceExecutor{}); err == nil {
+		t.Fatal("expected error when agent does not trigger escalation")
+	}
+}
 
 func TestCheckTicketSLA_ResponseBreach(t *testing.T) {
 	// This is a logic-level test verifying breach detection.

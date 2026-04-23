@@ -8,6 +8,7 @@ import "time"
 type ticketModel struct {
 	ID                    uint       `gorm:"primaryKey"`
 	Code                  string     `gorm:"column:code"`
+	Title                 string     `gorm:"column:title"`
 	Status                string     `gorm:"column:status"`
 	EngineType            string     `gorm:"column:engine_type"`
 	WorkflowJSON          string     `gorm:"column:workflow_json;type:text"`
