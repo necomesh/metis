@@ -49,6 +49,12 @@ type PositionListParams struct {
 	PageSize int
 }
 
+type PositionUsage struct {
+	DepartmentCount int
+	MemberCount     int
+	Departments     []PositionDepartmentSummary
+}
+
 func (r *PositionRepo) List(params PositionListParams) ([]Position, int64, error) {
 	if params.Page < 1 {
 		params.Page = 1
@@ -76,6 +82,57 @@ func (r *PositionRepo) List(params PositionListParams) ([]Position, int64, error
 		return nil, 0, err
 	}
 	return items, total, nil
+}
+
+func (r *PositionRepo) UsageByPositionIDs(positionIDs []uint) (map[uint]PositionUsage, error) {
+	usage := make(map[uint]PositionUsage, len(positionIDs))
+	if len(positionIDs) == 0 {
+		return usage, nil
+	}
+
+	var deptRows []struct {
+		PositionID   uint
+		DepartmentID uint
+		Name         string
+		Code         string
+	}
+	if err := r.db.Model(&DepartmentPosition{}).
+		Select("department_positions.position_id, departments.id AS department_id, departments.name, departments.code").
+		Joins("JOIN departments ON departments.id = department_positions.department_id AND departments.deleted_at IS NULL").
+		Where("department_positions.position_id IN ?", positionIDs).
+		Order("departments.sort ASC, departments.id ASC").
+		Scan(&deptRows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range deptRows {
+		item := usage[row.PositionID]
+		item.DepartmentCount++
+		item.Departments = append(item.Departments, PositionDepartmentSummary{
+			ID:   row.DepartmentID,
+			Name: row.Name,
+			Code: row.Code,
+		})
+		usage[row.PositionID] = item
+	}
+
+	var memberRows []struct {
+		PositionID uint
+		Count      int
+	}
+	if err := r.db.Model(&UserPosition{}).
+		Select("position_id, COUNT(DISTINCT user_id) AS count").
+		Where("position_id IN ?", positionIDs).
+		Group("position_id").
+		Scan(&memberRows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range memberRows {
+		item := usage[row.PositionID]
+		item.MemberCount = row.Count
+		usage[row.PositionID] = item
+	}
+
+	return usage, nil
 }
 
 func (r *PositionRepo) ListActive() ([]Position, error) {

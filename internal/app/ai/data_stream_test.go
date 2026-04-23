@@ -122,6 +122,27 @@ func TestUIMessageStreamEncoder_PlanAndSteps(t *testing.T) {
 	assertNestedJSONField(t, lines[3], "data", "state", "done")
 }
 
+func TestUIMessageStreamEncoder_UISurface(t *testing.T) {
+	var buf bytes.Buffer
+	enc := NewUIMessageStreamEncoder(&buf)
+
+	_ = enc.Encode(Event{Type: EventTypeLLMStart, Sequence: 1})
+	_ = enc.Encode(Event{
+		Type:        EventTypeUISurface,
+		Sequence:    2,
+		SurfaceID:   "draft-1",
+		SurfaceType: "itsm.draft_form",
+		SurfaceData: json.RawMessage(`{"status":"ready"}`),
+	})
+	_ = enc.Encode(Event{Type: EventTypeDone})
+	_ = enc.Close()
+
+	lines := extractDataLines(t, &buf)
+	assertJSONField(t, lines[1], "type", "data-ui-surface")
+	assertNestedJSONField(t, lines[1], "data", "surfaceId", "draft-1")
+	assertNestedJSONField(t, lines[1], "data", "surfaceType", "itsm.draft_form")
+}
+
 func TestUIMessageStreamEncoder_Error(t *testing.T) {
 	var buf bytes.Buffer
 	enc := NewUIMessageStreamEncoder(&buf)
@@ -150,6 +171,19 @@ func TestUIMessageStreamEncoder_CancelledClosesBlocks(t *testing.T) {
 	assertJSONField(t, lines[3], "type", "text-end")
 	assertJSONField(t, lines[4], "type", "finish")
 	assertJSONField(t, lines[4], "finishReason", "other")
+}
+
+func TestUIMessageStreamEncoder_Heartbeat(t *testing.T) {
+	var buf bytes.Buffer
+	enc := NewUIMessageStreamEncoder(&buf)
+
+	if err := enc.Heartbeat(); err != nil {
+		t.Fatalf("heartbeat: %v", err)
+	}
+
+	if got := buf.String(); got != ": heartbeat\n\n" {
+		t.Fatalf("expected heartbeat comment frame, got %q", got)
+	}
 }
 
 func assertJSONField(t *testing.T, line, key, expected string) {

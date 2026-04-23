@@ -1,6 +1,6 @@
 // Shared types for workflow editor and viewer
 export const NODE_TYPES = [
-  "start", "end", "form", "approve", "process", "action", "exclusive", "notify", "wait",
+  "start", "end", "form", "process", "action", "exclusive", "notify", "wait",
   "timer", "signal", "parallel", "inclusive", "subprocess", "script",
 ] as const
 
@@ -46,10 +46,11 @@ export interface ScriptAssignment {
 export interface WFNodeData {
   label: string
   nodeType: NodeType
-  // form / approve / process
+  _workflowState?: "active" | "completed" | "failed" | "cancelled" | "idle"
+  // form / process
   participants?: Participant[]
   formSchema?: unknown
-  // approve
+  // process
   executionMode?: "single" | "parallel" | "sequential"
   // action
   actionId?: number
@@ -75,24 +76,43 @@ export interface WFEdgeData {
   outcome?: string
   isDefault?: boolean
   condition?: GatewayCondition | ConditionGroup
+  readonly?: boolean
+  visited?: boolean
+  failed?: boolean
+}
+
+export const WORKFLOW_NODE_DIMENSIONS: Record<NodeType, { width: number; height: number }> = {
+  start: { width: 240, height: 76 },
+  end: { width: 240, height: 76 },
+  timer: { width: 240, height: 76 },
+  signal: { width: 240, height: 76 },
+  form: { width: 240, height: 96 },
+  process: { width: 240, height: 96 },
+  action: { width: 240, height: 96 },
+  script: { width: 240, height: 96 },
+  notify: { width: 240, height: 96 },
+  exclusive: { width: 240, height: 84 },
+  parallel: { width: 240, height: 84 },
+  inclusive: { width: 240, height: 84 },
+  subprocess: { width: 260, height: 126 },
+  wait: { width: 240, height: 84 },
 }
 
 export const NODE_COLORS: Record<NodeType, string> = {
-  start: "#22c55e",
-  end: "#ef4444",
-  form: "#3b82f6",
-  approve: "#f59e0b",
-  process: "#8b5cf6",
-  action: "#06b6d4",
-  exclusive: "#f97316",
-  notify: "#ec4899",
-  wait: "#6366f1",
-  timer: "#6366f1",
-  signal: "#6366f1",
-  parallel: "#14b8a6",
-  inclusive: "#eab308",
-  subprocess: "#64748b",
-  script: "#475569",
+  start: "#2563eb",
+  end: "#dc2626",
+  form: "#2563eb",
+  process: "#4f46e5",
+  action: "#0891b2",
+  exclusive: "#ea580c",
+  notify: "#be185d",
+  wait: "#4f46e5",
+  timer: "#7c3aed",
+  signal: "#0f766e",
+  parallel: "#0f766e",
+  inclusive: "#ca8a04",
+  subprocess: "#475569",
+  script: "#334155",
 }
 
 // Helpers for condition format migration

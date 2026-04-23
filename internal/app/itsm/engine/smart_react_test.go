@@ -22,7 +22,7 @@ func TestExtractWorkflowHints_SerialFlow(t *testing.T) {
 		"nodes": [
 			{"id": "start", "type": "start", "data": {"label": "开始"}},
 			{"id": "n1", "type": "process", "data": {"label": "网络管理员处理", "participants": [{"type": "position_department", "position_code": "net_admin", "department_code": "it"}]}},
-			{"id": "n2", "type": "approve", "data": {"label": "主管审批", "participants": [{"type": "requester_manager"}]}},
+			{"id": "n2", "type": "process", "data": {"label": "主管处理", "participants": [{"type": "requester_manager"}]}},
 			{"id": "end", "type": "end", "data": {"label": "结束"}}
 		],
 		"edges": [
@@ -37,12 +37,12 @@ func TestExtractWorkflowHints_SerialFlow(t *testing.T) {
 		t.Fatal("expected non-empty hints for serial flow")
 	}
 
-	// Should contain process and approve steps
+	// Should contain process steps
 	if !strings.Contains(got, "处理") {
 		t.Errorf("expected hints to contain '处理', got %q", got)
 	}
-	if !strings.Contains(got, "审批") {
-		t.Errorf("expected hints to contain '审批', got %q", got)
+	if !strings.Contains(got, "主管处理") {
+		t.Errorf("expected hints to contain '主管处理', got %q", got)
 	}
 	if !strings.Contains(got, "net_admin") {
 		t.Errorf("expected hints to contain participant info, got %q", got)

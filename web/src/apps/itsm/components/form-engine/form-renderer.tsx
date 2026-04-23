@@ -140,17 +140,14 @@ export function FormRenderer({
 
           const isReadOnly = fieldState === "readonly" || mode === "view"
           const isDisabled = disabled || field.disabled || false
-          const colSpan =
-            field.width === "full"
-              ? columns > 1 ? `col-span-${columns}` : ""
-              : field.width === "half"
-                ? ""
-                : field.width === "third"
-                  ? ""
-                  : columns > 1 ? `col-span-${columns}` : ""
+          const colSpan = cn(
+            columns === 2 && (field.width === "full" || !field.width) && "col-span-2",
+            columns === 3 && (field.width === "full" || !field.width) && "col-span-3",
+            columns === 3 && field.width === "half" && "col-span-2",
+          )
 
           return (
-            <div key={field.key} className={cn(colSpan === `col-span-${columns}` && columns === 2 && "col-span-2", colSpan === `col-span-${columns}` && columns === 3 && "col-span-3")}>
+            <div key={field.key} className={colSpan}>
               <Controller
                 control={form.control}
                 name={field.key}
@@ -184,7 +181,7 @@ export function FormRenderer({
     )
   }
 
-  const content = schema.layout?.sections ? (
+  const content = schema.layout?.sections && schema.layout.sections.length > 0 ? (
     <div className="space-y-6">
       {schema.layout.sections.map((section, i) => (
         <fieldset key={i} className="space-y-4">

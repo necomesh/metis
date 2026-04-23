@@ -1,6 +1,7 @@
 package org
 
 import (
+	"errors"
 	"log/slog"
 
 	"github.com/casbin/casbin/v2"
@@ -21,7 +22,9 @@ func seedOrg(db *gorm.DB, enforcer *casbin.Enforcer, install bool) error {
 
 	// 1. Seed menus: 组织管理 directory
 	var orgDir model.Menu
-	if err := db.Where("permission = ?", "org").First(&orgDir).Error; err != nil {
+	if tx := db.Where("permission = ?", "org").Limit(1).Find(&orgDir); tx.Error != nil {
+		return tx.Error
+	} else if tx.RowsAffected == 0 {
 		orgDir = model.Menu{
 			Name:       "组织管理",
 			Type:       model.MenuTypeDirectory,
@@ -37,7 +40,9 @@ func seedOrg(db *gorm.DB, enforcer *casbin.Enforcer, install bool) error {
 
 	// 部门管理 menu (renamed to 组织架构)
 	var deptMenu model.Menu
-	if err := db.Where("permission = ?", "org:department:list").First(&deptMenu).Error; err != nil {
+	if tx := db.Where("permission = ?", "org:department:list").Limit(1).Find(&deptMenu); tx.Error != nil {
+		return tx.Error
+	} else if tx.RowsAffected == 0 {
 		deptMenu = model.Menu{
 			ParentID:   &orgDir.ID,
 			Name:       "组织架构",
@@ -63,7 +68,10 @@ func seedOrg(db *gorm.DB, enforcer *casbin.Enforcer, install bool) error {
 	}
 	for _, btn := range deptButtons {
 		var existing model.Menu
-		if err := db.Where("permission = ?", btn.Permission).First(&existing).Error; err != nil {
+		if tx := db.Where("permission = ?", btn.Permission).Limit(1).Find(&existing); tx.Error != nil {
+			slog.Error("seed: failed to query button menu", "permission", btn.Permission, "error", tx.Error)
+			continue
+		} else if tx.RowsAffected == 0 {
 			btn.ParentID = &deptMenu.ID
 			if err := db.Create(&btn).Error; err != nil {
 				slog.Error("seed: failed to create button menu", "permission", btn.Permission, "error", err)
@@ -75,7 +83,9 @@ func seedOrg(db *gorm.DB, enforcer *casbin.Enforcer, install bool) error {
 
 	// 岗位管理 menu
 	var posMenu model.Menu
-	if err := db.Where("permission = ?", "org:position:list").First(&posMenu).Error; err != nil {
+	if tx := db.Where("permission = ?", "org:position:list").Limit(1).Find(&posMenu); tx.Error != nil {
+		return tx.Error
+	} else if tx.RowsAffected == 0 {
 		posMenu = model.Menu{
 			ParentID:   &orgDir.ID,
 			Name:       "岗位管理",
@@ -98,7 +108,10 @@ func seedOrg(db *gorm.DB, enforcer *casbin.Enforcer, install bool) error {
 	}
 	for _, btn := range posButtons {
 		var existing model.Menu
-		if err := db.Where("permission = ?", btn.Permission).First(&existing).Error; err != nil {
+		if tx := db.Where("permission = ?", btn.Permission).Limit(1).Find(&existing); tx.Error != nil {
+			slog.Error("seed: failed to query button menu", "permission", btn.Permission, "error", tx.Error)
+			continue
+		} else if tx.RowsAffected == 0 {
 			btn.ParentID = &posMenu.ID
 			if err := db.Create(&btn).Error; err != nil {
 				slog.Error("seed: failed to create button menu", "permission", btn.Permission, "error", err)
@@ -111,7 +124,9 @@ func seedOrg(db *gorm.DB, enforcer *casbin.Enforcer, install bool) error {
 	// 人员分配 menu — removed from UI (merged into department detail page)
 	// Soft-delete if it exists from a previous install
 	var assignMenu model.Menu
-	if err := db.Where("permission = ?", "org:assignment:list").First(&assignMenu).Error; err == nil {
+	if tx := db.Where("permission = ?", "org:assignment:list").Limit(1).Find(&assignMenu); tx.Error != nil {
+		return tx.Error
+	} else if tx.RowsAffected > 0 {
 		db.Delete(&assignMenu)
 		// Also remove child buttons
 		db.Where("parent_id = ?", assignMenu.ID).Delete(&model.Menu{})
@@ -180,6 +195,9 @@ func seedOrg(db *gorm.DB, enforcer *casbin.Enforcer, install bool) error {
 		if err := seedDepartmentPositions(db); err != nil {
 			return err
 		}
+		if err := seedAdminOrgIdentity(db); err != nil {
+			return err
+		}
 	}
 
 	// Seed org_context builtin tool into ai_tools (if AI App tables exist)
@@ -203,6 +221,113 @@ func seedOrg(db *gorm.DB, enforcer *casbin.Enforcer, install bool) error {
 	}
 
 	return nil
+}
+
+type adminOrgIdentitySeed struct {
+	DepartmentCode string
+	PositionCode   string
+	Primary        bool
+}
+
+var builtinAdminOrgIdentity = []adminOrgIdentitySeed{
+	{DepartmentCode: "it", PositionCode: "it_admin", Primary: true},
+	{DepartmentCode: "it", PositionCode: "db_admin"},
+	{DepartmentCode: "it", PositionCode: "network_admin"},
+	{DepartmentCode: "it", PositionCode: "security_admin"},
+	{DepartmentCode: "it", PositionCode: "ops_admin"},
+	{DepartmentCode: "headquarters", PositionCode: "serial_reviewer"},
+}
+
+func seedAdminOrgIdentity(db *gorm.DB) error {
+	var user struct{ ID uint }
+	if err := db.Table("users").Where("username = ?", "admin").Select("id").First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+
+	var primaryDeptID, primaryPosID uint
+	for _, identity := range builtinAdminOrgIdentity {
+		if !identity.Primary {
+			continue
+		}
+		deptID, posID, ok, err := lookupOrgIdentityIDs(db, identity.DepartmentCode, identity.PositionCode)
+		if err != nil {
+			return err
+		}
+		if ok {
+			primaryDeptID = deptID
+			primaryPosID = posID
+		}
+	}
+
+	return db.Transaction(func(tx *gorm.DB) error {
+		if primaryDeptID > 0 && primaryPosID > 0 {
+			if err := tx.Model(&UserPosition{}).
+				Where("user_id = ?", user.ID).
+				Update("is_primary", false).Error; err != nil {
+				return err
+			}
+		}
+
+		for _, identity := range builtinAdminOrgIdentity {
+			deptID, posID, ok, err := lookupOrgIdentityIDs(tx, identity.DepartmentCode, identity.PositionCode)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				slog.Warn("seed: skipped admin org identity because department or position is missing",
+					"department", identity.DepartmentCode, "position", identity.PositionCode)
+				continue
+			}
+
+			var existing UserPosition
+			err = tx.Where("user_id = ? AND department_id = ? AND position_id = ?", user.ID, deptID, posID).
+				First(&existing).Error
+			switch {
+			case err == nil:
+				if existing.IsPrimary != identity.Primary {
+					if err := tx.Model(&existing).Update("is_primary", identity.Primary).Error; err != nil {
+						return err
+					}
+				}
+			case errors.Is(err, gorm.ErrRecordNotFound):
+				if err := tx.Create(&UserPosition{
+					UserID:       user.ID,
+					DepartmentID: deptID,
+					PositionID:   posID,
+					IsPrimary:    identity.Primary,
+				}).Error; err != nil {
+					return err
+				}
+				slog.Info("seed: assigned admin org identity",
+					"department", identity.DepartmentCode, "position", identity.PositionCode, "primary", identity.Primary)
+			default:
+				return err
+			}
+		}
+
+		return nil
+	})
+}
+
+func lookupOrgIdentityIDs(db *gorm.DB, departmentCode, positionCode string) (uint, uint, bool, error) {
+	var dept struct{ ID uint }
+	if err := db.Table("departments").Where("code = ?", departmentCode).Select("id").First(&dept).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, 0, false, nil
+		}
+		return 0, 0, false, err
+	}
+	var pos struct{ ID uint }
+	if err := db.Table("positions").Where("code = ?", positionCode).Select("id").First(&pos).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, 0, false, nil
+		}
+		return 0, 0, false, err
+	}
+	return dept.ID, pos.ID, true, nil
 }
 
 func seedDepartments(db *gorm.DB) error {

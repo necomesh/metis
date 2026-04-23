@@ -1,18 +1,18 @@
-import { useState, useMemo, useEffect } from "react"
+import { useState, useMemo } from "react"
 import { useTranslation } from "react-i18next"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "react-router"
-import { Plus, Search, Network, ChevronRight } from "lucide-react"
+import { Plus, Network, ChevronRight } from "lucide-react"
 import { usePermission } from "@/hooks/use-permission"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import {
   DataTableCard,
   DataTableEmptyRow,
   DataTableLoadingRow,
+  DataTableToolbar,
 } from "@/components/ui/data-table"
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -20,6 +20,10 @@ import {
 import type { TreeNode } from "../../types"
 import { collectAllIds } from "../../types"
 import { DepartmentSheet, type DepartmentItem } from "../../components/department-sheet"
+import {
+  WorkspaceBooleanStatus,
+  WorkspaceSearchField,
+} from "@/components/workspace/primitives"
 
 interface FlatNode extends TreeNode {
   depth: number
@@ -45,7 +49,7 @@ export function Component() {
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<DepartmentItem | null>(null)
   const [keyword, setKeyword] = useState("")
-  const [expanded, setExpanded] = useState<Set<number>>(new Set())
+  const [expanded, setExpanded] = useState<Set<number> | null>(null)
 
   const canCreate = usePermission("org:department:create")
 
@@ -56,14 +60,10 @@ export function Component() {
       return res.items ?? []
     },
   })
-  const treeData = data ?? []
-
-  // Default expand all on first load
-  useEffect(() => {
-    if (treeData.length > 0 && expanded.size === 0) {
-      setExpanded(new Set(collectAllIds(treeData)))
-    }
-  }, [treeData]) // eslint-disable-line react-hooks/exhaustive-deps
+  const treeData = useMemo(() => data ?? [], [data])
+  const allExpandedIds = useMemo(() => new Set(collectAllIds(treeData)), [treeData])
+  const visibleExpanded = expanded ?? allExpandedIds
+  const isAllExpanded = treeData.length > 0 && visibleExpanded.size === allExpandedIds.size
 
   const flatItems = useMemo(() => flattenTree(treeData, 0), [treeData])
 
@@ -83,7 +83,7 @@ export function Component() {
 
   function toggleExpand(id: number) {
     setExpanded((prev) => {
-      const next = new Set(prev)
+      const next = new Set(prev ?? visibleExpanded)
       if (next.has(id)) next.delete(id)
       else next.add(id)
       return next
@@ -94,21 +94,21 @@ export function Component() {
     const rows: React.ReactNode[] = []
     for (const node of nodes) {
       const hasChildren = node.children && node.children.length > 0
-      const isExpanded = expanded.has(node.id)
+      const isExpanded = visibleExpanded.has(node.id)
       rows.push(
         <TableRow
           key={node.id}
-          className="group cursor-pointer"
+          className="group cursor-pointer border-border/45 hover:bg-surface-soft/45"
           onClick={() => navigate(`/org/departments/${node.id}`)}
         >
-          <TableCell className="min-w-[200px]">
-            <div className="flex items-center gap-1" style={{ paddingLeft: `${depth * 24}px` }}>
+          <TableCell className="min-w-[260px] py-3.5">
+            <div className="flex items-center gap-2" style={{ paddingLeft: `${depth * 22}px` }}>
               {hasChildren ? (
                 <button
                   type="button"
                   className={cn(
-                    "w-5 h-5 flex items-center justify-center rounded-sm text-muted-foreground hover:text-foreground transition-colors duration-200",
-                    isExpanded && "bg-accent/40"
+                    "flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-surface-soft hover:text-foreground",
+                    isExpanded && "bg-surface-soft text-foreground"
                   )}
                   onClick={(e) => {
                     e.stopPropagation()
@@ -123,24 +123,33 @@ export function Component() {
                   />
                 </button>
               ) : (
-                <span className="w-5" />
+                <span className="h-6 w-6" />
               )}
-              <span className="font-medium">{node.name}</span>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-sm font-medium text-foreground">{node.name}</span>
+                  <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-normal text-muted-foreground">
+                    {node.code}
+                  </Badge>
+                </div>
+                {depth > 0 && (
+                  <div className="mt-1 h-px w-8 bg-border/50" />
+                )}
+              </div>
             </div>
           </TableCell>
-          <TableCell className="w-[100px] text-sm text-muted-foreground">{node.code}</TableCell>
-          <TableCell className="w-[120px] text-sm text-muted-foreground">{node.managerName || "—"}</TableCell>
-          <TableCell className="w-[80px]">
-            {node.memberCount > 0 && (
-              <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium tabular-nums text-muted-foreground">
-                {node.memberCount}
-              </span>
-            )}
+          <TableCell className="w-[160px] text-sm text-muted-foreground">{node.managerName || "—"}</TableCell>
+          <TableCell className="w-[110px]">
+            <span className="text-sm tabular-nums text-muted-foreground">
+              {t("org:departments.memberCount", { count: node.memberCount })}
+            </span>
           </TableCell>
-          <TableCell className="w-[80px]">
-            <Badge variant={node.isActive ? "default" : "secondary"}>
-              {node.isActive ? t("org:departments.active") : t("org:departments.inactive")}
-            </Badge>
+          <TableCell className="w-[110px]">
+            <WorkspaceBooleanStatus
+              active={node.isActive}
+              activeLabel={t("org:departments.active")}
+              inactiveLabel={t("org:departments.inactive")}
+            />
           </TableCell>
           <TableCell className="w-[40px]">
             <ChevronRight className="h-4 w-4 text-muted-foreground/50 transition-colors group-hover:text-foreground" />
@@ -155,23 +164,30 @@ export function Component() {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">{t("org:departments.title")}</h2>
+    <div className="workspace-page">
+      <div className="workspace-page-header">
+        <div>
+          <div className="flex items-center gap-2">
+            <h2 className="workspace-page-title">{t("org:departments.title")}</h2>
+            <Badge variant="outline" className="bg-transparent font-normal text-muted-foreground">
+              {t("org:departments.orgThread")}
+            </Badge>
+          </div>
+        </div>
         <div className="flex items-center gap-2">
           <Button
             variant="outline"
+            size="sm"
             onClick={() => {
               if (treeData.length > 0) {
-                const allIds = new Set(collectAllIds(treeData))
-                setExpanded((prev) => (prev.size === allIds.size ? new Set() : allIds))
+                setExpanded(isAllExpanded ? new Set() : new Set(allExpandedIds))
               }
             }}
           >
-            {expanded.size > 0 ? t("common:collapseAll") : t("common:expandAll")}
+            {isAllExpanded ? t("common:collapseAll") : t("common:expandAll")}
           </Button>
           {canCreate && (
-            <Button onClick={handleCreate}>
+            <Button size="sm" onClick={handleCreate}>
               <Plus className="mr-1.5 h-4 w-4" />
               {t("org:departments.create")}
             </Button>
@@ -179,36 +195,32 @@ export function Component() {
         </div>
       </div>
 
-      <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center">
-        <div className="relative w-full sm:max-w-sm">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder={t("org:departments.searchPlaceholder")}
-            value={keyword}
-            onChange={(e) => setKeyword(e.target.value)}
-            className="pl-8"
-          />
-        </div>
-      </div>
+      <DataTableToolbar>
+        <WorkspaceSearchField
+          value={keyword}
+          onChange={setKeyword}
+          placeholder={t("org:departments.searchPlaceholder")}
+          className="sm:w-80"
+        />
+      </DataTableToolbar>
 
       <DataTableCard>
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="min-w-[200px]">{t("org:departments.name")}</TableHead>
-              <TableHead className="w-[100px]">{t("org:departments.code")}</TableHead>
-              <TableHead className="w-[120px]">{t("org:departments.manager")}</TableHead>
-              <TableHead className="w-[80px]">{t("org:departments.members")}</TableHead>
-              <TableHead className="w-[80px]">{t("common:status")}</TableHead>
+              <TableHead className="min-w-[260px]">{t("org:departments.name")}</TableHead>
+              <TableHead className="w-[160px]">{t("org:departments.manager")}</TableHead>
+              <TableHead className="w-[110px]">{t("org:departments.members")}</TableHead>
+              <TableHead className="w-[110px]">{t("common:status")}</TableHead>
               <TableHead className="w-[40px]" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <DataTableLoadingRow colSpan={6} />
+              <DataTableLoadingRow colSpan={5} />
             ) : treeData.length === 0 ? (
               <DataTableEmptyRow
-                colSpan={6}
+                colSpan={5}
                 icon={Network}
                 title={t("org:departments.empty")}
                 description={canCreate ? t("org:departments.emptyHint") : undefined}
@@ -216,7 +228,7 @@ export function Component() {
             ) : filtered ? (
               filtered.length === 0 ? (
                 <DataTableEmptyRow
-                  colSpan={6}
+                  colSpan={5}
                   icon={Network}
                   title={t("org:departments.empty")}
                 />
@@ -224,28 +236,34 @@ export function Component() {
                 filtered.map((item) => (
                   <TableRow
                     key={item.id}
-                    className="group cursor-pointer"
+                    className="group cursor-pointer border-border/45 hover:bg-surface-soft/45"
                     onClick={() => navigate(`/org/departments/${item.id}`)}
                   >
-                    <TableCell className="min-w-[200px]">
-                      <div className="flex items-center gap-1" style={{ paddingLeft: `${item.depth * 24}px` }}>
-                        <span className="w-5" />
-                        <span className="font-medium">{item.name}</span>
+                    <TableCell className="min-w-[260px] py-3.5">
+                      <div className="flex items-center gap-2" style={{ paddingLeft: `${item.depth * 22}px` }}>
+                        <span className="h-6 w-6" />
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="truncate text-sm font-medium text-foreground">{item.name}</span>
+                            <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-normal text-muted-foreground">
+                              {item.code}
+                            </Badge>
+                          </div>
+                        </div>
                       </div>
                     </TableCell>
-                    <TableCell className="w-[100px] text-sm text-muted-foreground">{item.code}</TableCell>
-                    <TableCell className="w-[120px] text-sm text-muted-foreground">{item.managerName || "—"}</TableCell>
-                    <TableCell className="w-[80px]">
-                      {item.memberCount > 0 && (
-                        <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium tabular-nums text-muted-foreground">
-                          {item.memberCount}
-                        </span>
-                      )}
+                    <TableCell className="w-[160px] text-sm text-muted-foreground">{item.managerName || "—"}</TableCell>
+                    <TableCell className="w-[110px]">
+                      <span className="text-sm tabular-nums text-muted-foreground">
+                        {t("org:departments.memberCount", { count: item.memberCount })}
+                      </span>
                     </TableCell>
-                    <TableCell className="w-[80px]">
-                      <Badge variant={item.isActive ? "default" : "secondary"}>
-                        {item.isActive ? t("org:departments.active") : t("org:departments.inactive")}
-                      </Badge>
+                    <TableCell className="w-[110px]">
+                      <WorkspaceBooleanStatus
+                        active={item.isActive}
+                        activeLabel={t("org:departments.active")}
+                        inactiveLabel={t("org:departments.inactive")}
+                      />
                     </TableCell>
                     <TableCell className="w-[40px]">
                       <ChevronRight className="h-4 w-4 text-muted-foreground/50 transition-colors group-hover:text-foreground" />

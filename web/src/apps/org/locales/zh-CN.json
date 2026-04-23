@@ -26,9 +26,9 @@
     "topDepartment": "顶级部门",
     "selectManager": "选择负责人",
     "noManager": "无负责人",
-    "allowedPositions": "可用职位",
-    "selectPositions": "选择可用职位",
-    "positionsSelected": "已选 {{count}} 个职位",
+    "allowedPositions": "可用岗位",
+    "selectPositions": "选择可用岗位",
+    "positionsSelected": "已选 {{count}} 个岗位",
     "members": "部门成员",
     "memberCount_label": "{{count}} 人",
     "subDepartments": "子部门",
@@ -36,7 +36,12 @@
     "noPositions": "暂无可用岗位",
     "createdAt": "创建时间",
     "parentDept": "上级部门",
-    "topLevel": "顶级部门"
+    "topLevel": "顶级部门",
+    "orgThread": "组织脉络",
+    "identity": "部门身份",
+    "memberCount": "{{count}} 人",
+    "positionCount": "{{count}} 个岗位",
+    "noChildren": "暂无下级部门"
   },
   "positions": {
     "title": "岗位管理",
@@ -58,7 +63,13 @@
     "deleteDesc": "确定要删除岗位「{{name}}」吗？",
     "confirmDelete": "确定删除",
     "namePlaceholder": "例如：高级工程师",
-    "codePlaceholder": "例如：senior-engineer"
+    "codePlaceholder": "例如：senior-engineer",
+    "directory": "岗位目录",
+    "coverage": "启用部门",
+    "occupants": "成员占用",
+    "noDepartments": "未关联部门",
+    "membersCount": "{{count}} 人",
+    "departmentsCount": "{{count}} 个部门"
   },
   "assignments": {
     "title": "人员分配",

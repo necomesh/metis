@@ -5,8 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"strings"
-	"unicode"
 
 	"gorm.io/gorm"
 
@@ -18,63 +16,25 @@ import (
 // Operator is the concrete ServiceDeskOperator implementation.
 // It bridges the ITSM tool handlers to the actual ITSM business services.
 type Operator struct {
-	db             *gorm.DB
-	resolver       *engine.ParticipantResolver
-	orgResolver    app.OrgResolver // nil when Org App is not installed
-	withdrawFunc   func(ticketID uint, reason string, operatorID uint) error
-	ticketCreator  TicketCreator // nil-safe: falls back to error if not set
+	db            *gorm.DB
+	resolver      *engine.ParticipantResolver
+	orgResolver   app.OrgResolver // nil when Org App is not installed
+	withdrawFunc  func(ticketID uint, reason string, operatorID uint) error
+	ticketCreator TicketCreator // nil-safe: falls back to error if not set
+	matcher       ServiceMatcher
 }
 
 // NewOperator creates a new ServiceDeskOperator.
-func NewOperator(db *gorm.DB, resolver *engine.ParticipantResolver, orgResolver app.OrgResolver, withdrawFunc func(uint, string, uint) error, ticketCreator TicketCreator) *Operator {
-	return &Operator{db: db, resolver: resolver, orgResolver: orgResolver, withdrawFunc: withdrawFunc, ticketCreator: ticketCreator}
+func NewOperator(db *gorm.DB, resolver *engine.ParticipantResolver, orgResolver app.OrgResolver, withdrawFunc func(uint, string, uint) error, ticketCreator TicketCreator, matcher ServiceMatcher) *Operator {
+	return &Operator{db: db, resolver: resolver, orgResolver: orgResolver, withdrawFunc: withdrawFunc, ticketCreator: ticketCreator, matcher: matcher}
 }
 
-// MatchServices searches active ServiceDefinitions by keyword scoring.
-func (o *Operator) MatchServices(query string) ([]ServiceMatch, error) {
-	type svcRow struct {
-		ID          uint
-		Name        string
-		Description string
-		CatalogID   uint
+// MatchServices delegates service matching to the configured matcher.
+func (o *Operator) MatchServices(ctx context.Context, query string) ([]ServiceMatch, MatchDecision, error) {
+	if o.matcher == nil {
+		return nil, MatchDecision{}, fmt.Errorf("service matcher is not configured")
 	}
-	var rows []svcRow
-	if err := o.db.Table("itsm_service_definitions").
-		Where("is_active = ? AND deleted_at IS NULL", true).
-		Select("id, name, description, catalog_id").
-		Find(&rows).Error; err != nil {
-		return nil, fmt.Errorf("query services: %w", err)
-	}
-
-	queryLower := strings.ToLower(query)
-	keywords := tokenize(queryLower)
-
-	var matches []ServiceMatch
-	for _, r := range rows {
-		score := computeScore(queryLower, keywords, r.Name, r.Description)
-		if score <= 0 {
-			continue
-		}
-		reason := matchReason(queryLower, keywords, r.Name, r.Description)
-		catalogPath := o.buildCatalogPath(r.CatalogID)
-
-		matches = append(matches, ServiceMatch{
-			ID:          r.ID,
-			Name:        r.Name,
-			CatalogPath: catalogPath,
-			Description: truncate(r.Description, 100),
-			Score:       score,
-			Reason:      reason,
-		})
-	}
-
-	// Sort by score descending, take top 3.
-	sortMatches(matches)
-	if len(matches) > 3 {
-		matches = matches[:3]
-	}
-
-	return matches, nil
+	return o.matcher.MatchServices(ctx, query)
 }
 
 // LoadService loads a service's full detail including form fields, actions, and routing hints.
@@ -82,6 +42,7 @@ func (o *Operator) LoadService(serviceID uint) (*ServiceDetail, error) {
 	type svcRow struct {
 		ID                uint
 		Name              string
+		EngineType        string
 		CollaborationSpec string
 		IntakeFormSchema  string
 		WorkflowJSON      string
@@ -96,12 +57,17 @@ func (o *Operator) LoadService(serviceID uint) (*ServiceDetail, error) {
 	detail := &ServiceDetail{
 		ServiceID:         svc.ID,
 		Name:              svc.Name,
+		EngineType:        svc.EngineType,
 		CollaborationSpec: svc.CollaborationSpec,
 	}
 
 	// Load form fields from inline intake form schema.
 	if svc.IntakeFormSchema != "" {
 		detail.FormFields = parseFormFields(svc.IntakeFormSchema)
+		var schema any
+		if err := json.Unmarshal([]byte(svc.IntakeFormSchema), &schema); err == nil {
+			detail.FormSchema = schema
+		}
 	}
 
 	// Load actions.
@@ -159,12 +125,12 @@ func (o *Operator) CreateTicket(userID uint, serviceID uint, summary string, for
 // ListMyTickets returns the user's non-terminal tickets.
 func (o *Operator) ListMyTickets(userID uint, status string) ([]TicketSummary, error) {
 	type row struct {
-		ID          uint
-		Code        string
-		Title       string
-		Status      string
-		ServiceID   uint
-		CreatedAt   string
+		ID        uint
+		Code      string
+		Title     string
+		Status    string
+		ServiceID uint
+		CreatedAt string
 	}
 
 	query := o.db.Table("itsm_tickets").
@@ -261,10 +227,10 @@ func (o *Operator) ValidateParticipants(serviceID uint, formData map[string]any)
 	// Parse workflow nodes.
 	var workflow struct {
 		Nodes []struct {
-			ID       string `json:"id"`
-			Type     string `json:"type"`
-			Label    string `json:"label"`
-			Data     struct {
+			ID    string `json:"id"`
+			Type  string `json:"type"`
+			Label string `json:"label"`
+			Data  struct {
 				ParticipantType string `json:"participantType"`
 				PositionCode    string `json:"positionCode"`
 				DepartmentCode  string `json:"departmentCode"`
@@ -276,11 +242,11 @@ func (o *Operator) ValidateParticipants(serviceID uint, formData map[string]any)
 		return &ParticipantValidation{OK: true}, nil // Can't parse, skip.
 	}
 
-	// Check each approve/process node.
-	for _, node := range workflow.Nodes {
-		if node.Type != "approve" && node.Type != "process" {
-			continue
-		}
+		// Check each process node.
+		for _, node := range workflow.Nodes {
+			if node.Type != "process" {
+				continue
+			}
 		d := node.Data
 		if d.ParticipantType == "user" && d.UserID != nil {
 			// Direct user assignment — check user exists and is active.
@@ -332,133 +298,6 @@ func (o *Operator) ValidateParticipants(serviceID uint, formData map[string]any)
 
 // --- helpers ---
 
-func (o *Operator) buildCatalogPath(catalogID uint) string {
-	var parts []string
-	currentID := catalogID
-	for i := 0; i < 5; i++ { // max depth
-		type cat struct {
-			Name     string
-			ParentID *uint
-		}
-		var c cat
-		if err := o.db.Table("itsm_service_catalogs").
-			Where("id = ?", currentID).
-			Select("name, parent_id").First(&c).Error; err != nil {
-			break
-		}
-		parts = append([]string{c.Name}, parts...)
-		if c.ParentID == nil || *c.ParentID == 0 {
-			break
-		}
-		currentID = *c.ParentID
-	}
-	return strings.Join(parts, "/")
-}
-
-func tokenize(s string) []string {
-	for _, sep := range []string{" ", "，", ",", "、", "·", "/", "\\", "（", "）", "(", ")"} {
-		s = strings.ReplaceAll(s, sep, " ")
-	}
-	var tokens []string
-	for _, t := range strings.Fields(s) {
-		t = strings.TrimSpace(t)
-		if len(t) == 0 {
-			continue
-		}
-		lower := strings.ToLower(t)
-		tokens = append(tokens, lower)
-		// Split on CJK/Latin boundaries so "申请VPN开通" → ["申请","vpn","开通"].
-		if subs := splitCJKBoundaries(lower); len(subs) > 1 {
-			tokens = append(tokens, subs...)
-		}
-	}
-	return tokens
-}
-
-// splitCJKBoundaries splits a string at transitions between CJK and non-CJK characters.
-func splitCJKBoundaries(s string) []string {
-	runes := []rune(s)
-	if len(runes) <= 1 {
-		return nil
-	}
-	var parts []string
-	start := 0
-	for i := 1; i < len(runes); i++ {
-		if isCJK(runes[i-1]) != isCJK(runes[i]) {
-			parts = append(parts, string(runes[start:i]))
-			start = i
-		}
-	}
-	parts = append(parts, string(runes[start:]))
-	if len(parts) <= 1 {
-		return nil
-	}
-	return parts
-}
-
-func isCJK(r rune) bool {
-	return unicode.Is(unicode.Han, r)
-}
-
-func computeScore(queryLower string, keywords []string, name, desc string) float64 {
-	nameLower := strings.ToLower(name)
-	descLower := strings.ToLower(desc)
-
-	score := 0.0
-
-	// Exact name contains query.
-	if strings.Contains(nameLower, queryLower) {
-		score += 0.5
-	}
-
-	// Keyword matches in name.
-	for _, kw := range keywords {
-		if strings.Contains(nameLower, kw) {
-			score += 0.3
-		}
-		if strings.Contains(descLower, kw) {
-			score += 0.1
-		}
-	}
-
-	// Cap at 1.0.
-	if score > 1.0 {
-		score = 1.0
-	}
-	return score
-}
-
-func matchReason(queryLower string, keywords []string, name, desc string) string {
-	nameLower := strings.ToLower(name)
-	if strings.Contains(nameLower, queryLower) {
-		return "名称关键词匹配"
-	}
-	for _, kw := range keywords {
-		if strings.Contains(nameLower, kw) {
-			return fmt.Sprintf("名称包含关键词「%s」", kw)
-		}
-	}
-	return "描述关键词匹配"
-}
-
-func sortMatches(matches []ServiceMatch) {
-	for i := 0; i < len(matches); i++ {
-		for j := i + 1; j < len(matches); j++ {
-			if matches[j].Score > matches[i].Score {
-				matches[i], matches[j] = matches[j], matches[i]
-			}
-		}
-	}
-}
-
-func truncate(s string, max int) string {
-	runes := []rune(s)
-	if len(runes) <= max {
-		return s
-	}
-	return string(runes[:max]) + "..."
-}
-
 func parseFormFields(schemaJSON string) []FormField {
 	var schema form.FormSchema
 	if err := json.Unmarshal([]byte(schemaJSON), &schema); err != nil {
@@ -468,10 +307,12 @@ func parseFormFields(schemaJSON string) []FormField {
 	var fields []FormField
 	for _, f := range schema.Fields {
 		ff := FormField{
-			Key:      f.Key,
-			Label:    f.Label,
-			Type:     f.Type,
-			Required: f.Required,
+			Key:         f.Key,
+			Label:       f.Label,
+			Type:        f.Type,
+			Description: f.Description,
+			Placeholder: f.Placeholder,
+			Required:    f.Required,
 		}
 		// Check validation rules for "required".
 		for _, v := range f.Validation {
@@ -481,8 +322,11 @@ func parseFormFields(schemaJSON string) []FormField {
 		}
 		// Extract options for select/radio fields.
 		for _, opt := range f.Options {
-			if label, ok := opt.Label, true; ok {
-				ff.Options = append(ff.Options, label)
+			if opt.Label != "" || opt.Value != nil {
+				ff.Options = append(ff.Options, FormOption{
+					Label: opt.Label,
+					Value: fmt.Sprintf("%v", opt.Value),
+				})
 			}
 		}
 		fields = append(fields, ff)

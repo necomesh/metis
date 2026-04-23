@@ -35,11 +35,11 @@ export function FieldPropertyEditor({ field, allFields, onChange }: FieldPropert
   return (
     <div className="space-y-5">
       {/* Basic Properties */}
-      <section className="space-y-3">
+      <section className="space-y-3 rounded-xl border border-border/60 bg-white/70 p-3">
         <div>
           <Label className="text-xs">{t("forms.fieldKey")}</Label>
           <Input
-            className="mt-1"
+            className="mt-1 h-9 text-sm"
             value={field.key}
             onChange={(e) => update({ key: e.target.value })}
           />
@@ -47,19 +47,19 @@ export function FieldPropertyEditor({ field, allFields, onChange }: FieldPropert
         <div>
           <Label className="text-xs">{t("forms.fieldLabel")}</Label>
           <Input
-            className="mt-1"
+            className="mt-1 h-9 text-sm"
             value={field.label}
             onChange={(e) => update({ label: e.target.value })}
           />
         </div>
         <div>
           <Label className="text-xs">{t("forms.fieldType")}</Label>
-          <Input className="mt-1" value={t(`forms.type.${field.type}`)} disabled />
+          <Input className="mt-1 h-9 text-sm" value={t(`forms.type.${field.type}`)} disabled />
         </div>
         <div>
           <Label className="text-xs">{t("forms.fieldPlaceholder")}</Label>
           <Input
-            className="mt-1"
+            className="mt-1 h-9 text-sm"
             value={field.placeholder ?? ""}
             onChange={(e) => update({ placeholder: e.target.value || undefined })}
           />
@@ -67,7 +67,7 @@ export function FieldPropertyEditor({ field, allFields, onChange }: FieldPropert
         <div>
           <Label className="text-xs">{t("forms.fieldDescription")}</Label>
           <Input
-            className="mt-1"
+            className="mt-1 h-9 text-sm"
             value={field.description ?? ""}
             onChange={(e) => update({ description: e.target.value || undefined })}
           />
@@ -82,7 +82,7 @@ export function FieldPropertyEditor({ field, allFields, onChange }: FieldPropert
         <div>
           <Label className="text-xs">{t("forms.fieldWidth")}</Label>
           <Select value={field.width ?? "full"} onValueChange={(v) => update({ width: v as "full" | "half" | "third" })}>
-            <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="mt-1 h-9 text-sm"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="full">{t("forms.fieldWidthFull")}</SelectItem>
               <SelectItem value="half">{t("forms.fieldWidthHalf")}</SelectItem>
@@ -94,7 +94,7 @@ export function FieldPropertyEditor({ field, allFields, onChange }: FieldPropert
 
       {/* Options (for select/multi_select/radio/checkbox) */}
       {NEEDS_OPTIONS.includes(field.type) && (
-        <section className="space-y-2">
+        <section className="space-y-2 rounded-xl border border-border/60 bg-white/70 p-3">
           <div className="flex items-center justify-between">
             <Label className="text-xs font-medium">{t("forms.fieldOptions")}</Label>
             <Button
@@ -144,7 +144,7 @@ export function FieldPropertyEditor({ field, allFields, onChange }: FieldPropert
       )}
 
       {/* Validation Rules */}
-      <section className="space-y-2">
+      <section className="space-y-2 rounded-xl border border-border/60 bg-white/70 p-3">
         <div className="flex items-center justify-between">
           <Label className="text-xs font-medium">{t("forms.validationRules")}</Label>
           <Button
@@ -210,7 +210,7 @@ export function FieldPropertyEditor({ field, allFields, onChange }: FieldPropert
       </section>
 
       {/* Visibility Conditions */}
-      <section className="space-y-2">
+      <section className="space-y-2 rounded-xl border border-border/60 bg-white/70 p-3">
         <div className="flex items-center justify-between">
           <Label className="text-xs font-medium">{t("forms.visibilityConditions")}</Label>
           <Button

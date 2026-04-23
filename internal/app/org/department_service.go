@@ -138,9 +138,19 @@ func (s *DepartmentService) GetAllowedPositions(deptID uint) ([]PositionResponse
 	if err != nil {
 		return nil, err
 	}
+	ids := make([]uint, 0, len(positions))
+	for _, p := range positions {
+		ids = append(ids, p.ID)
+	}
+	memberCounts, err := s.repo.CountMembersByPositions(deptID, ids)
+	if err != nil {
+		return nil, err
+	}
 	result := make([]PositionResponse, len(positions))
 	for i, p := range positions {
-		result[i] = p.ToResponse()
+		resp := p.ToResponse()
+		resp.MemberCount = memberCounts[p.ID]
+		result[i] = resp
 	}
 	return result, nil
 }

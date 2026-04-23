@@ -8,6 +8,8 @@ package itsm
 
 import (
 	"context"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/cucumber/godog"
@@ -23,8 +25,8 @@ func TestBDD(t *testing.T) {
 		ScenarioInitializer: initializeScenario,
 		Options: &godog.Options{
 			Format:   "pretty",
-			Paths:    []string{"features"},
-			Tags:     "~@wip",
+			Paths:    bddPaths(),
+			Tags:     bddTags(),
 			TestingT: t,
 		},
 	}
@@ -32,6 +34,29 @@ func TestBDD(t *testing.T) {
 	if suite.Run() != 0 {
 		t.Fatal("non-zero status returned, failed to run BDD feature tests")
 	}
+}
+
+func bddPaths() []string {
+	if raw := strings.TrimSpace(os.Getenv("ITSM_BDD_PATHS")); raw != "" {
+		parts := strings.Split(raw, ",")
+		paths := make([]string, 0, len(parts))
+		for _, part := range parts {
+			if path := strings.TrimSpace(part); path != "" {
+				paths = append(paths, path)
+			}
+		}
+		if len(paths) > 0 {
+			return paths
+		}
+	}
+	return []string{"features"}
+}
+
+func bddTags() string {
+	if tags := strings.TrimSpace(os.Getenv("ITSM_BDD_TAGS")); tags != "" {
+		return tags
+	}
+	return "~@wip"
 }
 
 func initializeScenario(sc *godog.ScenarioContext) {

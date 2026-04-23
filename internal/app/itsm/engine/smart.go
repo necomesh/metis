@@ -86,7 +86,7 @@ func ParseSmartServiceConfig(raw string) SmartServiceConfig {
 
 // DecisionPlan is the structured output from the AI agent.
 type DecisionPlan struct {
-	NextStepType  string             `json:"next_step_type"` // approve|process|action|notify|form|complete|escalate
+	NextStepType  string             `json:"next_step_type"` // process|action|notify|form|complete|escalate
 	ExecutionMode string             `json:"execution_mode"` // ""|"single"|"parallel"
 	Activities    []DecisionActivity `json:"activities"`
 	Reasoning     string             `json:"reasoning"`
@@ -106,7 +106,7 @@ type DecisionActivity struct {
 
 // Allowed next_step_types for smart engine.
 var AllowedSmartStepTypes = map[string]bool{
-	"approve": true, "process": true, "action": true,
+	"process": true, "action": true,
 	"notify": true, "form": true, "complete": true, "escalate": true,
 }
 
@@ -197,10 +197,17 @@ func (e *SmartEngine) Progress(ctx context.Context, tx *gorm.DB, params Progress
 	}
 
 	now := time.Now()
+	if _, _, err := completePendingAssignment(tx, e.resolver, activity.ID, params.OperatorID, now); err != nil {
+		return err
+	}
+
 	updates := map[string]any{
 		"status":             ActivityCompleted,
 		"transition_outcome": params.Outcome,
 		"finished_at":        now,
+	}
+	if params.Opinion != "" {
+		updates["decision_reasoning"] = params.Opinion
 	}
 	if len(params.Result) > 0 {
 		updates["form_data"] = string(params.Result)
@@ -210,7 +217,7 @@ func (e *SmartEngine) Progress(ctx context.Context, tx *gorm.DB, params Progress
 	}
 
 	e.recordTimeline(tx, params.TicketID, &params.ActivityID, params.OperatorID, "activity_completed",
-		fmt.Sprintf("活动 [%s] 完成，结果: %s", activity.Name, params.Outcome), "")
+		humanProgressMessage(activity.Name, params.Outcome, params.Opinion), params.Opinion)
 
 	// Load ticket for ensureContinuation
 	var ticket ticketModel
@@ -218,7 +225,16 @@ func (e *SmartEngine) Progress(ctx context.Context, tx *gorm.DB, params Progress
 		return fmt.Errorf("ticket not found: %w", err)
 	}
 
-	e.ensureContinuation(tx, &ticket, params.ActivityID)
+	queued, err := e.ensureContinuation(tx, &ticket, params.ActivityID)
+	if err != nil {
+		return err
+	}
+	if queued {
+		if err := tx.Model(&ticketModel{}).Where("id = ?", params.TicketID).
+			Update("current_activity_id", nil).Error; err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -227,7 +243,7 @@ func (e *SmartEngine) Cancel(ctx context.Context, tx *gorm.DB, params CancelPara
 	// Cancel all active activities
 	if err := tx.Model(&activityModel{}).
 		Where("ticket_id = ? AND status IN ?", params.TicketID,
-			[]string{ActivityPending, ActivityPendingApproval, ActivityInProgress}).
+			[]string{ActivityPending, ActivityInProgress}).
 		Updates(map[string]any{
 			"status":      ActivityCancelled,
 			"finished_at": time.Now(),
@@ -291,7 +307,7 @@ func (e *SmartEngine) runDecisionCycle(ctx context.Context, tx *gorm.DB, ticketI
 
 	var activeCount int64
 	if err := tx.Model(&activityModel{}).
-		Where("ticket_id = ? AND status IN ?", ticketID, []string{ActivityPending, ActivityInProgress, ActivityPendingApproval}).
+		Where("ticket_id = ? AND status IN ?", ticketID, []string{ActivityPending, ActivityInProgress}).
 		Count(&activeCount).Error; err != nil {
 		return err
 	}
@@ -306,7 +322,7 @@ func (e *SmartEngine) runDecisionCycle(ctx context.Context, tx *gorm.DB, ticketI
 	decisionCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	plan, err := e.agenticDecision(decisionCtx, tx, ticketID, svcInfo)
+	plan, err := e.agenticDecision(decisionCtx, tx, ticketID, completedActivityID, svcInfo)
 	if err != nil {
 		reason := fmt.Sprintf("AI 决策失败: %v", err)
 		if decisionCtx.Err() == context.DeadlineExceeded {
@@ -316,8 +332,8 @@ func (e *SmartEngine) runDecisionCycle(ctx context.Context, tx *gorm.DB, ticketI
 	}
 
 	// Validate decision plan
-	if err := e.validateDecisionPlan(tx, plan, svcInfo); err != nil {
-		return e.handleDecisionFailure(tx, ticketID, fmt.Sprintf("AI 决策校验不通过: %v", err))
+	if err := e.validateDecisionPlan(tx, ticketID, plan, svcInfo); err != nil {
+		return e.handleDecisionFailure(tx, ticketID, fmt.Sprintf("AI 决策校验失败: %v", err))
 	}
 
 	// Reset failure count on success
@@ -332,7 +348,7 @@ func (e *SmartEngine) runDecisionCycle(ctx context.Context, tx *gorm.DB, ticketI
 	if plan.Confidence >= cfg.ConfidenceThreshold {
 		return e.executeDecisionPlan(tx, ticketID, plan)
 	}
-	return e.pendApprovalDecisionPlan(tx, ticketID, plan)
+	return e.pendManualHandlingPlan(tx, ticketID, plan)
 }
 
 // handleDecisionFailure increments failure count and records timeline.
@@ -439,7 +455,7 @@ func (e *SmartEngine) executeParallelPlan(tx *gorm.DB, ticketID uint, plan *Deci
 			tx.Create(assignment)
 		} else if da.ParticipantType == "position_department" && da.PositionCode != "" && da.DepartmentCode != "" {
 			e.createPositionAssignment(tx, ticketID, act.ID, da.PositionCode, da.DepartmentCode)
-		} else if da.Type == "approve" || da.Type == "process" || da.Type == "form" {
+		} else if da.Type == "process" || da.Type == "form" {
 			e.tryFallbackAssignment(tx, ticketID, act.ID)
 		}
 
@@ -450,11 +466,13 @@ func (e *SmartEngine) executeParallelPlan(tx *gorm.DB, ticketID uint, plan *Deci
 				"activity_id": act.ID,
 				"action_id":   *da.ActionID,
 			})
-			e.scheduler.SubmitTask("itsm-action-execute", payload)
+			if err := submitTaskInTx(e.scheduler, tx, "itsm-action-execute", payload); err != nil {
+				slog.Error("failed to submit action task", "error", err, "ticketID", ticketID)
+			}
 		}
 
 		e.recordTimeline(tx, ticketID, &act.ID, 0, "ai_decision_executed",
-			fmt.Sprintf("AI 并签活动：%s（组 %s，信心 %.0f%%）", decisionActivityName(da), groupID[:8], plan.Confidence*100),
+			fmt.Sprintf("AI 并行处理活动：%s（组 %s，信心 %.0f%%）", decisionActivityName(da), groupID[:8], plan.Confidence*100),
 			plan.Reasoning)
 	}
 
@@ -472,7 +490,7 @@ func (e *SmartEngine) executeSinglePlan(tx *gorm.DB, ticketID uint, plan *Decisi
 	planJSON := mustJSON(plan)
 	da := plan.Activities[0]
 	status := ActivityInProgress
-	if da.Type == "approve" || da.Type == "form" || da.Type == "process" {
+	if da.Type == "form" || da.Type == "process" {
 		status = ActivityPending
 	}
 
@@ -511,7 +529,7 @@ func (e *SmartEngine) executeSinglePlan(tx *gorm.DB, ticketID uint, plan *Decisi
 		}
 	} else if da.ParticipantType == "position_department" && da.PositionCode != "" && da.DepartmentCode != "" {
 		e.createPositionAssignment(tx, ticketID, act.ID, da.PositionCode, da.DepartmentCode)
-	} else if da.Type == "approve" || da.Type == "process" || da.Type == "form" {
+	} else if da.Type == "process" || da.Type == "form" {
 		e.tryFallbackAssignment(tx, ticketID, act.ID)
 	}
 
@@ -521,7 +539,9 @@ func (e *SmartEngine) executeSinglePlan(tx *gorm.DB, ticketID uint, plan *Decisi
 			"activity_id": act.ID,
 			"action_id":   *da.ActionID,
 		})
-		e.scheduler.SubmitTask("itsm-action-execute", payload)
+		if err := submitTaskInTx(e.scheduler, tx, "itsm-action-execute", payload); err != nil {
+			slog.Error("failed to submit action task", "error", err, "ticketID", ticketID)
+		}
 	}
 
 	e.recordTimeline(tx, ticketID, &act.ID, 0, "ai_decision_executed",
@@ -618,22 +638,21 @@ func (e *SmartEngine) createPositionAssignment(tx *gorm.DB, ticketID, activityID
 	}
 }
 
-// pendApprovalDecisionPlan creates a pending_approval activity for low-confidence decision.
-func (e *SmartEngine) pendApprovalDecisionPlan(tx *gorm.DB, ticketID uint, plan *DecisionPlan) error {
+// pendManualHandlingPlan creates a manual process activity for low-confidence decisions.
+func (e *SmartEngine) pendManualHandlingPlan(tx *gorm.DB, ticketID uint, plan *DecisionPlan) error {
 	now := time.Now()
 	planJSON := mustJSON(plan)
 
-	// Create activity in pending_approval state
-	name := "AI 决策待确认"
+	name := "AI 低置信待处置"
 	if len(plan.Activities) > 0 {
-		name = fmt.Sprintf("AI 决策待确认：%s", decisionActivityName(plan.Activities[0]))
+		name = fmt.Sprintf("AI 低置信待处置：%s", decisionActivityName(plan.Activities[0]))
 	}
 
 	act := &activityModel{
 		TicketID:     ticketID,
 		Name:         name,
-		ActivityType: plan.NextStepType,
-		Status:       ActivityPendingApproval,
+		ActivityType: NodeProcess,
+		Status:       ActivityPending,
 		AIDecision:   planJSON,
 		AIReasoning:  plan.Reasoning,
 		AIConfidence: plan.Confidence,
@@ -677,7 +696,7 @@ func (e *SmartEngine) pendApprovalDecisionPlan(tx *gorm.DB, ticketID uint, plan 
 	}
 
 	e.recordTimeline(tx, ticketID, &act.ID, 0, "ai_decision_pending",
-		fmt.Sprintf("AI 决策信心不足（%.0f%%），等待人工确认", plan.Confidence*100),
+		fmt.Sprintf("AI 决策信心不足（%.0f%%），等待人工处置", plan.Confidence*100),
 		plan.Reasoning)
 
 	return nil
@@ -685,7 +704,7 @@ func (e *SmartEngine) pendApprovalDecisionPlan(tx *gorm.DB, ticketID uint, plan 
 
 // --- Validation ---
 
-func (e *SmartEngine) validateDecisionPlan(tx *gorm.DB, plan *DecisionPlan, svc *serviceModel) error {
+func (e *SmartEngine) validateDecisionPlan(tx *gorm.DB, ticketID uint, plan *DecisionPlan, svc *serviceModel) error {
 	if plan == nil {
 		return fmt.Errorf("decision plan is nil")
 	}
@@ -693,6 +712,12 @@ func (e *SmartEngine) validateDecisionPlan(tx *gorm.DB, plan *DecisionPlan, svc 
 	// Check next_step_type is allowed
 	if !AllowedSmartStepTypes[plan.NextStepType] {
 		return fmt.Errorf("next_step_type %q 不合法", plan.NextStepType)
+	}
+	if plan.NextStepType == "complete" && len(plan.Activities) > 0 {
+		return fmt.Errorf("complete 决策不能包含活动")
+	}
+	if plan.NextStepType != "complete" && len(plan.Activities) == 0 {
+		return fmt.Errorf("next_step_type %q 必须包含至少一个活动", plan.NextStepType)
 	}
 
 	// Validate activities
@@ -714,6 +739,11 @@ func (e *SmartEngine) validateDecisionPlan(tx *gorm.DB, plan *DecisionPlan, svc 
 				return fmt.Errorf("activities[%d].participant_id %d 用户未激活", i, *a.ParticipantID)
 			}
 		}
+		if isHumanActivityType(a.Type) {
+			if !e.hasResolvableHumanParticipant(a) {
+				return fmt.Errorf("activities[%d] 缺少可解析的处理人", i)
+			}
+		}
 
 		// Check action_id exists for this service
 		if a.Type == "action" && a.ActionID != nil && *a.ActionID > 0 {
@@ -733,6 +763,55 @@ func (e *SmartEngine) validateDecisionPlan(tx *gorm.DB, plan *DecisionPlan, svc 
 		return fmt.Errorf("confidence %.2f 不在 [0, 1] 范围内", plan.Confidence)
 	}
 
+	if err := e.validateNoDuplicateCompletedHumanActivity(tx, ticketID, plan); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (e *SmartEngine) hasResolvableHumanParticipant(a DecisionActivity) bool {
+	if a.ParticipantID != nil && *a.ParticipantID > 0 {
+		return true
+	}
+	if a.ParticipantType == "position_department" && a.PositionCode != "" && a.DepartmentCode != "" {
+		return true
+	}
+	return e.configProvider != nil && e.configProvider.FallbackAssigneeID() > 0
+}
+
+func (e *SmartEngine) validateNoDuplicateCompletedHumanActivity(tx *gorm.DB, ticketID uint, plan *DecisionPlan) error {
+	for i, da := range plan.Activities {
+		if !isHumanActivityType(da.Type) {
+			continue
+		}
+
+		var completed []activityModel
+		if err := tx.Where("ticket_id = ? AND status = ? AND activity_type = ?", ticketID, ActivityCompleted, da.Type).
+			Order("id ASC").
+			Find(&completed).Error; err != nil {
+			return err
+		}
+
+		plannedName := decisionActivityName(da)
+		plannedInstructions := strings.TrimSpace(da.Instructions)
+		plannedSignatures := participantSignaturesForDecisionActivity(tx, da)
+		data := NewDecisionDataStore(tx)
+
+		for _, existing := range completed {
+			if !sameActivityMeaning(existing, plannedName, plannedInstructions) {
+				continue
+			}
+			assignments, err := data.GetActivityAssignments(existing.ID)
+			if err != nil {
+				return err
+			}
+			existingSignatures := participantSignaturesForAssignments(assignments)
+			if len(plannedSignatures) == 0 || participantSignaturesOverlap(plannedSignatures, existingSignatures) {
+				return fmt.Errorf("activities[%d] 重复创建已完成的人工活动：%s / %s", i, da.Type, plannedName)
+			}
+		}
+	}
 	return nil
 }
 
@@ -782,8 +861,6 @@ func mustJSON(v any) string {
 
 func decisionActivityName(da DecisionActivity) string {
 	switch da.Type {
-	case "approve":
-		return "审批"
 	case "process":
 		return "处理"
 	case "action":
@@ -799,6 +876,94 @@ func decisionActivityName(da DecisionActivity) string {
 	default:
 		return da.Type
 	}
+}
+
+func humanProgressMessage(activityName, outcome, opinion string) string {
+	msg := fmt.Sprintf("活动 [%s] 完成，结果: %s", activityName, outcome)
+	if opinion != "" {
+		msg = fmt.Sprintf("%s，处理意见: %s", msg, opinion)
+	}
+	return msg
+}
+
+func sameActivityMeaning(existing activityModel, plannedName string, plannedInstructions string) bool {
+	existingName := normalizeActivityText(existing.Name)
+	plannedName = normalizeActivityText(plannedName)
+	if existingName != "" && plannedName != "" && (existingName == plannedName || strings.Contains(existingName, plannedName) || strings.Contains(plannedName, existingName)) {
+		return true
+	}
+
+	if plannedInstructions == "" || existing.AIDecision == "" {
+		return false
+	}
+	var source DecisionPlan
+	if err := json.Unmarshal([]byte(existing.AIDecision), &source); err != nil {
+		return false
+	}
+	for _, a := range source.Activities {
+		if normalizeActivityText(a.Instructions) == normalizeActivityText(plannedInstructions) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeActivityText(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func participantSignaturesForDecisionActivity(tx *gorm.DB, da DecisionActivity) map[string]struct{} {
+	signatures := map[string]struct{}{}
+	if da.ParticipantID != nil && *da.ParticipantID > 0 {
+		signatures[fmt.Sprintf("user:%d", *da.ParticipantID)] = struct{}{}
+	}
+	if da.ParticipantType == "position_department" && da.PositionCode != "" && da.DepartmentCode != "" {
+		positionID, departmentID := resolvePositionDepartmentIDs(tx, da.PositionCode, da.DepartmentCode)
+		if positionID > 0 && departmentID > 0 {
+			signatures[fmt.Sprintf("position_department:%d:%d", positionID, departmentID)] = struct{}{}
+		}
+		signatures["position_department_code:"+normalizeActivityText(da.PositionCode)+":"+normalizeActivityText(da.DepartmentCode)] = struct{}{}
+	}
+	return signatures
+}
+
+func participantSignaturesForAssignments(assignments []ActivityAssignmentInfo) map[string]struct{} {
+	signatures := map[string]struct{}{}
+	for _, a := range assignments {
+		if a.AssigneeID != nil && *a.AssigneeID > 0 {
+			signatures[fmt.Sprintf("user:%d", *a.AssigneeID)] = struct{}{}
+		}
+		if a.UserID != nil && *a.UserID > 0 {
+			signatures[fmt.Sprintf("user:%d", *a.UserID)] = struct{}{}
+		}
+		if a.PositionID != nil && *a.PositionID > 0 && a.DepartmentID != nil && *a.DepartmentID > 0 {
+			signatures[fmt.Sprintf("position_department:%d:%d", *a.PositionID, *a.DepartmentID)] = struct{}{}
+		}
+		if a.PositionID != nil && *a.PositionID > 0 {
+			signatures[fmt.Sprintf("position:%d", *a.PositionID)] = struct{}{}
+		}
+		if a.DepartmentID != nil && *a.DepartmentID > 0 {
+			signatures[fmt.Sprintf("department:%d", *a.DepartmentID)] = struct{}{}
+		}
+	}
+	return signatures
+}
+
+func participantSignaturesOverlap(left, right map[string]struct{}) bool {
+	for sig := range left {
+		if _, ok := right[sig]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func resolvePositionDepartmentIDs(tx *gorm.DB, positionCode, departmentCode string) (uint, uint) {
+	var positionID uint
+	var departmentID uint
+	tx.Table("positions").Where("code = ?", positionCode).Select("id").Scan(&positionID)
+	tx.Table("departments").Where("code = ?", departmentCode).Select("id").Scan(&departmentID)
+	return positionID, departmentID
 }
 
 // serviceModel is a lightweight struct for reading service definition data.
@@ -819,36 +984,40 @@ func (serviceModel) TableName() string { return "itsm_service_definitions" }
 // ensureContinuation checks whether the smart engine should trigger the next
 // decision cycle after an activity completes. It handles terminal states,
 // circuit-breaker, and parallel convergence (with SELECT FOR UPDATE).
-func (e *SmartEngine) ensureContinuation(tx *gorm.DB, ticket *ticketModel, completedActivityID uint) {
+func (e *SmartEngine) ensureContinuation(tx *gorm.DB, ticket *ticketModel, completedActivityID uint) (bool, error) {
 	// 1. Terminal state → nothing to do
 	switch ticket.Status {
 	case "completed", "cancelled", "failed":
-		return
+		return false, nil
 	}
 
 	// 2. Circuit-breaker
 	if ticket.AIFailureCount >= MaxAIFailureCount {
 		slog.Warn("ensureContinuation: AI disabled, skipping", "ticketID", ticket.ID, "failures", ticket.AIFailureCount)
-		return
+		return false, nil
 	}
 
 	// 3. Parallel convergence check
 	if completedActivityID > 0 {
 		var groupID string
-		tx.Model(&activityModel{}).Where("id = ?", completedActivityID).Select("activity_group_id").Scan(&groupID)
+		if err := tx.Model(&activityModel{}).Where("id = ?", completedActivityID).Select("activity_group_id").Scan(&groupID).Error; err != nil {
+			return false, err
+		}
 
 		if groupID != "" {
 			// Lock the group rows and check for incomplete siblings
 			var ids []uint
-			tx.Model(&activityModel{}).
+			if err := tx.Model(&activityModel{}).
 				Clauses(clause.Locking{Strength: "UPDATE"}).
 				Where("activity_group_id = ? AND status NOT IN (?, ?)", groupID, ActivityCompleted, ActivityCancelled).
-				Pluck("id", &ids)
+				Pluck("id", &ids).Error; err != nil {
+				return false, err
+			}
 
 			if len(ids) > 0 {
 				slog.Info("ensureContinuation: parallel group not converged",
 					"ticketID", ticket.ID, "groupID", groupID, "remaining", len(ids))
-				return
+				return false, nil
 			}
 			slog.Info("ensureContinuation: parallel group converged",
 				"ticketID", ticket.ID, "groupID", groupID)
@@ -861,10 +1030,13 @@ func (e *SmartEngine) ensureContinuation(tx *gorm.DB, ticket *ticketModel, compl
 			TicketID:            ticket.ID,
 			CompletedActivityID: uintPtrIf(completedActivityID),
 		})
-		if err := e.scheduler.SubmitTask("itsm-smart-progress", payload); err != nil {
+		if err := submitTaskInTx(e.scheduler, tx, "itsm-smart-progress", payload); err != nil {
 			slog.Error("ensureContinuation: failed to submit smart-progress task", "error", err, "ticketID", ticket.ID)
+			return false, err
 		}
+		return true, nil
 	}
+	return false, nil
 }
 
 // uintPtrIf returns a *uint if v > 0, else nil.
@@ -875,8 +1047,8 @@ func uintPtrIf(v uint) *uint {
 	return &v
 }
 
-// ExecuteConfirmedPlan executes a confirmed decision plan (after human approval).
-func (e *SmartEngine) ExecuteConfirmedPlan(tx *gorm.DB, ticketID uint, plan *DecisionPlan) error {
+// ExecuteDecisionPlan executes an already validated decision plan.
+func (e *SmartEngine) ExecuteDecisionPlan(tx *gorm.DB, ticketID uint, plan *DecisionPlan) error {
 	if plan.NextStepType == "complete" {
 		return e.handleComplete(tx, ticketID, plan)
 	}
@@ -889,6 +1061,10 @@ func (e *SmartEngine) SubmitProgressTask(payload json.RawMessage) error {
 		return e.scheduler.SubmitTask("itsm-smart-progress", payload)
 	}
 	return nil
+}
+
+func (e *SmartEngine) SubmitProgressTaskTx(tx *gorm.DB, payload json.RawMessage) error {
+	return submitTaskInTx(e.scheduler, tx, "itsm-smart-progress", payload)
 }
 
 // RunDecisionCycleForTicket runs the decision cycle for a ticket (used by scheduler task).
@@ -904,7 +1080,7 @@ func (e *SmartEngine) RunDecisionCycleForTicket(ctx context.Context, tx *gorm.DB
 
 // agenticDecision builds domain context and tools, then delegates the ReAct loop
 // to the DecisionExecutor (implemented by the AI App).
-func (e *SmartEngine) agenticDecision(ctx context.Context, tx *gorm.DB, ticketID uint, svc *serviceModel) (*DecisionPlan, error) {
+func (e *SmartEngine) agenticDecision(ctx context.Context, tx *gorm.DB, ticketID uint, completedActivityID *uint, svc *serviceModel) (*DecisionPlan, error) {
 	var agentID uint
 	if e.configProvider != nil {
 		agentID = e.configProvider.DecisionAgentID()
@@ -918,20 +1094,21 @@ func (e *SmartEngine) agenticDecision(ctx context.Context, tx *gorm.DB, ticketID
 	if e.configProvider != nil {
 		decisionMode = e.configProvider.DecisionMode()
 	}
-	systemMsg, userMsg, err := e.buildInitialSeed(tx, ticketID, svc, decisionMode)
+	systemMsg, userMsg, err := e.buildInitialSeed(tx, ticketID, svc, decisionMode, completedActivityID)
 	if err != nil {
 		return nil, fmt.Errorf("build initial seed: %w", err)
 	}
 
 	// Prepare tool context
 	toolCtx := &decisionToolContext{
-		ctx:               ctx,
-		data:              NewDecisionDataStore(tx),
-		ticketID:          ticketID,
-		serviceID:         svc.ID,
-		knowledgeSearcher: e.knowledgeSearcher,
-		resolver:          e.resolver,
-		actionExecutor:    e.actionExecutor,
+		ctx:                 ctx,
+		data:                NewDecisionDataStore(tx),
+		ticketID:            ticketID,
+		serviceID:           svc.ID,
+		knowledgeSearcher:   e.knowledgeSearcher,
+		resolver:            e.resolver,
+		actionExecutor:      e.actionExecutor,
+		completedActivityID: completedActivityID,
 	}
 	if svc.KnowledgeBaseIDs != "" {
 		var kbIDs []uint
@@ -981,7 +1158,7 @@ func (e *SmartEngine) agenticDecision(ctx context.Context, tx *gorm.DB, ticketID
 
 // buildInitialSeed constructs the system and user messages for the agentic decision.
 // The seed is intentionally lightweight — the agent queries detailed context via tools.
-func (e *SmartEngine) buildInitialSeed(tx *gorm.DB, ticketID uint, svc *serviceModel, decisionMode string) (string, string, error) {
+func (e *SmartEngine) buildInitialSeed(tx *gorm.DB, ticketID uint, svc *serviceModel, decisionMode string, completedActivityID *uint) (string, string, error) {
 	// System message (domain context only; agent's system prompt is prepended by DecisionExecutor)
 	systemMsg := buildAgenticSystemPrompt(svc.CollaborationSpec, decisionMode, svc.WorkflowJSON)
 
@@ -1009,13 +1186,18 @@ func (e *SmartEngine) buildInitialSeed(tx *gorm.DB, ticketID uint, svc *serviceM
 		}
 	}
 
-	allowedSteps := []string{"approve", "process", "action", "notify", "form", "complete", "escalate"}
+	allowedSteps := []string{"process", "action", "notify", "form", "complete", "escalate"}
 	switch ticket.Status {
 	case "completed", "cancelled", "failed":
 		allowedSteps = []string{}
 	}
 
 	seed := map[string]any{
+		"decision_cycle": map[string]any{
+			"trigger_reason":        decisionTriggerReason(completedActivityID),
+			"completed_activity_id": completedActivityID,
+			"decision_mode":         normalizedDecisionMode(decisionMode),
+		},
 		"ticket": map[string]any{
 			"code":        ticket.Code,
 			"title":       ticket.Title,
@@ -1033,10 +1215,31 @@ func (e *SmartEngine) buildInitialSeed(tx *gorm.DB, ticketID uint, svc *serviceM
 			"current_status":     ticket.Status,
 		},
 	}
+	if completedActivityID != nil && *completedActivityID > 0 {
+		data := NewDecisionDataStore(tx)
+		if completed, err := data.GetActivityByID(ticketID, *completedActivityID); err == nil {
+			assignments, _ := data.GetActivityAssignments(completed.ID)
+			seed["completed_activity"] = activityFactMap(completed, assignments)
+		}
+	}
 	seedJSON, _ := json.MarshalIndent(seed, "", "  ")
 	userMsg := fmt.Sprintf("## 工单信息与策略约束\n\n```json\n%s\n```\n\n请使用可用工具收集所需信息，然后输出最终决策。", seedJSON)
 
 	return systemMsg, userMsg, nil
+}
+
+func decisionTriggerReason(completedActivityID *uint) string {
+	if completedActivityID != nil && *completedActivityID > 0 {
+		return "activity_completed"
+	}
+	return "initial_decision"
+}
+
+func normalizedDecisionMode(decisionMode string) string {
+	if decisionMode == "" {
+		return "direct_first"
+	}
+	return decisionMode
 }
 
 // buildAgenticSystemPrompt constructs the domain system prompt for the agentic decision.
@@ -1068,9 +1271,9 @@ func buildAgenticSystemPrompt(collaborationSpec, decisionMode, workflowJSON stri
 
 const agenticToolGuidance = `## 工具使用指引
 
-你可以通过以下工具按需查询信息来辅助决策：
+你可以使用以下工具收集证据。工具结果是决策事实，不能用猜测替代。
 
-- **decision.ticket_context** — 获取工单完整上下文（表单数据、SLA、活动历史、当前指派、已执行动作、并签组状态）
+- **decision.ticket_context** — 获取工单完整上下文（表单数据、SLA、当前处理任务、活动历史、动作进度、并行组状态）
 - **decision.knowledge_search** — 搜索服务关联知识库
 - **decision.resolve_participant** — 按类型解析参与人（user/position/department/position_department/requester_manager）
 - **decision.user_workload** — 查询用户当前工单负载
@@ -1081,28 +1284,36 @@ const agenticToolGuidance = `## 工具使用指引
 
 ### 推荐推理步骤
 
-1. 先用 decision.ticket_context 了解完整上下文（注意 activity_history、executed_actions 和 parallel_groups）
-2. 用 decision.list_actions 查看是否有可用的自动化动作
-3. 如需查阅处理规范，使用 decision.knowledge_search
-4. 如果协作规范要求执行某个动作（如预检、放行等），使用 decision.execute_action 同步执行并获取结果，而非输出 type 为 "action" 的活动
-5. 如果需要多角色并行审批（并签），设置 execution_mode 为 "parallel"，在 activities 中列出所有并行角色
-6. 如果需要人工审批，用 decision.resolve_participant 解析指派人
-7. 可选：用 decision.user_workload 做负载均衡，用 decision.similar_history 参考历史模式
-8. 最终输出决策 JSON（不调用任何工具）
+1. 必须先用 decision.ticket_context 了解完整上下文，尤其是 current_activities、activity_history、action_progress、parallel_groups 和 is_terminal。
+2. 如果 is_terminal=true，直接输出 complete 或保持终态判断，不要创建新活动。
+3. 当 trigger_reason=activity_completed 时，必须先读取 completed_activity 和 completed_requirements；刚完成的人工活动如果已经满足当前服务规范，不得再次创建同一处理/表单，必须进入下一条件或 complete。
+4. 用 decision.list_actions 查看是否有可用自动化动作；协作规范要求预检、放行等同步动作时，优先 decision.execute_action，而不是输出 action 活动。
+5. 如需查阅处理规范或知识库，使用 decision.knowledge_search。知识不可用或无命中时可以降级，但要在 reasoning 说明。
+6. 需要人工处理/表单时，必须先用 decision.resolve_participant 解析参与人；count=0 时不得高置信输出该人工活动。
+7. 候选多人时，可用 decision.user_workload 选择负载较低者；SLA 风险明显时可用 decision.sla_status。
+8. 如果需要多角色并行处理，设置 execution_mode 为 "parallel"，在 activities 中列出所有并行角色。
+9. 最终输出决策 JSON（不调用任何工具）。
 
 ### 完成判断
 
-当 decision.ticket_context 返回的 all_actions_completed 为 true，表示服务配置的所有自动化动作均已成功执行。此时请对照协作规范判断流程是否应当结束——如果规范说"动作完成后结束"，你必须输出 next_step_type 为 "complete"，不要再创建新活动。`
+只有同时满足以下条件，才输出 next_step_type 为 "complete"：
+- 服务协作规范或工作流参考允许结束；
+- decision.ticket_context.current_activities 为空；
+- decision.ticket_context.parallel_groups 没有未完成项；
+- 必要的处理、表单或自动动作前置条件已经完成。
+- 本轮 completed_activity 已满足服务规范里最后一个人工处理条件。
+
+action_progress.all_completed=true 只说明动作已全部成功执行，不自动代表流程应结束；必须对照服务规范判断。`
 
 const agenticOutputFormat = "## 输出要求\n\n" +
 	"当你完成信息收集和推理后，直接输出以下 JSON 格式的决策（不要再调用任何工具）：\n\n" +
 	"```json\n" +
 	"{\n" +
-	"  \"next_step_type\": \"process|approve|action|notify|form|complete|escalate\",\n" +
+	"  \"next_step_type\": \"process|action|notify|form|complete|escalate\",\n" +
 	"  \"execution_mode\": \"single|parallel\",\n" +
 	"  \"activities\": [\n" +
 	"    {\n" +
-	"      \"type\": \"process|approve|action|notify|form\",\n" +
+	"      \"type\": \"process|action|notify|form\",\n" +
 	"      \"participant_type\": \"user|position_department\",\n" +
 	"      \"participant_id\": 42,\n" +
 	"      \"position_code\": \"db_admin\",\n" +
@@ -1117,12 +1328,13 @@ const agenticOutputFormat = "## 输出要求\n\n" +
 	"```\n\n" +
 	"字段说明：\n" +
 	"- next_step_type: 下一步类型。\"complete\" 表示流程可以结束。\n" +
-	"- execution_mode: 执行模式。\"single\"（默认）为串行，\"parallel\" 为并签模式——activities 中的多个活动将并行等待处理，全部完成后才推进到下一步。当协作规范要求多角色并行审批时使用 \"parallel\"。\n" +
+	"- execution_mode: 执行模式。\"single\"（默认）为串行，\"parallel\" 表示 activities 中的多个活动将并行等待处理，全部完成后才推进到下一步。\n" +
 	"- activities: 需要创建的活动列表。\n" +
+	"- complete 决策的 activities 必须为空数组。\n" +
 	"- participant_type: \"user\" 需填 participant_id；\"position_department\" 需填 position_code + department_code。\n" +
 	"- position_code / department_code: 当 participant_type 为 position_department 时，填写岗位编码和部门编码。\n" +
 	"- action_id: 当 type 为 \"action\" 时，填写 decision.list_actions 返回的 action id。\n" +
-	"- reasoning: 你的推理过程（会展示给管理员审核）。\n" +
+	"- reasoning: 你的推理过程（会展示给管理员查看）。\n" +
 	"- confidence: 决策信心（0.0-1.0）。越高表示越确信。"
 
 // extractWorkflowHints extracts a structured step summary from WorkflowJSON
@@ -1144,7 +1356,6 @@ func extractWorkflowHints(workflowJSON string) string {
 					PositionCode   string `json:"position_code"`
 					DepartmentCode string `json:"department_code"`
 				} `json:"participants"`
-				ApproveMode      string `json:"approve_mode"`
 				GatewayDirection string `json:"gateway_direction"`
 				ActionID         *uint  `json:"action_id"`
 			} `json:"data"`
@@ -1268,16 +1479,6 @@ func extractWorkflowHints(workflowJSON string) string {
 			} else {
 				desc = fmt.Sprintf("%d. **汇聚等待** [%s]（等待所有并行分支完成）", step, label)
 			}
-			for _, ei := range outEdges[nodeID] {
-				queue = append(queue, wf.Edges[ei].Target)
-			}
-		case "approve":
-			participant := describeParticipants(node.Data.Participants)
-			mode := ""
-			if node.Data.ApproveMode == "parallel" {
-				mode = "（并签）"
-			}
-			desc = fmt.Sprintf("%d. **审批** [%s] — %s%s", step, label, participant, mode)
 			for _, ei := range outEdges[nodeID] {
 				queue = append(queue, wf.Edges[ei].Target)
 			}

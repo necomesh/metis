@@ -8,11 +8,34 @@ registerTranslations("itsm", { "zh-CN": zhCN, en })
 registerApp({
   name: "itsm",
   menuGroups: [
-    { label: "service", items: ["itsm:service:list"] },
-    { label: "ticket", items: ["itsm:ticket:list", "itsm:ticket:mine", "itsm:ticket:todo", "itsm:ticket:history", "itsm:ticket:approvals"] },
-    { label: "config", items: ["itsm:priority:list", "itsm:sla:list", "itsm:engine:config"] },
+    {
+      label: "workspace",
+      items: [
+        "itsm:service-desk:use",
+        "itsm:ticket:mine",
+        "itsm:ticket:approval:pending",
+        "itsm:ticket:approval:history",
+      ],
+    },
+    {
+      label: "serviceManagement",
+      items: [
+        "itsm:ticket:list",
+        "itsm:service:list",
+      ],
+    },
+    { label: "systemConfig", items: ["itsm:sla:list", "itsm:priority:list", "itsm:engine:config"] },
   ],
   routes: [
+    {
+      path: "itsm/service-desk",
+      children: [
+        {
+          index: true,
+          lazy: () => import("./pages/service-desk/index"),
+        },
+      ],
+    },
     {
       path: "itsm/catalogs",
       lazy: async () => {
@@ -51,10 +74,6 @@ registerApp({
       ],
     },
     {
-      path: "itsm/tickets/create",
-      lazy: () => import("./pages/tickets/create/index"),
-    },
-    {
       path: "itsm/tickets/mine",
       children: [
         {
@@ -64,29 +83,20 @@ registerApp({
       ],
     },
     {
-      path: "itsm/tickets/todo",
+      path: "itsm/tickets/approvals/pending",
       children: [
         {
           index: true,
-          lazy: () => import("./pages/tickets/todo/index"),
+          lazy: () => import("./pages/tickets/approvals/pending"),
         },
       ],
     },
     {
-      path: "itsm/tickets/history",
+      path: "itsm/tickets/approvals/history",
       children: [
         {
           index: true,
-          lazy: () => import("./pages/tickets/history/index"),
-        },
-      ],
-    },
-    {
-      path: "itsm/tickets/approvals",
-      children: [
-        {
-          index: true,
-          lazy: () => import("./pages/tickets/approvals/index"),
+          lazy: () => import("./pages/tickets/approvals/history"),
         },
       ],
     },

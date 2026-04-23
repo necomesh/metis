@@ -4,12 +4,12 @@ import "encoding/json"
 
 // Event types emitted by executors
 const (
-	EventTypeLLMStart     = "llm_start"
-	EventTypeContentDelta = "content_delta"
-	EventTypeToolCall     = "tool_call"
-	EventTypeToolResult   = "tool_result"
-	EventTypePlan         = "plan"
-	EventTypeStepStart    = "step_start"
+	EventTypeLLMStart      = "llm_start"
+	EventTypeContentDelta  = "content_delta"
+	EventTypeToolCall      = "tool_call"
+	EventTypeToolResult    = "tool_result"
+	EventTypePlan          = "plan"
+	EventTypeStepStart     = "step_start"
 	EventTypeThinkingDelta = "thinking_delta"
 	EventTypeThinkingDone  = "thinking_done"
 	EventTypeStepDone      = "step_done"
@@ -17,6 +17,7 @@ const (
 	EventTypeCancelled     = "cancelled"
 	EventTypeError         = "error"
 	EventTypeMemoryUpdate  = "memory_update"
+	EventTypeUISurface     = "ui_surface"
 )
 
 // Event is the unified event emitted by all executors.
@@ -37,8 +38,9 @@ type Event struct {
 	ToolArgs   json.RawMessage `json:"args,omitempty"`
 
 	// tool_result
-	ToolOutput   string `json:"output,omitempty"`
-	DurationMs   int    `json:"duration_ms,omitempty"`
+	ToolOutput  string `json:"output,omitempty"`
+	DurationMs  int    `json:"duration_ms,omitempty"`
+	ToolIsError bool   `json:"is_error,omitempty"`
 
 	// plan
 	Steps []PlanStep `json:"steps,omitempty"`
@@ -58,6 +60,11 @@ type Event struct {
 	// memory_update
 	MemoryKey     string `json:"memory_key,omitempty"`
 	MemoryContent string `json:"memory_content,omitempty"`
+
+	// ui_surface
+	SurfaceID   string          `json:"surface_id,omitempty"`
+	SurfaceType string          `json:"surface_type,omitempty"`
+	SurfaceData json.RawMessage `json:"surface_data,omitempty"`
 }
 
 // PlanStep represents a step in a Plan & Execute plan.

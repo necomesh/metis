@@ -104,6 +104,28 @@ func (r *DepartmentRepo) GetAllowedPositions(deptID uint) ([]Position, error) {
 	return positions, err
 }
 
+func (r *DepartmentRepo) CountMembersByPositions(deptID uint, positionIDs []uint) (map[uint]int, error) {
+	counts := make(map[uint]int, len(positionIDs))
+	if len(positionIDs) == 0 {
+		return counts, nil
+	}
+	var rows []struct {
+		PositionID uint
+		Count      int
+	}
+	if err := r.db.Model(&UserPosition{}).
+		Select("position_id, COUNT(DISTINCT user_id) AS count").
+		Where("department_id = ? AND position_id IN ?", deptID, positionIDs).
+		Group("position_id").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		counts[row.PositionID] = row.Count
+	}
+	return counts, nil
+}
+
 // SetAllowedPositions replaces all allowed positions for a department in a transaction.
 func (r *DepartmentRepo) SetAllowedPositions(deptID uint, positionIDs []uint) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {

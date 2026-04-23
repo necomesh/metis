@@ -25,7 +25,22 @@ func (r *AgentToolRepo) Unbind(agentID, toolID uint) error {
 
 func (r *AgentToolRepo) ListByAgent(agentID uint) ([]Tool, error) {
 	var tools []Tool
-	err := r.db.
+	hasSetBindings, err := agentHasCapabilitySetBindings(r.db.DB, agentID)
+	if err != nil {
+		return nil, err
+	}
+	if hasSetBindings {
+		ids, err := selectedCapabilityItemIDsByType(r.db.DB, agentID, CapabilityTypeTool)
+		if err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return tools, nil
+		}
+		err = r.db.Where("id IN ? AND is_active = ?", ids, true).Find(&tools).Error
+		return tools, err
+	}
+	err = r.db.
 		Joins("JOIN ai_agent_tools ON ai_agent_tools.tool_id = ai_tools.id").
 		Where("ai_agent_tools.agent_id = ? AND ai_tools.is_active = ?", agentID, true).
 		Find(&tools).Error
@@ -63,7 +78,22 @@ func (r *AgentMCPServerRepo) Unbind(agentID, mcpServerID uint) error {
 
 func (r *AgentMCPServerRepo) ListByAgent(agentID uint) ([]MCPServer, error) {
 	var servers []MCPServer
-	err := r.db.
+	hasSetBindings, err := agentHasCapabilitySetBindings(r.db.DB, agentID)
+	if err != nil {
+		return nil, err
+	}
+	if hasSetBindings {
+		ids, err := selectedCapabilityItemIDsByType(r.db.DB, agentID, CapabilityTypeMCP)
+		if err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return servers, nil
+		}
+		err = r.db.Where("id IN ? AND is_active = ?", ids, true).Find(&servers).Error
+		return servers, err
+	}
+	err = r.db.
 		Joins("JOIN ai_agent_mcp_servers ON ai_agent_mcp_servers.mcp_server_id = ai_mcp_servers.id").
 		Where("ai_agent_mcp_servers.agent_id = ? AND ai_mcp_servers.is_active = ?", agentID, true).
 		Find(&servers).Error
@@ -101,7 +131,22 @@ func (r *AgentSkillRepo) Unbind(agentID, skillID uint) error {
 
 func (r *AgentSkillRepo) ListByAgent(agentID uint) ([]Skill, error) {
 	var skills []Skill
-	err := r.db.
+	hasSetBindings, err := agentHasCapabilitySetBindings(r.db.DB, agentID)
+	if err != nil {
+		return nil, err
+	}
+	if hasSetBindings {
+		ids, err := selectedCapabilityItemIDsByType(r.db.DB, agentID, CapabilityTypeSkill)
+		if err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return skills, nil
+		}
+		err = r.db.Where("id IN ? AND is_active = ?", ids, true).Find(&skills).Error
+		return skills, err
+	}
+	err = r.db.
 		Joins("JOIN ai_agent_skills ON ai_agent_skills.skill_id = ai_skills.id").
 		Where("ai_agent_skills.agent_id = ? AND ai_skills.is_active = ?", agentID, true).
 		Find(&skills).Error

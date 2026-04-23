@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useParams, useNavigate } from "react-router"
 import { useTranslation } from "react-i18next"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { Square, Trash2, Brain, PanelLeft, PanelLeftClose, Paperclip, AlertTriangle, RotateCcw, X } from "lucide-react"
+import { ArrowDown, Loader2, Square, Trash2, Brain, PanelLeft, PanelLeftClose, Paperclip, AlertTriangle, RotateCw, X } from "lucide-react"
 import { isDataUIPart, isReasoningUIPart, type UIMessage } from "ai"
 import { sessionApi } from "@/lib/api"
 import { toast } from "sonner"
@@ -88,7 +88,7 @@ function getStreamingExtras(
       (p): p is { type: "text"; text: string } => p.type === "text",
     ) || []
   const hasText = textParts.some((p) => p.text)
-  const hasTools = mainAiMessage?.parts?.some((p) => p.type === "dynamic-tool")
+  const hasTools = mainAiMessage?.parts?.some((p) => p.type === "dynamic-tool" || p.type.startsWith("tool-"))
   const hasContent = hasText || thinkingText || planSteps.length > 0 || hasTools
 
   const extras: React.ReactNode[] = []
@@ -133,6 +133,7 @@ export function Component() {
     return saved ? saved === "true" : false
   })
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
+  const [isAtBottom, setIsAtBottom] = useState(true)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -143,14 +144,18 @@ export function Component() {
     enabled: !!sessionId,
   })
 
+  const handleChatFinish = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["ai-session", sessionId] })
+  }, [queryClient, sessionId])
+
+  const handleChatError = useCallback((err: Error) => {
+    toast.error(err.message)
+    queryClient.invalidateQueries({ queryKey: ["ai-session", sessionId] })
+  }, [queryClient, sessionId])
+
   const chat = useAiChat(sessionId, sessionData?.messages, {
-    onFinish: () => {
-      queryClient.invalidateQueries({ queryKey: ["ai-session", sessionId] })
-    },
-    onError: (err) => {
-      toast.error(err.message)
-      queryClient.invalidateQueries({ queryKey: ["ai-session", sessionId] })
-    },
+    onFinish: handleChatFinish,
+    onError: handleChatError,
   })
 
   const qaPairs = useMemo(() => {
@@ -159,6 +164,12 @@ export function Component() {
 
   const scrollToBottom = useCallback((instant?: boolean) => {
     messagesEndRef.current?.scrollIntoView({ behavior: instant ? "instant" : "smooth" })
+  }, [])
+
+  const updateAtBottom = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    setIsAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 120)
   }, [])
 
   const uploadImageMutation = useMutation({
@@ -182,19 +193,32 @@ export function Component() {
       chat.sendMessage({ text })
       setInput("")
       setPendingImages([])
+      setIsAtBottom(true)
       scrollToBottom()
+      requestAnimationFrame(() => textareaRef.current?.focus())
     },
     onError: (err) => toast.error(err.message),
   })
 
   const cancelMutation = useMutation({
     mutationFn: async () => {
-      chat.stop()
+      await chat.stop()
       return sessionApi.cancel(sessionId)
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["ai-session", sessionId] })
+      requestAnimationFrame(() => textareaRef.current?.focus())
     },
+    onError: (err) => toast.error(err.message),
+  })
+
+  const continueMutation = useMutation({
+    mutationFn: async () => {
+      await sessionApi.continueGeneration(sessionId)
+      chat.clearError()
+      await chat.resumeStream()
+    },
+    onError: (err) => toast.error(err.message),
   })
 
   const deleteMutation = useMutation({
@@ -254,13 +278,20 @@ export function Component() {
     textarea.style.height = `${newHeight}px`
   }, [input])
 
-  // Scroll to bottom on messages change (smooth for new messages, instant while streaming)
+  // Follow new output only while the reader is already near the bottom.
   useEffect(() => {
+    if (!isAtBottom && chat.status !== "submitted") return
     const instant = chat.status === "streaming" || chat.status === "submitted"
     scrollToBottom(instant)
-  }, [chat.messages, chat.status, scrollToBottom])
+  }, [chat.messages, chat.status, isAtBottom, scrollToBottom])
 
   const isBusy = chat.status === "streaming" || chat.status === "submitted"
+
+  useEffect(() => {
+    if (isBusy || sendMutation.isPending) return
+    const timer = window.setTimeout(() => textareaRef.current?.focus(), 0)
+    return () => window.clearTimeout(timer)
+  }, [isBusy, sendMutation.isPending])
 
   function handleSend(content?: string) {
     const text = (content ?? input).trim()
@@ -269,6 +300,7 @@ export function Component() {
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.nativeEvent.isComposing) return
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
       handleSend()
@@ -311,6 +343,7 @@ export function Component() {
   }
 
   function handleRetry() {
+    chat.clearError()
     chat.regenerate()
   }
 
@@ -332,6 +365,7 @@ export function Component() {
   const hasMessages = chat.messages.length > 0
   const showWelcome = !hasMessages && !isBusy
   const lastPairIndex = qaPairs.length - 1
+  const showJumpToBottom = !showWelcome && !isAtBottom
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -382,7 +416,11 @@ export function Component() {
         </div>
 
         {/* Messages area */}
-        <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
+        <div
+          ref={scrollRef}
+          className="relative flex-1 overflow-y-auto overflow-x-hidden min-h-0"
+          onScroll={updateAtBottom}
+        >
           {showWelcome ? (
             <WelcomeScreen
               agentName={agentName ?? session?.title}
@@ -428,8 +466,21 @@ export function Component() {
                       <div className="text-sm font-medium text-destructive">{t("ai:chat.generationError")}</div>
                       <div className="text-xs text-muted-foreground mt-0.5">{chat.error.message}</div>
                     </div>
-                    <Button variant="outline" size="sm" onClick={handleRetry}>
-                      <RotateCcw className="h-3.5 w-3.5 mr-1" />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => continueMutation.mutate()}
+                      disabled={continueMutation.isPending}
+                    >
+                      {continueMutation.isPending ? (
+                        <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                      ) : (
+                        <RotateCw className="h-3.5 w-3.5 mr-1" />
+                      )}
+                      {t("ai:chat.continueGenerating")}
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={handleRetry}>
+                      <RotateCw className="h-3.5 w-3.5 mr-1" />
                       {t("ai:chat.retry")}
                     </Button>
                   </div>
@@ -438,6 +489,21 @@ export function Component() {
 
               <div ref={messagesEndRef} />
             </div>
+          )}
+          {showJumpToBottom && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="sticky bottom-3 left-1/2 z-10 h-8 -translate-x-1/2 rounded-full bg-background/95 px-3 shadow-sm"
+              onClick={() => {
+                setIsAtBottom(true)
+                scrollToBottom()
+              }}
+            >
+              <ArrowDown className="mr-1.5 h-3.5 w-3.5" />
+              {t("ai:chat.jumpToBottom")}
+            </Button>
           )}
         </div>
 
@@ -449,8 +515,13 @@ export function Component() {
               size="sm"
               className="rounded-full px-4"
               onClick={() => cancelMutation.mutate()}
+              disabled={cancelMutation.isPending}
             >
-              <Square className="h-3.5 w-3.5 mr-1.5" />
+              {cancelMutation.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+              ) : (
+                <Square className="h-3.5 w-3.5 mr-1.5" />
+              )}
               {t("ai:chat.cancel")}
             </Button>
           </div>
@@ -468,8 +539,8 @@ export function Component() {
                 onPaste={handlePaste}
                 placeholder={t("ai:chat.inputPlaceholder")}
                 rows={1}
-                className="w-full min-h-[44px] max-h-[200px] resize-none bg-transparent px-4 pt-3 pb-1 text-base leading-relaxed placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={isBusy}
+                className="w-full min-h-[44px] max-h-[200px] resize-none bg-transparent px-4 pt-3 pb-1 text-base leading-relaxed placeholder:text-muted-foreground focus:outline-none read-only:cursor-text"
+                readOnly={isBusy || sendMutation.isPending}
               />
               {/* Pending images preview */}
               {pendingImages.length > 0 && (

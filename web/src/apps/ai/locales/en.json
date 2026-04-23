@@ -150,7 +150,18 @@
       "enableSuccess": "Tool enabled",
       "disableSuccess": "Tool disabled",
       "toolsEnabled": "enabled",
-      "drawerHint": "When enabled, Agents bound to this toolkit can use the corresponding capabilities."
+      "toolsAvailable": "executable",
+      "drawerHint": "Only executable tools enter an Agent's model tool list; unimplemented and risk-gated capabilities are shown as roadmap items.",
+      "parameters": "Parameter schema",
+      "boundAgentCount": "Affects {{count}} Agents",
+      "disableConfirmTitle": "Disable built-in tool?",
+      "disableConfirmDesc": "\"{{name}}\" is currently bound to {{count}} Agents. After disabling it, those Agents will no longer receive this tool at runtime.",
+      "availability": {
+        "available": "Available",
+        "inactive": "Disabled",
+        "unimplemented": "Unimplemented",
+        "risk_disabled": "Risk gated"
+      }
     },
     "toolkits": {
       "knowledge": {
@@ -185,7 +196,7 @@
     "toolDefs": {
       "search_knowledge": {
         "name": "Search Knowledge",
-        "description": "Search for relevant documents in a knowledge base by keyword."
+        "description": "Search relevant content from the current Agent's bound knowledge bases and knowledge graphs."
       },
       "read_document": {
         "name": "Read Document",
@@ -193,11 +204,11 @@
       },
       "http_request": {
         "name": "HTTP Request",
-        "description": "Make an HTTP request to an external URL and get the response."
+        "description": "Planned external HTTP request capability; requires allowlists, timeouts, audit, and data-leak prevention before enablement."
       },
       "execute_script": {
         "name": "Execute Script",
-        "description": "Run a Python or Bash script in a sandbox and return the output."
+        "description": "Planned code execution capability; requires sandboxing, resource limits, language allowlists, and result redaction before enablement."
       },
       "general.current_time": {
         "name": "Get Current Time",
@@ -205,7 +216,7 @@
       },
       "system.current_user_profile": {
         "name": "Get Current User Profile",
-        "description": "Read the current user's basic profile and organizational affiliations (department, position, role)."
+        "description": "Read the current user's minimal organizational context without contact or permission details."
       },
       "itsm.service_match": {
         "name": "Service Match",
@@ -443,7 +454,7 @@
     "knowledgeGraphsDescription": "Bind structured knowledge graphs to support relationship reasoning and graph retrieval.",
     "tools": "Tools",
     "toolsDescription": "Bind automation tools so the agent can execute actions and call external capabilities.",
-    "toolsSheetDescription": "Browse concrete tools by toolkit and select the ones this agent can use.",
+    "toolsSheetDescription": "Selecting a toolset enables its available tools by default. Open a selected toolset to adjust individual tools.",
     "mcpServers": "MCP Servers",
     "mcpServersDescription": "Connect MCP servers to expose remote capabilities and resources to the agent.",
     "skills": "Skills",
@@ -454,8 +465,35 @@
     "selectMcpServers": "Select MCP servers",
     "selectSkills": "Select skills",
     "selectedCount": "{{count}} selected",
+    "selectedToolSetCount": "{{count}} toolsets selected",
+    "selectedGroupCount": "{{count}} {{name}} selected",
     "itemCount": "{{count}} items",
     "selected": "Selected",
+    "capabilityGroupNames": {
+      "toolSet": "toolsets",
+      "mcp": "MCP services",
+      "skill": "skill packages",
+      "knowledgeBase": "knowledge bases",
+      "knowledgeGraph": "knowledge graphs"
+    },
+    "manageCapabilityGroups": {
+      "toolSet": "Manage toolsets",
+      "mcp": "Manage MCP services",
+      "skill": "Manage skill packages",
+      "knowledgeBase": "Manage knowledge bases",
+      "knowledgeGraph": "Manage knowledge graphs"
+    },
+    "addToolSet": "Manage toolsets",
+    "selectToolSet": "Manage toolsets",
+    "backToToolSets": "Back to toolsets",
+    "noToolSetsSelected": "No toolsets selected",
+    "addToolSetHint": "Open toolset management and select a set to enable its available tools by default.",
+    "noGroupsSelected": "No {{name}} selected",
+    "manageGroupHint": "Open {{name}} management and select a set to enable its available items by default.",
+    "availableToolCount": "{{count}} available",
+    "unavailableToolCount": "{{count}} unavailable",
+    "availableItemCount": "{{count}} available",
+    "unavailableItemCount": "{{count}} unavailable",
     "clickToSelect": "Click the card to choose capabilities",
     "manageInSheet": "Open the sheet to manage the selected bindings.",
     "manageSelection": "Manage",
@@ -464,6 +502,8 @@
     "noMatchingItems": "No matching capabilities",
     "noItemsHint": "Try another search term or create the related resource first.",
     "noItemDescription": "No description provided",
+    "noCapabilitySets": "No capability sets bound",
+    "unavailable": "Unavailable",
     "templates": "Templates",
     "fromTemplate": "From Template",
     "fromScratch": "From Scratch",
@@ -524,6 +564,9 @@
     "noSessions": "No conversations yet",
     "send": "Send",
     "cancel": "Cancel",
+    "creatingSession": "Creating conversation",
+    "emptyShellTitle": "Ready for a new conversation",
+    "emptyShellHint": "The chat shell is ready. You will enter the session as soon as it is created.",
     "inputPlaceholder": "Type a message... (Shift+Enter for newline, Enter to send)",
     "inputHint": "Shift + Enter for newline · Enter to send",
     "copy": "Copy",
@@ -533,6 +576,12 @@
     "streaming": "Generating...",
     "toolCall": "Calling tool: {{name}}",
     "toolResult": "Tool result",
+    "toolStatus": {
+      "preparing": "Preparing",
+      "running": "Using",
+      "completed": "Used",
+      "error": "Failed"
+    },
     "plan": "Plan",
     "step": "Step {{index}}",
     "sessionDeleted": "Conversation deleted",
@@ -590,6 +639,7 @@
     "cancelEdit": "Cancel",
     "stopped": "Generation stopped",
     "continueGenerating": "Continue Generating",
+    "jumpToBottom": "Jump to bottom",
     "retry": "Retry",
     "generationError": "Generation failed",
     "tokenSpeed": "{{speed}} tok/s",

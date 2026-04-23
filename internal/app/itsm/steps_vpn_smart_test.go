@@ -17,13 +17,14 @@ import (
 // registerSmartSteps registers all smart engine step definitions.
 func registerSmartSteps(sc *godog.ScenarioContext, bc *bddContext) {
 	sc.Given(`^已基于协作规范发布 VPN 开通服务（智能引擎）$`, bc.givenSmartServicePublished)
+	sc.Given(`^已基于协作规范发布 VPN 服务（智能引擎）$`, bc.givenSmartServicePublished)
 	sc.Given(`^"([^"]*)" 已创建 VPN 工单，访问原因为 "([^"]*)"$`, bc.givenSmartTicketCreated)
 	sc.Given(`^智能引擎置信度阈值设为 ([0-9.]+)$`, bc.givenConfidenceThreshold)
 	sc.Given(`^"([^"]*)" 已创建 VPN 工单（使用缺失参与者的工作流）$`, bc.givenSmartTicketMissingParticipant)
 
 	sc.When(`^智能引擎执行决策循环$`, bc.whenSmartEngineDecisionCycle)
-	sc.When(`^管理员确认该待确认决策$`, bc.whenAdminConfirmsPendingDecision)
-	sc.When(`^当前活动的被分配人认领并审批通过$`, bc.whenAssigneeClaimsAndApproves)
+	sc.When(`^管理员接管该人工处置决策$`, bc.whenAdminConfirmsPendingDecision)
+	sc.When(`^当前活动的被分配人认领并处理完成$`, bc.whenAssigneeClaimsAndProcesss)
 	sc.When(`^智能引擎再次执行决策循环$`, bc.whenSmartEngineDecisionCycleAgain)
 
 	sc.Then(`^存在至少一个活动$`, bc.thenAtLeastOneActivity)
@@ -126,18 +127,26 @@ func (bc *bddContext) whenSmartEngineDecisionCycle() error {
 		return fmt.Errorf("no ticket in context")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
+	const maxRetries = 3
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		err := bc.smartEngine.Start(ctx, bc.db, engine.StartParams{
+			TicketID:     bc.ticket.ID,
+			WorkflowJSON: json.RawMessage(bc.service.WorkflowJSON),
+			RequesterID:  bc.ticket.RequesterID,
+		})
+		cancel()
 
-	err := bc.smartEngine.Start(ctx, bc.db, engine.StartParams{
-		TicketID:     bc.ticket.ID,
-		WorkflowJSON: json.RawMessage(bc.service.WorkflowJSON),
-		RequesterID:  bc.ticket.RequesterID,
-	})
-	if err != nil {
+		if err == nil {
+			break
+		}
 		bc.lastErr = err
-		// Log but don't fail — some scenarios test that status != "failed"
-		log.Printf("smart engine start: %v", err)
+		log.Printf("smart engine start attempt %d/%d: %v", attempt, maxRetries, err)
+		if (err == engine.ErrAIDecisionFailed || err == engine.ErrAIDisabled) && attempt < maxRetries {
+			bc.db.Model(&Ticket{}).Where("id = ?", bc.ticket.ID).Update("ai_failure_count", 0)
+			continue
+		}
+		break
 	}
 
 	// Refresh ticket.
@@ -151,8 +160,8 @@ func (bc *bddContext) whenAdminConfirmsPendingDecision() error {
 		return err
 	}
 
-	if activity.Status != "pending_approval" {
-		return fmt.Errorf("expected activity status 'pending_approval', got %q", activity.Status)
+	if activity.Status != "pending" {
+		return fmt.Errorf("expected activity status 'pending', got %q", activity.Status)
 	}
 
 	// Parse the AI decision to get the plan.
@@ -161,36 +170,18 @@ func (bc *bddContext) whenAdminConfirmsPendingDecision() error {
 		return fmt.Errorf("parse AI decision: %w", err)
 	}
 
-	if err := bc.smartEngine.ExecuteConfirmedPlan(bc.db, bc.ticket.ID, &plan); err != nil {
-		return fmt.Errorf("execute confirmed plan: %w", err)
+	if err := bc.smartEngine.ExecuteDecisionPlan(bc.db, bc.ticket.ID, &plan); err != nil {
+		return fmt.Errorf("execute decision plan: %w", err)
 	}
 
 	// Refresh ticket.
 	return bc.db.First(bc.ticket, bc.ticket.ID).Error
 }
 
-func (bc *bddContext) whenAssigneeClaimsAndApproves() error {
+func (bc *bddContext) whenAssigneeClaimsAndProcesss() error {
 	activity, err := bc.getCurrentActivity()
 	if err != nil {
 		return err
-	}
-
-	// If the LLM produced a low-confidence decision, auto-confirm it first
-	// so the activity transitions to pending/in_progress.
-	if activity.Status == "pending_approval" {
-		log.Printf("[claim] activity %d is pending_approval, auto-confirming", activity.ID)
-		var plan engine.DecisionPlan
-		if err := json.Unmarshal([]byte(activity.AIDecision), &plan); err != nil {
-			return fmt.Errorf("parse AI decision for auto-confirm: %w", err)
-		}
-		if err := bc.smartEngine.ExecuteConfirmedPlan(bc.db, bc.ticket.ID, &plan); err != nil {
-			return fmt.Errorf("auto-confirm plan: %w", err)
-		}
-		// Re-fetch the current activity (may be a new one after confirmation).
-		activity, err = bc.getCurrentActivity()
-		if err != nil {
-			return err
-		}
 	}
 
 	// Find the assignment for this activity.
@@ -244,7 +235,7 @@ func (bc *bddContext) whenAssigneeClaimsAndApproves() error {
 	err = bc.smartEngine.Progress(ctx, bc.db, engine.ProgressParams{
 		TicketID:   bc.ticket.ID,
 		ActivityID: activity.ID,
-		Outcome:    "approved",
+		Outcome:    "completed",
 		OperatorID: operatorID,
 	})
 	if err != nil {

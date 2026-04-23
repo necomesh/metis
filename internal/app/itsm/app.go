@@ -29,11 +29,59 @@ type ITSMApp struct {
 	injector do.Injector
 }
 
+type lazyAIAgentProvider struct {
+	injector do.Injector
+}
+
+func (p *lazyAIAgentProvider) GetAgentConfig(agentID uint) (*app.AIAgentConfig, error) {
+	provider, err := do.InvokeAs[app.AIAgentProvider](p.injector)
+	if err != nil {
+		return nil, err
+	}
+	return provider.GetAgentConfig(agentID)
+}
+
 func (a *ITSMApp) Name() string { return "itsm" }
 
 // GetToolRegistry implements app.ToolRegistryProvider.
 func (a *ITSMApp) GetToolRegistry() any {
 	return do.MustInvoke[*tools.Registry](a.injector)
+}
+
+// BuildAgentRuntimeContext implements app.AgentRuntimeContextProvider for ITSM
+// service desk sessions.
+func (a *ITSMApp) BuildAgentRuntimeContext(ctx context.Context, agentCode string, sessionID, userID uint) (string, error) {
+	if agentCode != "itsm.servicedesk" || sessionID == 0 {
+		return "", nil
+	}
+	store := do.MustInvoke[*tools.SessionStateStore](a.injector)
+	state, err := store.GetState(sessionID)
+	if err != nil {
+		return "", err
+	}
+	if state == nil || state.Stage == "idle" {
+		return "", nil
+	}
+	payload := map[string]any{
+		"stage":                   state.Stage,
+		"candidate_service_ids":   state.CandidateServiceIDs,
+		"top_match_service_id":    state.TopMatchServiceID,
+		"confirmed_service_id":    state.ConfirmedServiceID,
+		"confirmation_required":   state.ConfirmationRequired,
+		"loaded_service_id":       state.LoadedServiceID,
+		"request_text":            state.RequestText,
+		"prefill_form_data":       state.PrefillFormData,
+		"draft_summary":           state.DraftSummary,
+		"draft_form_data":         state.DraftFormData,
+		"draft_version":           state.DraftVersion,
+		"confirmed_draft_version": state.ConfirmedDraftVersion,
+		"next_expected_action":    tools.NextExpectedAction(state),
+	}
+	b, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return "## ITSM Service Desk Runtime Context\nUse this session state as current facts. Continue from next_expected_action unless the user explicitly starts a new request.\n```json\n" + string(b) + "\n```", nil
 }
 
 func (a *ITSMApp) Models() []any {
@@ -168,6 +216,7 @@ func (a *ITSMApp) Providers(i do.Injector) {
 	do.Provide(i, NewWorkflowGenerateHandler)
 	do.Provide(i, NewVariableHandler)
 	do.Provide(i, NewTokenHandler)
+	do.Provide(i, NewServiceDeskHandler)
 
 	// ITSM tool chain (Operator, StateStore, Registry)
 	// NOTE: TicketService is resolved lazily inside withdrawFunc to break a circular
@@ -185,7 +234,9 @@ func (a *ITSMApp) Providers(i do.Injector) {
 		// TicketCreator is resolved lazily (same pattern as withdrawFunc) to break circular dep.
 		var ticketCreator tools.TicketCreator
 		ticketCreator = &lazyTicketCreator{injector: i}
-		return tools.NewOperator(db.DB, resolver, orgResolver, withdrawFunc, ticketCreator), nil
+		configProvider := do.MustInvoke[*EngineConfigService](i)
+		matcher := NewLLMServiceMatcher(db.DB, configProvider, &lazyAIAgentProvider{injector: i}, nil)
+		return tools.NewOperator(db.DB, resolver, orgResolver, withdrawFunc, ticketCreator, matcher), nil
 	})
 	do.Provide(i, func(i do.Injector) (*tools.SessionStateStore, error) {
 		db := do.MustInvoke[*database.DB](i)
@@ -211,6 +262,7 @@ func (a *ITSMApp) Routes(api *gin.RouterGroup) {
 	workflowGenH := do.MustInvoke[*WorkflowGenerateHandler](a.injector)
 	variableH := do.MustInvoke[*VariableHandler](a.injector)
 	tokenH := do.MustInvoke[*TokenHandler](a.injector)
+	serviceDeskH := do.MustInvoke[*ServiceDeskHandler](a.injector)
 
 	g := api.Group("/itsm")
 	{
@@ -223,6 +275,7 @@ func (a *ITSMApp) Routes(api *gin.RouterGroup) {
 		// Service Definitions
 		g.POST("/services", serviceH.Create)
 		g.GET("/services", serviceH.List)
+		g.GET("/services/:id/health", serviceH.HealthCheck)
 		g.GET("/services/:id", serviceH.Get)
 		g.PUT("/services/:id", serviceH.Update)
 		g.DELETE("/services/:id", serviceH.Delete)
@@ -245,6 +298,10 @@ func (a *ITSMApp) Routes(api *gin.RouterGroup) {
 		// Workflow Generate
 		g.POST("/workflows/generate", workflowGenH.Generate)
 
+		// Service Desk
+		g.GET("/service-desk/sessions/:sid/state", serviceDeskH.State)
+		g.POST("/service-desk/sessions/:sid/draft/submit", serviceDeskH.SubmitDraft)
+
 		// Priorities
 		g.POST("/priorities", priorityH.Create)
 		g.GET("/priorities", priorityH.List)
@@ -265,15 +322,11 @@ func (a *ITSMApp) Routes(api *gin.RouterGroup) {
 
 		// Tickets — special views must come before :id routes
 		g.GET("/tickets/mine", ticketH.Mine)
-		g.GET("/tickets/todo", ticketH.Todo)
-		g.GET("/tickets/history", ticketH.History)
-		g.GET("/tickets/approvals", ticketH.Approvals)
-		g.GET("/tickets/approvals/count", ticketH.ApprovalCount)
-		g.POST("/tickets", ticketH.Create)
+		g.GET("/tickets/approvals/pending", ticketH.PendingApprovals)
+		g.GET("/tickets/approvals/history", ticketH.ApprovalHistory)
 		g.GET("/tickets", ticketH.List)
 		g.GET("/tickets/:id", ticketH.Get)
 		g.PUT("/tickets/:id/assign", ticketH.Assign)
-		g.PUT("/tickets/:id/complete", ticketH.Complete)
 		g.PUT("/tickets/:id/cancel", ticketH.Cancel)
 		g.PUT("/tickets/:id/withdraw", ticketH.Withdraw)
 		g.GET("/tickets/:id/timeline", ticketH.Timeline)
@@ -286,15 +339,9 @@ func (a *ITSMApp) Routes(api *gin.RouterGroup) {
 		g.PUT("/tickets/:id/variables/:key", variableH.Update)
 		// Execution tokens
 		g.GET("/tickets/:id/tokens", tokenH.List)
-		// Phase 3: Smart engine override routes
-		g.POST("/tickets/:id/activities/:aid/confirm", ticketH.ConfirmActivity)
-		g.POST("/tickets/:id/activities/:aid/reject", ticketH.RejectActivity)
 		g.POST("/tickets/:id/override/jump", ticketH.OverrideJump)
 		g.POST("/tickets/:id/override/reassign", ticketH.OverrideReassign)
 		g.POST("/tickets/:id/override/retry-ai", ticketH.RetryAI)
-		// Phase 4: Approval routes
-		g.POST("/tickets/:id/activities/:aid/approve", ticketH.ApproveActivity)
-		g.POST("/tickets/:id/activities/:aid/deny", ticketH.DenyActivity)
 		// SLA pause/resume
 		g.PUT("/tickets/:id/sla/pause", ticketH.SLAPause)
 		g.PUT("/tickets/:id/sla/resume", ticketH.SLAResume)
@@ -373,6 +420,16 @@ func (s *schedulerSubmitter) SubmitTask(name string, payload json.RawMessage) er
 	return s.db.Create(exec).Error
 }
 
+func (s *schedulerSubmitter) SubmitTaskTx(tx *gorm.DB, name string, payload json.RawMessage) error {
+	exec := &model.TaskExecution{
+		TaskName: name,
+		Trigger:  scheduler.TriggerAPI,
+		Status:   scheduler.ExecPending,
+		Payload:  string(payload),
+	}
+	return tx.Create(exec).Error
+}
+
 // Ensure schedulerSubmitter implements engine.TaskSubmitter at compile time
 var _ engine.TaskSubmitter = (*schedulerSubmitter)(nil)
 
@@ -403,6 +460,7 @@ var _ engine.WorkflowEngine = (*engine.SmartEngine)(nil)
 
 // Ensure ITSMApp implements app.ToolRegistryProvider at compile time
 var _ app.ToolRegistryProvider = (*ITSMApp)(nil)
+var _ app.AgentRuntimeContextProvider = (*ITSMApp)(nil)
 
 // lazyTicketCreator defers resolution of TicketService to break circular dependency.
 type lazyTicketCreator struct {

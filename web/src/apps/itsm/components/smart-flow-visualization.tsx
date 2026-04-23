@@ -18,10 +18,8 @@ const STATUS_COLORS: Record<string, string> = {
   completed: "bg-green-500",
   in_progress: "bg-blue-500",
   pending: "bg-gray-400",
-  pending_approval: "bg-yellow-500",
   cancelled: "bg-gray-300",
   failed: "bg-red-500",
-  rejected: "bg-red-500",
 }
 
 function ConfidenceBadge({ confidence }: { confidence: number | null }) {
@@ -50,15 +48,15 @@ export function SmartFlowVisualization({ activities, currentActivityId }: SmartF
   }
 
   return (
-    <Card>
+    <Card className="overflow-visible">
       <CardHeader>
         <CardTitle className="text-base">{t("smart.flowTitle")}</CardTitle>
       </CardHeader>
-      <CardContent>
-        <div className="flex items-start gap-1 overflow-x-auto pb-2">
+      <CardContent className="overflow-visible px-5 pb-5">
+        <div className="flex min-h-[122px] items-start gap-1 overflow-x-auto overflow-y-visible px-3 py-3">
           {sorted.map((activity, idx) => {
             const isCurrent = activity.id === currentActivityId
-            const isAI = activity.aiDecision != null || activity.confidence != null
+            const isAI = activity.aiDecision != null || activity.aiConfidence != null
             const isOverridden = activity.overriddenBy != null
 
             return (
@@ -75,7 +73,7 @@ export function SmartFlowVisualization({ activities, currentActivityId }: SmartF
                           ? "ring-2 ring-blue-500 ring-offset-2 animate-pulse border-blue-300"
                           : activity.status === "completed"
                             ? "border-green-200 bg-green-50/50"
-                            : activity.status === "cancelled" || activity.status === "rejected"
+                            : activity.status === "cancelled"
                               ? "border-gray-200 opacity-60"
                               : "border-border"
                       }`}
@@ -87,7 +85,7 @@ export function SmartFlowVisualization({ activities, currentActivityId }: SmartF
                       <div className="flex items-center gap-0.5">
                         {isAI && <Bot className="h-3 w-3 text-blue-500" />}
                         {isOverridden && <User className="h-3 w-3 text-orange-500" />}
-                        {isAI && <ConfidenceBadge confidence={activity.confidence} />}
+                        {isAI && <ConfidenceBadge confidence={activity.aiConfidence} />}
                       </div>
                     </button>
                   </PopoverTrigger>
@@ -103,10 +101,10 @@ export function SmartFlowVisualization({ activities, currentActivityId }: SmartF
                           <p className="text-xs whitespace-pre-wrap">{activity.aiReasoning}</p>
                         </div>
                       )}
-                      {activity.confidence != null && (
+                      {activity.aiConfidence != null && (
                         <div className="flex justify-between text-xs">
                           <span className="text-muted-foreground">{t("smart.confidence")}</span>
-                          <span>{Math.round(activity.confidence * 100)}%</span>
+                          <span>{Math.round(activity.aiConfidence * 100)}%</span>
                         </div>
                       )}
                       {activity.overriddenBy != null && (

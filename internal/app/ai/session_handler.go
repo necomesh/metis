@@ -189,6 +189,10 @@ func (h *SessionHandler) SendMessage(c *gin.Context) {
 		handler.Fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if err := h.svc.UpdateStatus(session.ID, SessionStatusRunning); err != nil {
+		handler.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	// TODO: Trigger Gateway execution asynchronously
 	// For now, just store the message and return 202
@@ -219,12 +223,13 @@ func (h *SessionHandler) Stream(c *gin.Context) {
 
 	streamReader, err := h.gateway.Run(c.Request.Context(), uint(sid), userID)
 	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, ErrSessionNotFound) {
-			status = http.StatusNotFound
+		data, _ := json.Marshal(map[string]any{"type": "error", "errorText": err.Error()})
+		c.Status(http.StatusOK)
+		_, _ = c.Writer.WriteString("data: " + string(data) + "\n\n")
+		_, _ = c.Writer.WriteString("data: [DONE]\n\n")
+		if f, ok := c.Writer.(http.Flusher); ok {
+			f.Flush()
 		}
-		data, _ := json.Marshal(map[string]any{"type": "error", "error": err.Error()})
-		c.String(status, "data: "+string(data)+"\n\n")
 		return
 	}
 	defer streamReader.Close()

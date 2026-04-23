@@ -41,7 +41,7 @@ func HandleSLACheck(db *gorm.DB) func(ctx context.Context, payload json.RawMessa
 		var tickets []ticketModel
 		err := db.Where("status IN ? AND sla_paused_at IS NULL AND sla_status = ? AND "+
 			"(sla_response_deadline IS NOT NULL OR sla_resolution_deadline IS NOT NULL)",
-			[]string{"pending", "in_progress", "waiting_approval", "waiting_action"},
+				[]string{"pending", "in_progress", "waiting_action"},
 			slaOnTrack,
 		).Find(&tickets).Error
 		if err != nil {

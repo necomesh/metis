@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"strings"
 	"sync/atomic"
+	"time"
 
+	"metis/internal/app"
 	"metis/internal/llm"
 )
 
@@ -32,6 +34,8 @@ Before executing, first create a plan. Output a JSON array of steps:
 
 Output ONLY the JSON array, no other text.`
 
+const defaultStepTurnBudget = 5
+
 func (e *PlanAndExecuteExecutor) Execute(ctx context.Context, req ExecuteRequest) (<-chan Event, error) {
 	ch := make(chan Event, 64)
 
@@ -48,6 +52,13 @@ func (e *PlanAndExecuteExecutor) Execute(ctx context.Context, req ExecuteRequest
 		}
 
 		// Phase 1: Generate plan
+		select {
+		case <-ctx.Done():
+			emit(Event{Type: EventTypeCancelled, Message: "cancelled by user"})
+			return
+		default:
+		}
+
 		planMessages := buildLLMMessages(req)
 		if len(planMessages) > 0 {
 			last := &planMessages[len(planMessages)-1]
@@ -80,6 +91,8 @@ func (e *PlanAndExecuteExecutor) Execute(ctx context.Context, req ExecuteRequest
 		// Phase 2: Execute each step
 		messages := buildLLMMessages(req)
 		tools := buildLLMTools(req.Tools)
+		originalUserMessage := latestLLMUserMessage(messages)
+		priorStepSummaries := make([]llm.Message, 0, len(steps))
 
 		for _, step := range steps {
 			select {
@@ -96,10 +109,14 @@ func (e *PlanAndExecuteExecutor) Execute(ctx context.Context, req ExecuteRequest
 				Role:    llm.RoleUser,
 				Content: fmt.Sprintf("Execute step %d: %s", step.Index, step.Description),
 			}
-			stepMessages := append(messages, stepMsg)
+			stepMessages := append(append([]llm.Message{}, messages...), priorStepSummaries...)
+			stepMessages = append(stepMessages, stepMsg)
 
 			// Run a mini ReAct loop for this step (max 5 turns per step)
-			for turn := 0; turn < 5; turn++ {
+			var stepContent strings.Builder
+			var stepToolOutputs []string
+			stepCompleted := false
+			for turn := 0; turn < defaultStepTurnBudget; turn++ {
 				streamCh, err := e.llmClient.ChatStream(ctx, llm.ChatRequest{
 					Model:       req.AgentConfig.ModelName,
 					Messages:    stepMessages,
@@ -119,6 +136,7 @@ func (e *PlanAndExecuteExecutor) Execute(ctx context.Context, req ExecuteRequest
 					switch evt.Type {
 					case "content_delta":
 						content += evt.Content
+						stepContent.WriteString(evt.Content)
 						emit(Event{Type: EventTypeContentDelta, Text: evt.Content})
 					case "tool_call":
 						if evt.ToolCall != nil {
@@ -136,6 +154,7 @@ func (e *PlanAndExecuteExecutor) Execute(ctx context.Context, req ExecuteRequest
 				}
 
 				if len(toolCalls) == 0 {
+					stepCompleted = true
 					break // Step complete
 				}
 
@@ -146,12 +165,37 @@ func (e *PlanAndExecuteExecutor) Execute(ctx context.Context, req ExecuteRequest
 				for _, tc := range toolCalls {
 					emit(Event{Type: EventTypeToolCall, ToolCallID: tc.ID, ToolName: tc.Name, ToolArgs: json.RawMessage(tc.Arguments)})
 
-					result, _ := e.toolExecutor.ExecuteTool(ctx, ToolCall{ID: tc.ID, Name: tc.Name, Args: json.RawMessage(tc.Arguments)})
-					emit(Event{Type: EventTypeToolResult, ToolCallID: tc.ID, ToolOutput: result.Output, DurationMs: result.DurationMs})
+					start := time.Now()
+					toolCtx := context.WithValue(ctx, app.UserMessageKey, originalUserMessage)
+					result, execErr := e.toolExecutor.ExecuteTool(toolCtx, ToolCall{ID: tc.ID, Name: tc.Name, Args: json.RawMessage(tc.Arguments)})
+					durationMs := result.DurationMs
+					if durationMs == 0 {
+						durationMs = int(time.Since(start).Milliseconds())
+					}
+					output := result.Output
+					isError := result.IsError
+					if execErr != nil {
+						output = fmt.Sprintf("Error: %v", execErr)
+						isError = true
+					}
+					if output == "" {
+						output = "{}"
+					}
+					emit(Event{Type: EventTypeToolResult, ToolCallID: tc.ID, ToolOutput: output, DurationMs: durationMs, ToolIsError: isError})
+					stepToolOutputs = append(stepToolOutputs, fmt.Sprintf("%s => %s", tc.Name, output))
 
-					stepMessages = append(stepMessages, llm.Message{Role: llm.RoleTool, Content: result.Output, ToolCallID: tc.ID})
+					stepMessages = append(stepMessages, llm.Message{Role: llm.RoleTool, Content: output, ToolCallID: tc.ID})
 				}
 			}
+			if !stepCompleted {
+				emit(Event{Type: EventTypeError, Message: fmt.Sprintf("step %d exceeded turn budget (%d)", step.Index, defaultStepTurnBudget)})
+				return
+			}
+			emit(Event{Type: EventTypeStepDone, StepIndex: step.Index})
+			priorStepSummaries = append(priorStepSummaries, llm.Message{
+				Role:    llm.RoleAssistant,
+				Content: buildStepSummary(step, stepContent.String(), stepToolOutputs),
+			})
 		}
 
 		emit(Event{
@@ -163,6 +207,25 @@ func (e *PlanAndExecuteExecutor) Execute(ctx context.Context, req ExecuteRequest
 	}()
 
 	return ch, nil
+}
+
+func buildStepSummary(step PlanStep, content string, toolOutputs []string) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Completed step %d: %s", step.Index, step.Description))
+	content = strings.TrimSpace(content)
+	if content != "" {
+		sb.WriteString("\nOutput:\n")
+		sb.WriteString(content)
+	}
+	if len(toolOutputs) > 0 {
+		sb.WriteString("\nTool results:\n")
+		for _, output := range toolOutputs {
+			sb.WriteString("- ")
+			sb.WriteString(output)
+			sb.WriteByte('\n')
+		}
+	}
+	return strings.TrimSpace(sb.String())
 }
 
 func parsePlanSteps(content string) []PlanStep {

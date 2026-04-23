@@ -6,7 +6,7 @@ import { useForm } from "react-hook-form"
 import { z } from "zod"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { MoreVertical, ArrowRightLeft, UserRoundCog, RotateCcw } from "lucide-react"
+import { ShieldAlert, ArrowRightLeft, UserRoundCog, RotateCcw } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -26,22 +26,25 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { cn } from "@/lib/utils"
 import { overrideJump, overrideReassign, retryAI, fetchUsers } from "../api"
 
-const STEP_TYPES = ["form", "approve", "process", "action", "notify", "wait"]
+const STEP_TYPES = ["form", "process", "action", "notify", "wait"]
 
 interface OverrideActionsProps {
   ticketId: number
   currentActivityId: number | null
   aiFailureCount?: number
+  triggerClassName?: string
 }
 
-export function OverrideActions({ ticketId, currentActivityId, aiFailureCount }: OverrideActionsProps) {
+export function OverrideActions({ ticketId, currentActivityId, aiFailureCount, triggerClassName }: OverrideActionsProps) {
   const { t } = useTranslation("itsm")
   const queryClient = useQueryClient()
   const [jumpOpen, setJumpOpen] = useState(false)
   const [reassignOpen, setReassignOpen] = useState(false)
   const [retryDialogOpen, setRetryDialogOpen] = useState(false)
+  const [retryReason, setRetryReason] = useState("")
 
   const { data: users = [] } = useQuery({
     queryKey: ["users-for-override"],
@@ -91,8 +94,8 @@ export function OverrideActions({ ticketId, currentActivityId, aiFailureCount }:
 
   // Retry AI
   const retryMut = useMutation({
-    mutationFn: () => retryAI(ticketId),
-    onSuccess: () => { invalidateAll(); toast.success(t("smart.retrySuccess")) },
+    mutationFn: () => retryAI(ticketId, retryReason.trim()),
+    onSuccess: () => { invalidateAll(); setRetryDialogOpen(false); setRetryReason(""); toast.success(t("smart.retrySuccess")) },
     onError: (err) => toast.error(err.message),
   })
 
@@ -100,9 +103,11 @@ export function OverrideActions({ ticketId, currentActivityId, aiFailureCount }:
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="outline" size="sm">
-            <MoreVertical className="mr-1 h-3.5 w-3.5" />
-            {t("smart.override")}
+          <Button variant="outline" size="sm" className={cn(triggerClassName)}>
+            <span className="grid w-[5.25rem] grid-cols-[0.875rem_minmax(0,1fr)] items-center gap-2 text-left text-[11px] leading-none">
+              <ShieldAlert className="h-3.5 w-3.5 shrink-0 justify-self-center" />
+              <span className="truncate font-medium">{t("smart.override")}</span>
+            </span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
@@ -118,7 +123,7 @@ export function OverrideActions({ ticketId, currentActivityId, aiFailureCount }:
             {t("smart.reassign")}
           </DropdownMenuItem>
           {(aiFailureCount ?? 0) > 0 && (
-            <DropdownMenuItem onClick={() => setRetryDialogOpen(true)} disabled={retryMut.isPending}>
+            <DropdownMenuItem onClick={() => { setRetryReason(""); setRetryDialogOpen(true) }} disabled={retryMut.isPending}>
               <RotateCcw className="mr-2 h-4 w-4" />
               {t("smart.retryAI")}
             </DropdownMenuItem>
@@ -226,12 +231,20 @@ export function OverrideActions({ ticketId, currentActivityId, aiFailureCount }:
           <AlertDialogHeader>
             <AlertDialogTitle>{t("smart.retryAI")}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t("smart.retryAIConfirmDesc", { defaultValue: "将重置 AI 失败计数并重新触发决策" })}
+              {t("smart.retryAIConfirmDesc", { defaultValue: "将重置 AI 失败计数并重新触发决策，请填写重试原因。" })}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <Textarea
+            value={retryReason}
+            onChange={(event) => setRetryReason(event.target.value)}
+            rows={3}
+            placeholder={t("smart.overrideReasonPlaceholder")}
+          />
           <AlertDialogFooter>
             <AlertDialogCancel>{t("common:cancel")}</AlertDialogCancel>
-            <AlertDialogAction onClick={() => retryMut.mutate()}>{t("smart.retryAI")}</AlertDialogAction>
+            <AlertDialogAction onClick={() => retryMut.mutate()} disabled={!retryReason.trim() || retryMut.isPending}>
+              {t("smart.retryAI")}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

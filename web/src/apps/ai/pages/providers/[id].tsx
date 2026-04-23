@@ -256,7 +256,7 @@ function ModelTypePanel({
               <TableHeader>
                 <TableRow>
                   <TableHead className="min-w-[148px]">{t("ai:models.displayName")}</TableHead>
-                  <TableHead className="w-[110px]">{t("ai:models.modelId")}</TableHead>
+                  <TableHead className="w-[220px] min-w-[220px]">{t("ai:models.modelId")}</TableHead>
                   <TableHead className="w-[68px]">{t("ai:models.status")}</TableHead>
                   <TableHead className="w-[44px] text-center">{t("ai:models.isDefault")}</TableHead>
                   <DataTableActionsHead className="w-[104px] text-center">{t("common:actions")}</DataTableActionsHead>
@@ -266,7 +266,11 @@ function ModelTypePanel({
                 {pageItems.map((m) => (
                   <TableRow key={m.id}>
                     <TableCell className="font-medium">{m.displayName}</TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">{m.modelId}</TableCell>
+                    <TableCell className="w-[220px] max-w-[220px] font-mono text-xs text-muted-foreground">
+                      <span className="block truncate whitespace-nowrap" title={m.modelId}>
+                        {m.modelId}
+                      </span>
+                    </TableCell>
                     <TableCell>
                       <Badge variant={STATUS_VARIANTS[m.status] ?? "secondary"}>
                         {t(`ai:statusLabels.${m.status}`, m.status)}

@@ -107,31 +107,6 @@ func (e *ClassicEngine) handleForm(tx *gorm.DB, token *executionTokenModel, oper
 	return e.assignParticipants(tx, token.TicketID, act.ID, operatorID, data.Participants)
 }
 
-func (e *ClassicEngine) handleApprove(tx *gorm.DB, token *executionTokenModel, operatorID uint, node *WFNode, data *NodeData) error {
-	now := time.Now()
-	mode := data.ApproveMode
-	if mode == "" {
-		mode = "single"
-	}
-	act := &activityModel{
-		TicketID:      token.TicketID,
-		TokenID:       &token.ID,
-		Name:          labelOrDefault(data, "审批"),
-		ActivityType:  NodeApprove,
-		Status:        ActivityPending,
-		NodeID:        node.ID,
-		ExecutionMode: mode,
-		StartedAt:     &now,
-	}
-	if err := tx.Create(act).Error; err != nil {
-		return err
-	}
-
-	tx.Model(&ticketModel{}).Where("id = ?", token.TicketID).Update("current_activity_id", act.ID)
-
-	return e.assignParticipants(tx, token.TicketID, act.ID, operatorID, data.Participants)
-}
-
 func (e *ClassicEngine) handleProcess(tx *gorm.DB, token *executionTokenModel, operatorID uint, node *WFNode, data *NodeData) error {
 	now := time.Now()
 
@@ -182,7 +157,7 @@ func (e *ClassicEngine) handleAction(tx *gorm.DB, token *executionTokenModel, op
 			"activity_id": act.ID,
 			"action_id":   data.ActionID,
 		})
-		if err := e.scheduler.SubmitTask("itsm-action-execute", payload); err != nil {
+		if err := submitTaskInTx(e.scheduler, tx, "itsm-action-execute", payload); err != nil {
 			slog.Error("failed to submit action task", "error", err, "ticketID", token.TicketID)
 			// Record timeline but don't fail the workflow
 			e.recordTimeline(tx, token.TicketID, &act.ID, 0, "warning", "动作任务提交失败: "+err.Error())
@@ -294,7 +269,7 @@ func (e *ClassicEngine) handleWait(tx *gorm.DB, token *executionTokenModel, oper
 			"activity_id":   act.ID,
 			"execute_after": executeAfter.Format(time.RFC3339),
 		})
-		if err := e.scheduler.SubmitTask("itsm-wait-timer", payload); err != nil {
+		if err := submitTaskInTx(e.scheduler, tx, "itsm-wait-timer", payload); err != nil {
 			slog.Error("failed to submit wait timer task", "error", err, "ticketID", token.TicketID)
 		}
 		e.recordTimeline(tx, token.TicketID, &act.ID, operatorID, "wait_timer_started", fmt.Sprintf("等待定时器已设置: %s", data.Duration))
@@ -556,7 +531,7 @@ func (e *ClassicEngine) attachBoundaryEvents(
 				"host_token_id":     token.ID,
 				"execute_after":     executeAfter.Format(time.RFC3339),
 			})
-			if err := e.scheduler.SubmitTask("itsm-boundary-timer", payload); err != nil {
+			if err := submitTaskInTx(e.scheduler, tx, "itsm-boundary-timer", payload); err != nil {
 				slog.Error("failed to submit boundary timer task", "error", err, "ticketID", token.TicketID)
 			}
 		}

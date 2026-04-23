@@ -360,7 +360,7 @@ export function Component() {
         <div className="space-y-5 lg:col-span-8">
           {/* Basic Info */}
           <Card>
-            <CardHeader className="pb-3">
+            <CardHeader>
               <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
                 <Package className="h-4 w-4" />
                 {t("license:licenses.basicInfo")}
@@ -437,7 +437,7 @@ export function Component() {
           {/* Validity + Issuance */}
           <div className="grid gap-4 sm:grid-cols-2">
             <Card>
-              <CardHeader className="pb-3">
+              <CardHeader>
                 <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
                   <Calendar className="h-4 w-4" />
                   {t("license:licenses.validity")}
@@ -452,7 +452,7 @@ export function Component() {
               </CardContent>
             </Card>
             <Card>
-              <CardHeader className="pb-3">
+              <CardHeader>
                 <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
                   <Clock className="h-4 w-4" />
                   {t("license:licenses.issuanceInfo")}
@@ -468,7 +468,7 @@ export function Component() {
           {/* Activation Claims */}
           {signedClaims && (
             <Card>
-              <CardHeader className="pb-3">
+              <CardHeader>
                 <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
                   <Fingerprint className="h-4 w-4" />
                   {t("license:licenses.activationClaims")}
@@ -485,7 +485,7 @@ export function Component() {
           {/* Constraint Values */}
           {modules.length > 0 && (
             <Card>
-              <CardHeader className="pb-3">
+              <CardHeader>
                 <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
                   <Layers className="h-4 w-4" />
                   {t("license:licenses.constraintValues")}
@@ -530,7 +530,7 @@ export function Component() {
         {/* Right: Developer Delivery */}
         <aside className="space-y-4 lg:col-span-4 lg:sticky lg:top-6">
           <Card className="border-primary/10 bg-gradient-to-b from-primary/5 to-card shadow-sm">
-            <CardHeader className="pb-3">
+            <CardHeader>
               <CardTitle className="text-sm font-medium flex items-center gap-2">
                 <Terminal className="h-4 w-4" />
                 {t("license:licenses.developerDelivery")}

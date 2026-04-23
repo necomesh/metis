@@ -13,6 +13,10 @@ type StreamEncoder interface {
 	Close() error
 }
 
+type heartbeatStreamEncoder interface {
+	Heartbeat() error
+}
+
 // StreamEncoderFactory creates a new encoder bound to the provided writer.
 type StreamEncoderFactory func(w io.Writer) StreamEncoder
 
@@ -121,6 +125,23 @@ func (enc *UIMessageStreamEncoder) Encode(evt Event) error {
 				"index":      evt.StepIndex,
 				"state":      "done",
 				"durationMs": evt.DurationMs,
+			},
+		})
+
+	case EventTypeUISurface:
+		var data any
+		if len(evt.SurfaceData) > 0 {
+			_ = json.Unmarshal(evt.SurfaceData, &data)
+		}
+		if data == nil {
+			data = map[string]any{}
+		}
+		return enc.writeLine(map[string]any{
+			"type": "data-ui-surface",
+			"data": map[string]any{
+				"surfaceId":   evt.SurfaceID,
+				"surfaceType": evt.SurfaceType,
+				"payload":     data,
 			},
 		})
 
@@ -234,6 +255,16 @@ func (enc *UIMessageStreamEncoder) Close() error {
 	}
 
 	_, err := fmt.Fprintf(enc.w, "data: [DONE]\n\n")
+	return err
+}
+
+// Heartbeat writes an SSE comment frame. UI Message Stream clients ignore it,
+// while proxies and browsers still see activity on otherwise idle streams.
+func (enc *UIMessageStreamEncoder) Heartbeat() error {
+	enc.mu.Lock()
+	defer enc.mu.Unlock()
+
+	_, err := fmt.Fprintf(enc.w, ": heartbeat\n\n")
 	return err
 }
 

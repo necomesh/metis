@@ -2,6 +2,8 @@ import { useTranslation } from "react-i18next"
 import { useQuery } from "@tanstack/react-query"
 import { api } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
+import { Star } from "lucide-react"
+import { useMemo } from "react"
 import {
   Sheet,
   SheetContent,
@@ -40,6 +42,23 @@ export function UserOrgSheet({ open, onOpenChange, userId, username, email }: Us
     enabled: open && !!userId,
   })
 
+  const grouped = useMemo(() => {
+    const map = new Map<number, {
+      department: { id: number; name: string }
+      positions: UserPositionItem[]
+    }>()
+    for (const item of positions ?? []) {
+      const dept = item.department ?? { id: item.departmentId, name: "-" }
+      const group = map.get(dept.id)
+      if (group) {
+        group.positions.push(item)
+      } else {
+        map.set(dept.id, { department: dept, positions: [item] })
+      }
+    }
+    return Array.from(map.values())
+  }, [positions])
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="gap-0 p-0 sm:max-w-md">
@@ -67,24 +86,33 @@ export function UserOrgSheet({ open, onOpenChange, userId, username, email }: Us
               </p>
               {isLoading ? (
                 <p className="text-sm text-muted-foreground">{t("common:loading")}</p>
-              ) : !positions || positions.length === 0 ? (
+              ) : grouped.length === 0 ? (
                 <p className="text-sm text-muted-foreground">{t("org:assignments.noAssignments")}</p>
               ) : (
                 <div className="space-y-2">
-                  {positions.map((item) => (
+                  {grouped.map((group) => (
                     <div
-                      key={item.id}
-                      className="flex items-center justify-between rounded-lg border bg-card px-3 py-2.5"
+                      key={group.department.id}
+                      className="rounded-lg border border-border/55 bg-surface/35 px-3 py-2.5"
                     >
-                      <div className="space-y-0.5">
-                        <p className="text-sm font-medium text-foreground">{item.department?.name ?? "-"}</p>
-                        <p className="text-xs text-muted-foreground">{item.position?.name ?? "-"}</p>
+                      <div className="flex items-start justify-between gap-3">
+                        <p className="text-sm font-medium text-foreground">{group.department.name}</p>
+                        <Badge variant="outline" className="shrink-0 bg-transparent font-normal">
+                          {t("org:departments.positionCount", { count: group.positions.length })}
+                        </Badge>
                       </div>
-                      {item.isPrimary ? (
-                        <Badge variant="default" className="shrink-0">{t("org:assignments.primary")}</Badge>
-                      ) : (
-                        <Badge variant="outline" className="shrink-0">{t("org:assignments.secondary")}</Badge>
-                      )}
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {group.positions.map((item) => (
+                          <Badge
+                            key={item.id}
+                            variant={item.isPrimary ? "default" : "outline"}
+                            className="gap-1 text-[11px]"
+                          >
+                            {item.isPrimary && <Star className="h-3 w-3" />}
+                            {item.position?.name ?? "-"}
+                          </Badge>
+                        ))}
+                      </div>
                     </div>
                   ))}
                 </div>

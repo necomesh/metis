@@ -27,7 +27,7 @@ type dispatchFixture struct {
 
 // setupDispatchTest creates an in-memory SQLite database with all required tables,
 // a ClassicEngine with a noop submitter, and a base scenario: a ticket (in_progress),
-// an active main token, a pending parallel-approve activity, and one pending assignment
+// an active main token, a pending process activity, and one pending assignment
 // for user 100.
 func setupDispatchTest(t *testing.T) *dispatchFixture {
 	t.Helper()
@@ -54,7 +54,7 @@ func setupDispatchTest(t *testing.T) *dispatchFixture {
 	db.Exec("ALTER TABLE itsm_tickets ADD COLUMN assignee_id INTEGER")
 	db.Exec("ALTER TABLE itsm_ticket_assignments ADD COLUMN finished_at DATETIME")
 
-	workflowJSON := `{"nodes":[{"id":"s","type":"start","data":{}},{"id":"a1","type":"approve","data":{"label":"审批","approve_mode":"parallel","participants":[{"type":"user","value":"100"}]}},{"id":"e","type":"end","data":{}}],"edges":[{"id":"e1","source":"s","target":"a1","data":{}},{"id":"e2","source":"a1","target":"e","data":{"condition":{"field":"outcome","operator":"eq","value":"approve"}}}]}`
+	workflowJSON := `{"nodes":[{"id":"s","type":"start","data":{}},{"id":"a1","type":"process","data":{"label":"处理","participants":[{"type":"user","value":"100"}]}},{"id":"e","type":"end","data":{}}],"edges":[{"id":"e1","source":"s","target":"a1","data":{}},{"id":"e2","source":"a1","target":"e","data":{"outcome":"completed"}}]}`
 
 	ticket := ticketModel{
 		ID:           1,
@@ -80,8 +80,8 @@ func setupDispatchTest(t *testing.T) *dispatchFixture {
 	activity := activityModel{
 		TicketID:      1,
 		TokenID:       &token.ID,
-		Name:          "审批",
-		ActivityType:  NodeApprove,
+		Name:          "处理",
+		ActivityType:  NodeProcess,
 		Status:        ActivityPending,
 		NodeID:        "a1",
 		ExecutionMode: "parallel",
@@ -276,11 +276,11 @@ func TestDispatch(t *testing.T) {
 			t.Fatalf("failed to create delegated assignment: %v", err)
 		}
 
-		// Call engine.Progress with OperatorID=200 and Outcome="approve"
-		err := f.engine.Progress(context.Background(), db, ProgressParams{
-			TicketID:   f.ticket.ID,
-			ActivityID: f.activity.ID,
-			Outcome:    "approve",
+	// Call engine.Progress with OperatorID=200 and Outcome="completed"
+	err := f.engine.Progress(context.Background(), db, ProgressParams{
+		TicketID:   f.ticket.ID,
+		ActivityID: f.activity.ID,
+		Outcome:    "completed",
 			OperatorID: 200,
 		})
 		if err != nil {

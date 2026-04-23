@@ -37,6 +37,7 @@ type ProgressParams struct {
 	ActivityID uint
 	Outcome    string
 	Result     json.RawMessage // form data or processing result
+	Opinion    string          // human approval / rejection opinion
 	OperatorID uint
 }
 
@@ -72,7 +73,6 @@ const (
 	NodeStart   = "start"
 	NodeEnd     = "end"
 	NodeForm    = "form"
-	NodeApprove = "approve"
 	NodeProcess = "process"
 	NodeAction  = "action"
 	NodeNotify  = "notify"
@@ -94,7 +94,7 @@ const (
 
 var ValidNodeTypes = map[string]bool{
 	NodeStart: true, NodeEnd: true, NodeForm: true,
-	NodeApprove: true, NodeProcess: true, NodeAction: true,
+	NodeProcess: true, NodeAction: true,
 	NodeExclusive: true, NodeParallel: true, NodeInclusive: true,
 	NodeNotify: true, NodeWait: true,
 	NodeScript: true, NodeSubprocess: true,
@@ -114,7 +114,7 @@ func IsAutoNode(nodeType string) bool {
 
 // IsHumanNode returns true for node types that require human interaction.
 func IsHumanNode(nodeType string) bool {
-	return nodeType == NodeForm || nodeType == NodeApprove || nodeType == NodeProcess || nodeType == NodeWait
+	return nodeType == NodeForm || nodeType == NodeProcess || nodeType == NodeWait
 }
 
 // Token status constants
@@ -147,11 +147,9 @@ const (
 // Activity status constants
 const (
 	ActivityPending         = "pending"
-	ActivityPendingApproval = "pending_approval" // smart engine: low-confidence AI decision awaiting human confirmation
 	ActivityInProgress      = "in_progress"
 	ActivityCompleted       = "completed"
 	ActivityCancelled       = "cancelled"
-	ActivityRejected        = "rejected" // smart engine: AI decision rejected by human
 )
 
 // Smart engine errors
@@ -160,7 +158,7 @@ var (
 	ErrAIDecisionFailed       = errors.New("AI 决策失败")
 	ErrAIDecisionTimeout      = errors.New("AI 决策超时")
 	ErrAIDisabled             = errors.New("AI 决策已停用（连续失败次数过多）")
-	ErrInvalidDecisionPlan    = errors.New("AI 决策计划校验不通过")
+	ErrInvalidDecisionPlan    = errors.New("AI 决策计划校验失败")
 )
 
 // Smart engine defaults

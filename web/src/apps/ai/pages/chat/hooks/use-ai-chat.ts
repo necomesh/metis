@@ -15,6 +15,14 @@ export function sessionMessagesToUIMessages(messages: SessionMessage[]): UIMessa
       parts: [{ type: "text", text: m.content || "", state: "done" }],
     }
 
+    const uiSurface = m.metadata?.ui_surface
+    if (uiSurface && typeof uiSurface === "object") {
+      base.parts.push({
+        type: "data-ui-surface",
+        data: uiSurface,
+      } as UIMessage["parts"][number])
+    }
+
     if (m.role === "user" && m.metadata && Array.isArray(m.metadata.images)) {
       const images = m.metadata.images as string[]
       for (const url of images) {
@@ -195,19 +203,15 @@ export function useAiChat(
     const chat = new Chat<UIMessage>({
       id: String(sessionId),
       transport,
+      onFinish: options?.onFinish,
+      onError: options?.onError,
     })
     // Override expensive structuredClone with fast shallow clone
     // to eliminate per-chunk cloning bottleneck during streaming.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ;(chat as any).state.snapshot = fastSnapshot
     return chat
-  }, [sessionId, transport])
-
-  // Sync dynamic callbacks without recreating the Chat instance
-  useEffect(() => {
-    ;(chatInstance as any).onFinish = options?.onFinish
-    ;(chatInstance as any).onError = options?.onError
-  }, [chatInstance, options?.onFinish, options?.onError])
+  }, [sessionId, transport, options?.onFinish, options?.onError])
 
   const chat = useChat({
     chat: chatInstance,

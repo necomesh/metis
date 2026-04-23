@@ -3,6 +3,7 @@ package database
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/glebarez/sqlite"
 	"github.com/samber/do/v2"
@@ -41,6 +42,7 @@ func Open(driver, dsn string) (*DB, error) {
 		if dsn == "" {
 			dsn = "metis.db?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"
 		}
+		dsn = ensureSQLiteBusyTimeout(dsn)
 		dialector = sqlite.Open(dsn)
 	default:
 		return nil, fmt.Errorf("unsupported database driver: %s", driver)
@@ -58,6 +60,17 @@ func Open(driver, dsn string) (*DB, error) {
 
 	slog.Info("database connected", "driver", driver, "dsn", dsn)
 	return &DB{DB: db}, nil
+}
+
+func ensureSQLiteBusyTimeout(dsn string) string {
+	if strings.Contains(strings.ToLower(dsn), "busy_timeout") {
+		return dsn
+	}
+	separator := "?"
+	if strings.Contains(dsn, "?") {
+		separator = "&"
+	}
+	return dsn + separator + "_pragma=busy_timeout(5000)"
 }
 
 // AutoMigrateKernel runs AutoMigrate for all kernel models.

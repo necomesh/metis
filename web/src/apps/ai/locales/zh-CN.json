@@ -150,7 +150,18 @@
       "enableSuccess": "工具已启用",
       "disableSuccess": "工具已禁用",
       "toolsEnabled": "个已启用",
-      "drawerHint": "开启后，绑定此工具箱的 Agent 将可以调用对应能力。"
+      "toolsAvailable": "个可执行",
+      "drawerHint": "只有可执行工具会进入 Agent 的模型工具列表；未实现和风险禁用能力仅作为规划展示。",
+      "parameters": "参数 schema",
+      "boundAgentCount": "影响 {{count}} 个 Agent",
+      "disableConfirmTitle": "确认停用内建工具",
+      "disableConfirmDesc": "“{{name}}”当前被 {{count}} 个 Agent 绑定。停用后，这些 Agent 运行时将不再获得该工具能力。",
+      "availability": {
+        "available": "可用",
+        "inactive": "已停用",
+        "unimplemented": "未实现",
+        "risk_disabled": "风险禁用"
+      }
     },
     "toolkits": {
       "knowledge": {
@@ -185,7 +196,7 @@
     "toolDefs": {
       "search_knowledge": {
         "name": "搜索知识库",
-        "description": "根据关键词在知识库中搜索相关文档。"
+        "description": "在当前 Agent 已绑定的知识库和知识图谱中补充搜索相关内容。"
       },
       "read_document": {
         "name": "读取文档",
@@ -193,11 +204,11 @@
       },
       "http_request": {
         "name": "HTTP 请求",
-        "description": "向外部 URL 发起 HTTP 请求并获取响应。"
+        "description": "规划中的外部 HTTP 请求能力；需要白名单、超时、审计和数据防泄露策略后开放。"
       },
       "execute_script": {
         "name": "执行脚本",
-        "description": "在沙箱中运行 Python 或 Bash 脚本，返回输出结果。"
+        "description": "规划中的代码执行能力；需要沙箱、资源限制、语言白名单和结果脱敏后开放。"
       },
       "general.current_time": {
         "name": "获取当前时间",
@@ -205,7 +216,7 @@
       },
       "system.current_user_profile": {
         "name": "获取当前用户信息",
-        "description": "读取当前用户的基础资料和组织归属（部门、岗位、角色）。"
+        "description": "读取当前用户的最小必要组织上下文，不返回联系方式或权限细节。"
       },
       "itsm.service_match": {
         "name": "服务匹配",
@@ -443,7 +454,7 @@
     "knowledgeGraphsDescription": "绑定结构化知识图谱，用于补充关系推理与图谱检索。",
     "tools": "工具",
     "toolsDescription": "绑定自动化工具，让智能体可以执行动作与调用外部能力。",
-    "toolsSheetDescription": "按工具集合查看并勾选具体工具，每个集合代表一类能力来源。",
+    "toolsSheetDescription": "勾选工具集会默认启用集合内可用工具，点击已选工具集可调整具体工具。",
     "mcpServers": "MCP 服务",
     "mcpServersDescription": "连接 MCP 服务，把远程能力与资源暴露给智能体。",
     "skills": "技能包",
@@ -454,8 +465,35 @@
     "selectMcpServers": "选择 MCP 服务",
     "selectSkills": "选择技能包",
     "selectedCount": "已选 {{count}} 项",
+    "selectedToolSetCount": "已选 {{count}} 个工具集",
+    "selectedGroupCount": "已选 {{count}} 个{{name}}",
     "itemCount": "{{count}} 项",
     "selected": "已选",
+    "capabilityGroupNames": {
+      "toolSet": "工具集",
+      "mcp": "MCP 服务",
+      "skill": "技能包",
+      "knowledgeBase": "知识库",
+      "knowledgeGraph": "知识图谱"
+    },
+    "manageCapabilityGroups": {
+      "toolSet": "管理工具集",
+      "mcp": "管理 MCP 服务",
+      "skill": "管理技能包",
+      "knowledgeBase": "管理知识库",
+      "knowledgeGraph": "管理知识图谱"
+    },
+    "addToolSet": "管理工具集",
+    "selectToolSet": "管理工具集",
+    "backToToolSets": "返回工具集",
+    "noToolSetsSelected": "尚未选择工具集",
+    "addToolSetHint": "打开管理工具集并勾选集合，会默认启用集合内可用工具。",
+    "noGroupsSelected": "尚未选择{{name}}",
+    "manageGroupHint": "打开{{name}}管理并勾选集合，会默认启用集合内可用项。",
+    "availableToolCount": "{{count}} 个可用",
+    "unavailableToolCount": "{{count}} 个不可用",
+    "availableItemCount": "{{count}} 个可用",
+    "unavailableItemCount": "{{count}} 个不可用",
     "clickToSelect": "点击卡片选择能力",
     "manageInSheet": "点击卡片后在抽屉中管理绑定项。",
     "manageSelection": "管理选择",
@@ -464,6 +502,8 @@
     "noMatchingItems": "没有匹配的能力项",
     "noItemsHint": "调整搜索词，或稍后检查对应资源是否已创建。",
     "noItemDescription": "暂无补充说明",
+    "noCapabilitySets": "暂无绑定的能力集合",
+    "unavailable": "不可用",
     "templates": "模板",
     "fromTemplate": "从模板创建",
     "fromScratch": "从零创建",
@@ -524,6 +564,9 @@
     "noSessions": "暂无对话记录",
     "send": "发送",
     "cancel": "取消",
+    "creatingSession": "正在创建对话",
+    "emptyShellTitle": "准备开始新对话",
+    "emptyShellHint": "对话壳已就绪，创建完成后会自动进入会话。",
     "inputPlaceholder": "输入消息...（Shift+Enter 换行，Enter 发送）",
     "inputHint": "Shift + Enter 换行 · Enter 发送",
     "copy": "复制",
@@ -533,6 +576,12 @@
     "streaming": "生成中...",
     "toolCall": "调用工具：{{name}}",
     "toolResult": "工具返回",
+    "toolStatus": {
+      "preparing": "准备调用",
+      "running": "正在使用",
+      "completed": "已使用",
+      "error": "失败"
+    },
     "plan": "计划",
     "step": "步骤 {{index}}",
     "sessionDeleted": "对话已删除",
@@ -590,6 +639,7 @@
     "cancelEdit": "取消",
     "stopped": "生成已停止",
     "continueGenerating": "继续生成",
+    "jumpToBottom": "跳到底部",
     "retry": "重试",
     "generationError": "生成失败",
     "tokenSpeed": "{{speed}} tok/s",

@@ -235,14 +235,16 @@ func (h *AssistantAgentHandler) agentWithBindings(a *Agent) gin.H {
 	mcpIDs, _ := h.repo.GetMCPServerIDs(a.ID)
 	kbIDs, _ := h.repo.GetKnowledgeBaseIDs(a.ID)
 	kgIDs, _ := h.repo.GetKnowledgeGraphIDs(a.ID)
+	capabilitySetBindings, _ := h.repo.GetCapabilitySetBindings(a.ID)
 
 	return gin.H{
-		"agent":             resp,
-		"toolIds":           toolIDs,
-		"skillIds":          skillIDs,
-		"mcpServerIds":      mcpIDs,
-		"knowledgeBaseIds":  kbIDs,
-		"knowledgeGraphIds": kgIDs,
+		"agent":                 resp,
+		"toolIds":               toolIDs,
+		"skillIds":              skillIDs,
+		"mcpServerIds":          mcpIDs,
+		"knowledgeBaseIds":      kbIDs,
+		"knowledgeGraphIds":     kgIDs,
+		"capabilitySetBindings": capabilitySetBindings,
 	}
 }
 

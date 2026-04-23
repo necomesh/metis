@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"metis/internal/app"
 	"metis/internal/llm"
 )
 
@@ -51,6 +52,7 @@ func (e *ReactExecutor) Execute(ctx context.Context, req ExecuteRequest) (<-chan
 
 		tools := buildLLMTools(req.Tools)
 		var totalInput, totalOutput int
+		var currentITSMServiceEngine string
 
 		for turn := 1; turn <= maxTurns; turn++ {
 			select {
@@ -131,9 +133,13 @@ func (e *ReactExecutor) Execute(ctx context.Context, req ExecuteRequest) (<-chan
 					ToolName:   tc.Name,
 					ToolArgs:   json.RawMessage(tc.Arguments),
 				})
+				if tc.Name == "itsm.draft_prepare" && currentITSMServiceEngine == "smart" {
+					emit(makeITSMDraftLoadingSurface(tc.ID))
+				}
 
 				start := time.Now()
-				result, execErr := e.toolExecutor.ExecuteTool(ctx, ToolCall{
+				toolCtx := context.WithValue(ctx, app.UserMessageKey, latestLLMUserMessage(messages))
+				result, execErr := e.toolExecutor.ExecuteTool(toolCtx, ToolCall{
 					ID:   tc.ID,
 					Name: tc.Name,
 					Args: json.RawMessage(tc.Arguments),
@@ -141,16 +147,27 @@ func (e *ReactExecutor) Execute(ctx context.Context, req ExecuteRequest) (<-chan
 				durationMs := int(time.Since(start).Milliseconds())
 
 				output := result.Output
+				isError := result.IsError
 				if execErr != nil {
 					output = fmt.Sprintf("Error: %v", execErr)
+					isError = true
 				}
 
 				emit(Event{
-					Type:       EventTypeToolResult,
-					ToolCallID: tc.ID,
-					ToolOutput: output,
-					DurationMs: durationMs,
+					Type:        EventTypeToolResult,
+					ToolCallID:  tc.ID,
+					ToolOutput:  output,
+					DurationMs:  durationMs,
+					ToolIsError: isError,
 				})
+				if !isError && tc.Name == "itsm.service_load" {
+					currentITSMServiceEngine = parseITSMServiceEngine(output)
+				}
+				if !isError && tc.Name == "itsm.draft_prepare" {
+					if surface, ok := makeITSMDraftReadySurface(tc.ID, output); ok {
+						emit(surface)
+					}
+				}
 
 				// Add tool result to messages
 				messages = append(messages, llm.Message{
@@ -171,6 +188,15 @@ func (e *ReactExecutor) Execute(ctx context.Context, req ExecuteRequest) (<-chan
 	return ch, nil
 }
 
+func latestLLMUserMessage(messages []llm.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == llm.RoleUser || messages[i].Role == MessageRoleUser {
+			return messages[i].Content
+		}
+	}
+	return ""
+}
+
 // buildLLMMessages converts ExecuteRequest messages to llm.Message format,
 // prepending the system prompt.
 func buildLLMMessages(req ExecuteRequest) []llm.Message {
@@ -180,9 +206,11 @@ func buildLLMMessages(req ExecuteRequest) []llm.Message {
 	}
 	for _, m := range req.Messages {
 		msgs = append(msgs, llm.Message{
-			Role:    m.Role,
-			Content: m.Content,
-			Images:  m.Images,
+			Role:       m.Role,
+			Content:    m.Content,
+			Images:     m.Images,
+			ToolCalls:  m.ToolCalls,
+			ToolCallID: m.ToolCallID,
 		})
 	}
 	return msgs

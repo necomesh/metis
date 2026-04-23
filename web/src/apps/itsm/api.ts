@@ -65,6 +65,7 @@ export interface ServiceDefItem {
   collaborationSpec: string
   agentId: number | null
   agentConfig: SmartAgentConfig | null
+  publishHealthCheck: ServiceHealthCheck | null
   isActive: boolean
   sortOrder: number
   createdAt: string
@@ -314,6 +315,7 @@ export interface TicketItem {
   assigneeName: string
   currentActivityId: number | null
   source: string
+  agentSessionId: number | null
   aiFailureCount: number
   formData: unknown
   workflowJson: unknown
@@ -321,6 +323,12 @@ export interface TicketItem {
   slaResponseDeadline: string | null
   slaResolutionDeadline: string | null
   finishedAt: string | null
+  smartState?: "terminal" | "ai_disabled" | "waiting_ai_confirmation" | "action_running" | "waiting_human" | "ai_reasoning" | "ai_decided" | string
+  currentOwnerType?: string
+  currentOwnerName?: string
+  nextStepSummary?: string
+  canAct?: boolean
+  canOverride?: boolean
   createdAt: string
   updatedAt: string
 }
@@ -355,39 +363,33 @@ export function fetchTicket(id: number) {
   return api.get<TicketItem>(`/api/v1/itsm/tickets/${id}`)
 }
 
-export function createTicket(data: {
-  title: string
-  description?: string
-  serviceId: number
-  priorityId: number
-  formData?: unknown
-}) {
-  return api.post<TicketItem>("/api/v1/itsm/tickets", data)
-}
-
 export function assignTicket(id: number, assigneeId: number) {
   return api.put<TicketItem>(`/api/v1/itsm/tickets/${id}/assign`, {
     assigneeId,
   })
 }
 
-export function completeTicket(id: number) {
-  return api.put<TicketItem>(`/api/v1/itsm/tickets/${id}/complete`, {})
-}
-
 export function cancelTicket(id: number, reason: string) {
   return api.put<TicketItem>(`/api/v1/itsm/tickets/${id}/cancel`, { reason })
+}
+
+export function withdrawTicket(id: number, reason: string) {
+  return api.put<TicketItem>(`/api/v1/itsm/tickets/${id}/withdraw`, { reason })
 }
 
 export function fetchMyTickets(params: {
   keyword?: string
   status?: string
+  startDate?: string
+  endDate?: string
   page?: number
   pageSize?: number
 }) {
   const p = new URLSearchParams()
   if (params.keyword) p.set("keyword", params.keyword)
   if (params.status) p.set("status", params.status)
+  if (params.startDate) p.set("startDate", params.startDate)
+  if (params.endDate) p.set("endDate", params.endDate)
   p.set("page", String(params.page ?? 1))
   p.set("pageSize", String(params.pageSize ?? 20))
   return api.get<{ items: TicketItem[]; total: number }>(
@@ -395,37 +397,85 @@ export function fetchMyTickets(params: {
   )
 }
 
-export function fetchTodoTickets(params: {
-  keyword?: string
+// ─── Service Desk ──────────────────────────────────────
+
+export interface ServiceDeskState {
+  stage: string
+  candidate_service_ids?: number[]
+  top_match_service_id?: number
+  confirmed_service_id?: number
+  confirmation_required: boolean
+  loaded_service_id?: number
+  draft_summary?: string
+  draft_form_data?: Record<string, unknown>
+  request_text?: string
+  prefill_form_data?: Record<string, unknown>
+  draft_version: number
+  confirmed_draft_version: number
+  fields_hash?: string
+}
+
+export interface ServiceDeskSessionState {
+  state: ServiceDeskState
+  nextExpectedAction: string
+}
+
+export interface AgenticUISurface<TPayload = unknown> {
+  surfaceId: string
+  surfaceType: string
+  payload: TPayload
+}
+
+export interface ITSMDraftFormSurfacePayload {
+  status: "loading" | "ready" | "submitted"
+  serviceId?: number
+  title?: string
+  summary?: string
+  schema?: unknown
+  values?: Record<string, unknown>
+  draftVersion?: number
+  submitAction?: {
+    method?: string
+    kind?: string
+  }
+  ticketId?: number
+  ticketCode?: string
+  message?: string
+}
+
+export type ITSMDraftFormSurface = AgenticUISurface<ITSMDraftFormSurfacePayload>
+
+export interface SubmitDraftRequest {
+  draftVersion: number
+  summary: string
+  formData: Record<string, unknown>
+}
+
+export interface SubmitDraftResponse {
+  ok: boolean
+  ticketId?: number
+  ticketCode?: string
   status?: string
-  page?: number
-  pageSize?: number
-}) {
-  const p = new URLSearchParams()
-  if (params.keyword) p.set("keyword", params.keyword)
-  if (params.status) p.set("status", params.status)
-  p.set("page", String(params.page ?? 1))
-  p.set("pageSize", String(params.pageSize ?? 20))
-  return api.get<{ items: TicketItem[]; total: number }>(
-    `/api/v1/itsm/tickets/todo?${p}`,
+  message?: string
+  failureReason?: string
+  nodeLabel?: string
+  guidance?: string
+  warnings?: Array<{ type: string; field: string; message: string }>
+  missingRequiredFields?: Array<{ key: string; label: string; type: string; required: boolean }>
+  state?: ServiceDeskState
+  surface?: AgenticUISurface
+}
+
+export function fetchServiceDeskSessionState(sessionId: number) {
+  return api.get<ServiceDeskSessionState>(
+    `/api/v1/itsm/service-desk/sessions/${sessionId}/state`,
   )
 }
 
-export function fetchHistoryTickets(params: {
-  assigneeId?: number
-  startDate?: string
-  endDate?: string
-  page?: number
-  pageSize?: number
-}) {
-  const p = new URLSearchParams()
-  if (params.assigneeId) p.set("assigneeId", String(params.assigneeId))
-  if (params.startDate) p.set("startDate", params.startDate)
-  if (params.endDate) p.set("endDate", params.endDate)
-  p.set("page", String(params.page ?? 1))
-  p.set("pageSize", String(params.pageSize ?? 20))
-  return api.get<{ items: TicketItem[]; total: number }>(
-    `/api/v1/itsm/tickets/history?${p}`,
+export function submitServiceDeskDraft(sessionId: number, data: SubmitDraftRequest) {
+  return api.post<SubmitDraftResponse>(
+    `/api/v1/itsm/service-desk/sessions/${sessionId}/draft/submit`,
+    data,
   )
 }
 
@@ -435,9 +485,11 @@ export interface TimelineItem {
   id: number
   ticketId: number
   eventType: string
+  message: string
   content: string
   operatorId: number
   operatorName: string
+  details: unknown
   metadata: unknown
   reasoning: string
   createdAt: string
@@ -463,7 +515,12 @@ export interface ActivityItem {
   transitionOutcome: string
   aiDecision: string | null
   aiReasoning: string | null
-  confidence: number | null
+  aiConfidence: number | null
+  evidence?: unknown[]
+  toolCalls?: unknown[]
+  knowledgeHits?: unknown[]
+  actionExecutions?: unknown[]
+  riskFlags?: unknown[]
   overriddenBy: number | null
   canAct: boolean
   startedAt: string | null
@@ -475,7 +532,7 @@ export function fetchTicketActivities(ticketId: number) {
   return api.get<ActivityItem[]>(`/api/v1/itsm/tickets/${ticketId}/activities`).then((r) => r ?? [])
 }
 
-export function progressTicket(ticketId: number, data: { activityId: number; outcome: string; result?: unknown }) {
+export function progressTicket(ticketId: number, data: { activityId: number; outcome: "approved" | "rejected"; opinion: string; result?: unknown }) {
   return api.post<TicketItem>(`/api/v1/itsm/tickets/${ticketId}/progress`, data)
 }
 
@@ -500,14 +557,6 @@ export function fetchUsers(keyword?: string) {
 
 // ─── Smart Engine Override APIs ────────────────────────
 
-export function confirmActivity(ticketId: number, activityId: number) {
-  return api.post(`/api/v1/itsm/tickets/${ticketId}/activities/${activityId}/confirm`, {})
-}
-
-export function rejectActivity(ticketId: number, activityId: number, reason: string) {
-  return api.post(`/api/v1/itsm/tickets/${ticketId}/activities/${activityId}/reject`, { reason })
-}
-
 export function overrideJump(ticketId: number, data: { activityType: string; assigneeId?: number; reason: string }) {
   return api.post(`/api/v1/itsm/tickets/${ticketId}/override/jump`, data)
 }
@@ -516,59 +565,8 @@ export function overrideReassign(ticketId: number, data: { activityId: number; n
   return api.post(`/api/v1/itsm/tickets/${ticketId}/override/reassign`, data)
 }
 
-export function retryAI(ticketId: number) {
-  return api.post(`/api/v1/itsm/tickets/${ticketId}/override/retry-ai`, {})
-}
-
-// ─── Approvals ─────────────────────────────────────────
-
-export interface ApprovalItem {
-  ticketId: number
-  ticketCode: string
-  ticketTitle: string
-  ticketStatus: string
-  serviceId: number
-  priorityId: number
-  priorityName: string
-  priorityColor: string
-  serviceName: string
-  slaStatus: string
-  slaResponseDeadline: string | null
-  slaResolutionDeadline: string | null
-  activityId: number
-  activityName: string
-  activityType: string
-  activityStatus: string
-  formSchema: unknown
-  aiConfidence: number
-  aiReasoning: string
-  startedAt: string | null
-  createdAt: string
-  assignmentId: number
-  participantType: string
-  canAct: boolean
-  approvalKind: "workflow" | "ai_confirm"
-}
-
-export function fetchApprovals(params: { page?: number; pageSize?: number }) {
-  const p = new URLSearchParams()
-  p.set("page", String(params.page ?? 1))
-  p.set("pageSize", String(params.pageSize ?? 20))
-  return api.get<{ items: ApprovalItem[]; total: number }>(
-    `/api/v1/itsm/tickets/approvals?${p}`,
-  )
-}
-
-export function fetchApprovalCount() {
-  return api.get<{ count: number }>("/api/v1/itsm/tickets/approvals/count")
-}
-
-export function approveActivity(ticketId: number, activityId: number) {
-  return api.post(`/api/v1/itsm/tickets/${ticketId}/activities/${activityId}/approve`, {})
-}
-
-export function denyActivity(ticketId: number, activityId: number, reason?: string) {
-  return api.post(`/api/v1/itsm/tickets/${ticketId}/activities/${activityId}/deny`, { reason })
+export function retryAI(ticketId: number, reason?: string) {
+  return api.post(`/api/v1/itsm/tickets/${ticketId}/override/retry-ai`, { reason })
 }
 
 // ─── AI App APIs (for smart engine config) ─────────────
@@ -691,10 +689,32 @@ export interface WorkflowGenerateResponse {
   workflowJson: unknown
   retries: number
   errors?: { nodeId?: string; edgeId?: string; message: string }[]
+  service?: ServiceDefItem
+  healthCheck?: ServiceHealthCheck
 }
 
 export function generateWorkflow(data: { serviceId: number; collaborationSpec: string }) {
   return api.post<WorkflowGenerateResponse>("/api/v1/itsm/workflows/generate", data)
+}
+
+// ─── Service Health ─────────────────────────────────────
+
+export interface ServiceHealthItem {
+  key: string
+  label: string
+  status: "pass" | "warn" | "fail"
+  message: string
+}
+
+export interface ServiceHealthCheck {
+  serviceId: number
+  status: "pass" | "warn" | "fail"
+  items: ServiceHealthItem[]
+  checkedAt?: string
+}
+
+export function fetchServiceHealth(serviceId: number) {
+  return api.get<ServiceHealthCheck>(`/api/v1/itsm/services/${serviceId}/health`)
 }
 
 // ─── Process Variables ──────────────────────────────────

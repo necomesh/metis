@@ -31,8 +31,10 @@ func setupTestDB(t *testing.T) *gorm.DB {
 		&KnowledgeBase{},
 		// Tool registry
 		&Tool{}, &MCPServer{}, &Skill{},
+		&CapabilitySet{}, &CapabilitySetItem{},
 		// Agent bindings
 		&AgentTool{}, &AgentMCPServer{}, &AgentSkill{}, &AgentKnowledgeBase{}, &AgentKnowledgeGraph{},
+		&AgentCapabilitySet{}, &AgentCapabilitySetItem{},
 		// Agent runtime
 		&Agent{}, &AgentTemplate{}, &AgentSession{}, &SessionMessage{}, &AgentMemory{},
 	); err != nil {
@@ -79,8 +81,9 @@ func newToolServiceForTest(t *testing.T, db *gorm.DB) *ToolService {
 func newMCPServerServiceForTest(t *testing.T, db *gorm.DB) *MCPServerService {
 	t.Helper()
 	return &MCPServerService{
-		repo:   &MCPServerRepo{db: &database.DB{DB: db}},
-		encKey: newTestEncryptionKey(t),
+		repo:      &MCPServerRepo{db: &database.DB{DB: db}},
+		encKey:    newTestEncryptionKey(t),
+		mcpClient: &fakeMCPRuntimeClient{},
 	}
 }
 

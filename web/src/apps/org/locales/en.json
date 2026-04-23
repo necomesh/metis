@@ -36,7 +36,12 @@
     "noPositions": "No positions configured",
     "createdAt": "Created At",
     "parentDept": "Parent Department",
-    "topLevel": "Top Level"
+    "topLevel": "Top Level",
+    "orgThread": "Org Thread",
+    "identity": "Department Identity",
+    "memberCount": "{{count}} members",
+    "positionCount": "{{count}} positions",
+    "noChildren": "No sub-departments"
   },
   "positions": {
     "title": "Positions",
@@ -58,7 +63,13 @@
     "deleteDesc": "Are you sure you want to delete \"{{name}}\"?",
     "confirmDelete": "Confirm Delete",
     "namePlaceholder": "e.g. Senior Engineer",
-    "codePlaceholder": "e.g. senior-engineer"
+    "codePlaceholder": "e.g. senior-engineer",
+    "directory": "Position Directory",
+    "coverage": "Enabled Departments",
+    "occupants": "Members",
+    "noDepartments": "No departments",
+    "membersCount": "{{count}} members",
+    "departmentsCount": "{{count}} departments"
   },
   "assignments": {
     "title": "Assignments",

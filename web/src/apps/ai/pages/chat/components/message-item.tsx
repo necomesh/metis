@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useCallback, useMemo, useEffect } from "react"
+import { useState, useCallback, useMemo } from "react"
 import { useTranslation } from "react-i18next"
-import { ChevronDown, ChevronRight, Wrench, Copy, Check, RotateCcw, ThumbsUp, ThumbsDown, Pencil, Search } from "lucide-react"
+import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, Clock3, Copy, Check, Loader2, RotateCcw, ThumbsUp, ThumbsDown, Pencil, Search, Wrench } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { toast } from "sonner"
-import type { UIMessage, DynamicToolUIPart } from "ai"
+import type { UIMessage, DynamicToolUIPart, ToolUIPart } from "ai"
 import { MessageResponse } from "@/components/ai-elements/message"
+import { cn } from "@/lib/utils"
 
 interface QAPairProps {
   userMessage: UIMessage
@@ -18,6 +19,8 @@ interface QAPairProps {
   onEditMessage?: (messageId: number, content: string) => void
   doneMetrics?: { durationMs?: number; inputTokens?: number; outputTokens?: number }
   streamingExtras?: React.ReactNode
+  renderDataPart?: (part: UIMessage["parts"][number]) => React.ReactNode
+  suppressTextWhenDataPart?: boolean
 }
 
 // User query — right-aligned pill (ChatGPT style)
@@ -106,105 +109,214 @@ function UserQuery({
   )
 }
 
-// Tool call component with rich rendering
-function ToolCallDisplay({
-  toolName,
-  toolArgs,
-  durationMs,
-}: {
+type ToolActivityStatus = "preparing" | "running" | "completed" | "error"
+
+interface ToolActivity {
+  id: string
   toolName: string
-  toolArgs?: string
+  toolArgs?: unknown
   durationMs?: number
+  status: ToolActivityStatus
+  errorText?: string
+}
+
+// Compact tool activity row.
+function ToolActivityRow({
+  activity,
+}: {
+  activity: ToolActivity
 }) {
   const { t } = useTranslation(["ai"])
   const [expanded, setExpanded] = useState(false)
 
+  const toolName = activity.toolName || "unknown"
+  const toolDisplayName = t(`ai:tools.toolDefs.${toolName}.name`, { defaultValue: toolName })
   const isKnowledgeSearch = toolName === "search_knowledge"
-  let parsedArgs: Record<string, unknown> | null = null
-  try {
-    if (toolArgs) parsedArgs = JSON.parse(toolArgs)
-  } catch { /* ignore */ }
+  const { argsText, parsedArgs } = useToolArgs(activity.toolArgs)
+  const hasArgs = Boolean(argsText)
+  const statusLabel = t(`ai:chat.toolStatus.${activity.status}`)
+
+  const StatusIcon =
+    activity.status === "completed"
+      ? CheckCircle2
+      : activity.status === "error"
+        ? AlertCircle
+        : activity.status === "running"
+          ? Loader2
+          : Clock3
 
   return (
-    <div className="py-2 my-2 rounded-lg border bg-muted/30 px-3">
+    <div className="mb-3">
       <button
         type="button"
-        className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors w-full"
-        onClick={() => setExpanded(!expanded)}
+        className={cn(
+          "group flex min-h-8 w-full items-center gap-2 rounded-md border border-border/55 bg-background/45 px-2.5 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:border-border/80 hover:bg-accent/20 hover:text-foreground",
+          activity.status === "error" && "border-destructive/30 bg-destructive/5 text-destructive",
+        )}
+        onClick={() => hasArgs && setExpanded((prev) => !prev)}
       >
-        <div className="flex items-center justify-center h-5 w-5 rounded bg-amber-100 dark:bg-amber-900/30 shrink-0">
+        <div className="flex size-5 shrink-0 items-center justify-center rounded border border-border/50 bg-background/70">
           {isKnowledgeSearch
-            ? <Search className="h-3 w-3 text-amber-600 dark:text-amber-400" />
-            : <Wrench className="h-3 w-3 text-amber-600 dark:text-amber-400" />}
+            ? <Search className="size-3 text-amber-600 dark:text-amber-400" />
+            : <Wrench className="size-3 text-amber-600 dark:text-amber-400" />}
         </div>
-        {expanded ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
-        <span className="truncate">
+        <StatusIcon
+          className={cn(
+            "size-3.5 shrink-0",
+            activity.status === "running" && "animate-spin text-primary",
+            activity.status === "completed" && "text-emerald-600 dark:text-emerald-400",
+            activity.status === "error" && "text-destructive",
+          )}
+        />
+        <span className="shrink-0">{statusLabel}</span>
+        <span className="min-w-0 flex-1 truncate text-foreground/80">
           {isKnowledgeSearch && parsedArgs
-            ? `${t("ai:tools.toolDefs.search_knowledge.name")}: "${parsedArgs.query ?? ""}`
-            : t("ai:chat.toolCall", { name: toolName })}
+            ? `${toolDisplayName}: "${parsedArgs.query ?? ""}"`
+            : toolDisplayName}
         </span>
-        {durationMs != null && (
-          <span className="ml-auto text-[10px] text-muted-foreground/60 shrink-0">
-            {(durationMs / 1000).toFixed(1)}s
+        {activity.durationMs != null && (
+          <span className="shrink-0 text-[10px] text-muted-foreground/60">
+            {(activity.durationMs / 1000).toFixed(1)}s
           </span>
         )}
+        {hasArgs && (
+          expanded
+            ? <ChevronDown className="size-3 shrink-0 text-muted-foreground/70" />
+            : <ChevronRight className="size-3 shrink-0 text-muted-foreground/70" />
+        )}
       </button>
-      {expanded && toolArgs && (
-        <pre className="mt-2 text-xs bg-muted rounded-md p-3 overflow-auto max-h-48 font-mono">
-          {toolArgs}
+      {expanded && argsText && (
+        <pre className="mt-1.5 max-h-44 overflow-auto rounded-md border border-border/50 bg-muted/35 p-3 text-xs font-mono text-muted-foreground">
+          {argsText}
         </pre>
       )}
     </div>
   )
 }
 
-// Tool result component
-function ToolResultDisplay({ content }: { content: string }) {
-  const { t } = useTranslation(["ai"])
-  const [expanded, setExpanded] = useState(false)
-
-  return (
-    <div className="py-2 my-2 ml-4">
-      <button
-        type="button"
-        className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
-        onClick={() => setExpanded(!expanded)}
-      >
-        {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-        <span>{t("ai:chat.toolResult")}</span>
-      </button>
-      {expanded && (
-        <pre className="mt-2 text-xs bg-muted rounded-md p-3 overflow-auto max-h-48 font-mono">
-          {content}
-        </pre>
-      )}
-    </div>
-  )
+function useToolArgs(toolArgs: unknown) {
+  return useMemo(() => {
+    if (toolArgs == null) return { argsText: undefined, parsedArgs: null }
+    if (typeof toolArgs === "string") {
+      try {
+        const parsed = JSON.parse(toolArgs) as Record<string, unknown>
+        return { argsText: JSON.stringify(parsed, null, 2), parsedArgs: parsed }
+      } catch {
+        return { argsText: toolArgs, parsedArgs: null }
+      }
+    }
+    if (typeof toolArgs === "object") {
+      return {
+        argsText: JSON.stringify(toolArgs, null, 2),
+        parsedArgs: toolArgs as Record<string, unknown>,
+      }
+    }
+    return { argsText: String(toolArgs), parsedArgs: null }
+  }, [toolArgs])
 }
 
-// Streaming tool adapter — renders dynamic-tool parts with existing UI
-function StreamingTool({ part }: { part: DynamicToolUIPart }) {
-  const inputStr = useMemo(() => {
-    if (part.input == null) return undefined
-    return typeof part.input === "string" ? part.input : JSON.stringify(part.input, null, 2)
-  }, [part.input])
+type ChatToolPart = DynamicToolUIPart | ToolUIPart
 
-  const outputStr = useMemo(() => {
-    if (part.output == null) return undefined
-    return typeof part.output === "string" ? part.output : JSON.stringify(part.output, null, 2)
-  }, [part.output])
+function isChatToolPart(part: UIMessage["parts"][number]): part is ChatToolPart {
+  return part.type === "dynamic-tool" || part.type.startsWith("tool-")
+}
 
-  if (part.state === "input-available" || part.state === "input-streaming") {
-    return <ToolCallDisplay toolName={part.toolName} toolArgs={inputStr} />
+function isDataPart(part: UIMessage["parts"][number]) {
+  return part.type.startsWith("data-")
+}
+
+function dataPartIdentity(part: UIMessage["parts"][number], fallback: number) {
+  const data = (part as { data?: unknown }).data
+  if (data && typeof data === "object" && "surfaceId" in data) {
+    const surfaceId = (data as { surfaceId?: unknown }).surfaceId
+    if (typeof surfaceId === "string" && surfaceId) {
+      return `${part.type}:${surfaceId}`
+    }
+  }
+  return `${part.type}:${fallback}`
+}
+
+function getToolName(part: ChatToolPart) {
+  return part.type === "dynamic-tool" ? part.toolName : part.type.split("-").slice(1).join("-")
+}
+
+function getToolStatusFromPart(part: ChatToolPart): ToolActivityStatus {
+  if (part.state === "input-streaming") return "preparing"
+  if (part.state === "input-available") return "running"
+  if (part.state === "output-error" || Boolean(part.errorText)) return "error"
+  if (part.state === "output-available") {
+    if (typeof part.output === "string" && (part.output.startsWith("Error:") || part.output.includes("unknown tool:"))) {
+      return "error"
+    }
+    return "completed"
+  }
+  return "running"
+}
+
+function toolStatusFromMetadata(status: unknown): ToolActivityStatus | undefined {
+  if (status === "running") return "running"
+  if (status === "completed") return "completed"
+  if (status === "error") return "error"
+  return undefined
+}
+
+function collectToolActivities(aiMessages: UIMessage[], mainAiMessage?: UIMessage): ToolActivity[] {
+  const activities = new Map<string, ToolActivity>()
+  const order: string[] = []
+
+  const addActivity = (activity: ToolActivity) => {
+    const existing = activities.get(activity.id)
+    if (!existing) {
+      activities.set(activity.id, activity)
+      order.push(activity.id)
+      return
+    }
+    activities.set(activity.id, { ...existing, ...activity })
   }
 
-  return (
-    <>
-      <ToolCallDisplay toolName={part.toolName} toolArgs={inputStr} />
-      {outputStr && <ToolResultDisplay content={outputStr} />}
-      {part.errorText && <ToolResultDisplay content={part.errorText} />}
-    </>
-  )
+  for (const tool of aiMessages) {
+    const meta = tool.metadata as {
+      originalRole?: string
+      tool_name?: string
+      tool_args?: unknown
+      tool_call_id?: string
+      duration_ms?: number
+      status?: string
+    } | undefined
+    if (meta?.originalRole === "tool_call") {
+      const id = meta.tool_call_id || String(tool.id)
+      addActivity({
+        id,
+        toolName: meta.tool_name || "unknown",
+        toolArgs: meta.tool_args,
+        durationMs: meta.duration_ms,
+        status: toolStatusFromMetadata(meta.status) ?? "running",
+      })
+    } else if (meta?.originalRole === "tool_result") {
+      const id = meta.tool_call_id || String(tool.id)
+      const existing = activities.get(id)
+      addActivity({
+        id,
+        toolName: existing?.toolName || meta.tool_name || "unknown",
+        toolArgs: existing?.toolArgs ?? meta.tool_args,
+        durationMs: typeof meta.duration_ms === "number" ? meta.duration_ms : existing?.durationMs,
+        status: toolStatusFromMetadata(meta.status) ?? "completed",
+      })
+    }
+  }
+
+  for (const part of mainAiMessage?.parts?.filter(isChatToolPart) ?? []) {
+    const id = part.toolCallId
+    addActivity({
+      id,
+      toolName: getToolName(part),
+      toolArgs: part.input,
+      status: getToolStatusFromPart(part),
+      errorText: part.errorText,
+    })
+  }
+
+  return order.map((id) => activities.get(id)).filter((activity): activity is ToolActivity => Boolean(activity))
 }
 
 // AI Response display
@@ -223,15 +335,7 @@ export function AIResponse({
 }) {
   const { t } = useTranslation(["ai"])
   const [copied, setCopied] = useState(false)
-  const [showMarkdown, setShowMarkdown] = useState(!isStreaming)
-
-  useEffect(() => {
-    if (!isStreaming) {
-      const timer = setTimeout(() => setShowMarkdown(true), 80)
-      return () => clearTimeout(timer)
-    }
-    setShowMarkdown(false)
-  }, [isStreaming])
+  const showMarkdown = !isStreaming
 
   const handleCopy = useCallback(async () => {
     try {
@@ -320,6 +424,8 @@ export function QAPair({
   onEditMessage,
   doneMetrics,
   streamingExtras,
+  renderDataPart,
+  suppressTextWhenDataPart,
 }: QAPairProps) {
   const userImages = (userMessage.metadata as { images?: string[] } | undefined)?.images
   const userText = userMessage.parts
@@ -327,23 +433,22 @@ export function QAPair({
     .map((p) => p.text)
     .join("") || ""
 
-  // Separate historical tools and main AI messages
-  const toolMessages = aiMessages.filter((m) => {
-    const meta = m.metadata as { originalRole?: string } | undefined
-    return meta?.originalRole === "tool_call" || meta?.originalRole === "tool_result"
-  })
-
   const mainAiMessages = aiMessages.filter((m) => {
     const meta = m.metadata as { originalRole?: string } | undefined
     return !["tool_call", "tool_result"].includes(meta?.originalRole || "")
   })
 
   const mainAiMessage = mainAiMessages[mainAiMessages.length - 1]
-
-  // Extract streaming tool parts from the active assistant message
-  const streamingToolParts = mainAiMessage?.parts?.filter(
-    (p): p is DynamicToolUIPart => p.type === "dynamic-tool"
-  ) || []
+  const toolActivities = collectToolActivities(aiMessages, mainAiMessage)
+  const dataParts = mainAiMessages.flatMap((message) => message.parts?.filter(isDataPart) ?? [])
+  const latestDataParts = Array.from(
+    dataParts.reduce((acc, part, index) => acc.set(dataPartIdentity(part, index), part), new Map<string, UIMessage["parts"][number]>()),
+  )
+  const renderedDataParts = renderDataPart
+    ? latestDataParts
+        .map(([key, part]) => ({ key, node: renderDataPart(part) }))
+        .filter((item) => item.node != null)
+    : []
 
   const mainContent = streamingContent || (
     mainAiMessage?.parts
@@ -351,6 +456,7 @@ export function QAPair({
       .map((p) => p.text)
       .join("") || ""
   )
+  const showMainResponse = !suppressTextWhenDataPart || renderedDataParts.length === 0
 
   return (
     <div className="py-6">
@@ -361,41 +467,19 @@ export function QAPair({
         onEdit={onEditMessage}
       />
 
-      {/* Historical tool calls/results */}
-      {toolMessages.map((tool) => {
-        const meta = tool.metadata as {
-          originalRole?: string
-          tool_name?: string
-          tool_args?: string
-          duration_ms?: number
-        } | undefined
-        if (meta?.originalRole === "tool_call") {
-          return (
-            <ToolCallDisplay
-              key={tool.id}
-              toolName={meta?.tool_name || "unknown"}
-              toolArgs={meta?.tool_args}
-              durationMs={meta?.duration_ms}
-            />
-          )
-        }
-        const text = tool.parts
-          ?.filter((p): p is { type: "text"; text: string } => p.type === "text")
-          .map((p) => p.text)
-          .join("") || ""
-        return <ToolResultDisplay key={tool.id} content={text} />
-      })}
-
-      {/* Streaming tool parts */}
-      {streamingToolParts.map((part, idx) => (
-        <StreamingTool key={`${part.toolCallId}-${idx}`} part={part} />
-      ))}
-
       {/* Streaming extras (thinking block, plan progress, loading dots) */}
       {streamingExtras}
 
+      {toolActivities.map((activity) => (
+        <ToolActivityRow key={activity.id} activity={activity} />
+      ))}
+
+      {renderedDataParts.map((item) => (
+        <div key={item.key}>{item.node}</div>
+      ))}
+
       {/* AI response */}
-      {(mainAiMessage || streamingContent) && (
+      {showMainResponse && (mainAiMessage || streamingContent) && (
         <AIResponse
           content={mainContent}
           agentName={agentName}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"metis/internal/llm"
@@ -18,14 +19,15 @@ type decisionToolDef struct {
 
 // decisionToolContext holds the shared context for all decision tool executions.
 type decisionToolContext struct {
-	ctx               context.Context
-	data              DecisionDataProvider
-	ticketID          uint
-	serviceID         uint
-	knowledgeSearcher KnowledgeSearcher
-	resolver          *ParticipantResolver
-	knowledgeBaseIDs  []uint
-	actionExecutor    *ActionExecutor
+	ctx                 context.Context
+	data                DecisionDataProvider
+	ticketID            uint
+	serviceID           uint
+	knowledgeSearcher   KnowledgeSearcher
+	resolver            *ParticipantResolver
+	knowledgeBaseIDs    []uint
+	actionExecutor      *ActionExecutor
+	completedActivityID *uint
 }
 
 // allDecisionTools returns the complete set of decision domain tools.
@@ -81,6 +83,7 @@ func toolTicketContext() decisionToolDef {
 				"description": ticket.Description,
 				"status":      ticket.Status,
 				"source":      ticket.Source,
+				"is_terminal": isTerminalTicketStatus(ticket.Status),
 			}
 
 			// Form data
@@ -105,27 +108,56 @@ func toolTicketContext() decisionToolDef {
 			activities, _ := ctx.data.GetDecisionHistory(ctx.ticketID)
 
 			var history []map[string]any
+			var completedRequirements []map[string]any
 			for _, a := range activities {
-				entry := map[string]any{
-					"type":    a.ActivityType,
-					"name":    a.Name,
-					"outcome": a.TransitionOutcome,
-				}
-				if a.FinishedAt != nil {
-					entry["completed_at"] = a.FinishedAt.Format(time.RFC3339)
-				}
-				if a.AIReasoning != "" {
-					entry["ai_reasoning"] = a.AIReasoning
-				}
-				if a.DecisionReasoning != "" {
-					entry["decision_reasoning"] = a.DecisionReasoning
-				}
+				assignments, _ := ctx.data.GetActivityAssignments(a.ID)
+				entry := activityFactMap(&a, assignments)
 				history = append(history, entry)
+				if a.Status == ActivityCompleted && isHumanActivityType(a.ActivityType) {
+					completedRequirements = append(completedRequirements, map[string]any{
+						"type":         a.ActivityType,
+						"name":         a.Name,
+						"outcome":      a.TransitionOutcome,
+						"operator_opinion": a.DecisionReasoning,
+						"participants": assignmentFacts(assignments),
+						"satisfied":    isPositiveActivityOutcome(a.TransitionOutcome),
+					})
+				}
 			}
 			result["activity_history"] = history
+			result["completed_requirements"] = completedRequirements
+
+			if ctx.completedActivityID != nil && *ctx.completedActivityID > 0 {
+				if completed, err := ctx.data.GetActivityByID(ctx.ticketID, *ctx.completedActivityID); err == nil {
+					assignments, _ := ctx.data.GetActivityAssignments(completed.ID)
+					result["completed_activity"] = activityFactMap(completed, assignments)
+				}
+			}
+
+			currentActivities, _ := ctx.data.GetCurrentActivities(ctx.ticketID)
+			var current []map[string]any
+			for _, a := range currentActivities {
+				current = append(current, map[string]any{
+					"id":                a.ID,
+					"name":              a.Name,
+					"type":              a.ActivityType,
+					"status":            a.Status,
+					"execution_mode":    a.ExecutionMode,
+					"activity_group_id": a.ActivityGroupID,
+					"ai_confidence":     a.AIConfidence,
+				})
+			}
+			result["current_activities"] = current
 
 			// Executed actions — shows which service actions have been successfully run
 			execs, _ := ctx.data.GetExecutedActions(ctx.ticketID)
+			totalActions, _ := ctx.data.CountActiveServiceActions(ctx.serviceID)
+			actionProgress := map[string]any{
+				"total":         totalActions,
+				"executed":      len(execs),
+				"all_completed": totalActions > 0 && int64(len(execs)) >= totalActions,
+			}
+			result["action_progress"] = actionProgress
 
 			if len(execs) > 0 {
 				var execNames []string
@@ -135,8 +167,7 @@ func toolTicketContext() decisionToolDef {
 				result["executed_actions"] = execNames
 
 				// Check if all service actions have been executed
-				totalActions, _ := ctx.data.CountActiveServiceActions(ctx.serviceID)
-				if totalActions > 0 && int64(len(execs)) >= totalActions {
+				if actionProgress["all_completed"] == true {
 					result["all_actions_completed"] = true
 				}
 			}
@@ -173,6 +204,91 @@ func toolTicketContext() decisionToolDef {
 
 			return json.Marshal(result)
 		},
+	}
+}
+
+func activityFactMap(a *activityModel, assignments []ActivityAssignmentInfo) map[string]any {
+	entry := map[string]any{
+		"id":      a.ID,
+		"type":    a.ActivityType,
+		"name":    a.Name,
+		"status":  a.Status,
+		"outcome": a.TransitionOutcome,
+	}
+	if a.FinishedAt != nil {
+		entry["completed_at"] = a.FinishedAt.Format(time.RFC3339)
+	}
+	if a.AIReasoning != "" {
+		entry["ai_reasoning"] = a.AIReasoning
+	}
+	if a.DecisionReasoning != "" {
+		entry["decision_reasoning"] = a.DecisionReasoning
+		entry["operator_opinion"] = a.DecisionReasoning
+	}
+	if a.AIDecision != "" {
+		var decision any
+		if err := json.Unmarshal([]byte(a.AIDecision), &decision); err == nil {
+			entry["source_decision"] = decision
+		}
+	}
+	facts := assignmentFacts(assignments)
+	if len(facts) > 0 {
+		entry["participants"] = facts
+	}
+	return entry
+}
+
+func assignmentFacts(assignments []ActivityAssignmentInfo) []map[string]any {
+	facts := make([]map[string]any, 0, len(assignments))
+	for _, a := range assignments {
+		fact := map[string]any{
+			"participant_type": a.ParticipantType,
+			"status":           a.Status,
+		}
+		if a.UserID != nil {
+			fact["user_id"] = *a.UserID
+		}
+		if a.AssigneeID != nil {
+			fact["assignee_id"] = *a.AssigneeID
+		}
+		if a.PositionID != nil {
+			fact["position_id"] = *a.PositionID
+		}
+		if a.DepartmentID != nil {
+			fact["department_id"] = *a.DepartmentID
+		}
+		if a.FinishedAt != nil {
+			fact["finished_at"] = a.FinishedAt.Format(time.RFC3339)
+		}
+		facts = append(facts, fact)
+	}
+	return facts
+}
+
+func isHumanActivityType(activityType string) bool {
+	switch activityType {
+	case NodeProcess, NodeForm:
+		return true
+	default:
+		return false
+	}
+}
+
+func isPositiveActivityOutcome(outcome string) bool {
+	switch strings.ToLower(strings.TrimSpace(outcome)) {
+	case "", "approve", "approved", "complete", "completed", "process", "processed", "submit", "submitted", "success", "passed":
+		return true
+	default:
+		return false
+	}
+}
+
+func isTerminalTicketStatus(status string) bool {
+	switch status {
+	case "completed", "cancelled", "failed":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -284,7 +400,13 @@ func toolResolveParticipant() decisionToolDef {
 				})
 			}
 
+			status := "resolved"
+			if len(candidates) == 0 {
+				status = "no_candidates"
+			}
 			return json.Marshal(map[string]any{
+				"ok":         len(candidates) > 0,
+				"status":     status,
 				"candidates": candidates,
 				"count":      len(candidates),
 			})
@@ -339,7 +461,7 @@ func toolSimilarHistory() decisionToolDef {
 	return decisionToolDef{
 		Def: llm.ToolDef{
 			Name:        "decision.similar_history",
-			Description: "查询同一服务下已完成工单的处理模式，提供历史参考（平均耗时、常见审批人等）",
+			Description: "查询同一服务下已完成工单的处理模式，提供历史参考（平均耗时、常见处理人等）",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{

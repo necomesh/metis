@@ -28,9 +28,44 @@ interface ModelItem {
   providerId: number
 }
 
-interface ToolkitGroup {
-  toolkit: string
-  tools: BindingItem[]
+interface CapabilitySetItem extends BindingItem {
+  isActive: boolean
+}
+
+interface CapabilitySet {
+  id: number
+  type: "tool" | "mcp" | "skill" | "knowledge_base" | "knowledge_graph"
+  name: string
+  description: string
+  icon?: string
+  itemCount: number
+  items: CapabilitySetItem[]
+}
+
+function useCapabilitySets(type: CapabilitySet["type"]) {
+  return useQuery({
+    queryKey: ["ai-capability-sets", type],
+    queryFn: () =>
+      api.get<{ items: CapabilitySet[] }>(`/api/v1/ai/capability-sets?type=${type}`).then((r) => r?.items ?? []),
+  })
+}
+
+function capabilitySetsToGroups(
+  sets: CapabilitySet[],
+  t: (key: string, options?: { defaultValue?: string }) => string
+): BindingGroup[] {
+  return sets.map((set) => {
+    const isToolSet = set.type === "tool"
+    return {
+      key: String(set.id),
+      id: set.id,
+      title: isToolSet ? t(`ai:tools.toolkits.${set.name}.name`, { defaultValue: set.name }) : set.name,
+      description: isToolSet
+        ? t(`ai:tools.toolkits.${set.name}.description`, { defaultValue: set.description })
+        : set.description,
+      items: set.items,
+    }
+  })
 }
 
 
@@ -55,6 +90,10 @@ const agentSchema = z.object({
   mcpServerIds: z.array(z.number()),
   knowledgeBaseIds: z.array(z.number()),
   knowledgeGraphIds: z.array(z.number()),
+  capabilitySetBindings: z.array(z.object({
+    setId: z.number(),
+    itemIds: z.array(z.number()),
+  })),
 })
 
 export type AgentFormValues = z.infer<typeof agentSchema>
@@ -86,6 +125,7 @@ const defaultValues: AgentFormValues = {
   mcpServerIds: [],
   knowledgeBaseIds: [],
   knowledgeGraphIds: [],
+  capabilitySetBindings: [],
 }
 
 export function AgentForm({ agentType, agent, onSubmit }: AgentFormProps) {
@@ -123,6 +163,7 @@ export function AgentForm({ agentType, agent, onSubmit }: AgentFormProps) {
       mcpServerIds: agent.mcpServerIds ?? [],
       knowledgeBaseIds: agent.knowledgeBaseIds ?? [],
       knowledgeGraphIds: agent.knowledgeGraphIds ?? [],
+      capabilitySetBindings: agent.capabilitySetBindings ?? [],
     }
   }, [agent])
 
@@ -159,57 +200,75 @@ export function AgentForm({ agentType, agent, onSubmit }: AgentFormProps) {
     enabled: selectedProviderId !== "",
   })
 
-  // Fetch binding lists
-  const { data: toolGroups = [], isLoading: toolsLoading } = useQuery({
-    queryKey: ["ai-agent-binding-tools"],
-    queryFn: () =>
-      api.get<{ items: ToolkitGroup[] }>("/api/v1/ai/tools").then((r) => r?.items ?? []),
-  })
-
-  const { data: mcpItems = [], isLoading: mcpLoading } = useQuery({
-    queryKey: ["ai-binding-mcp-servers"],
-    queryFn: () =>
-      api.get<PaginatedResponse<BindingItem>>("/api/v1/ai/mcp-servers?pageSize=100").then((r) => r?.items ?? []),
-  })
-
-  const { data: skillItems = [], isLoading: skillsLoading } = useQuery({
-    queryKey: ["ai-binding-skills"],
-    queryFn: () =>
-      api.get<PaginatedResponse<BindingItem>>("/api/v1/ai/skills?pageSize=100").then((r) => r?.items ?? []),
-  })
-
-  const { data: kbItems = [], isLoading: kbLoading } = useQuery({
-    queryKey: ["ai-binding-knowledge-bases"],
-    queryFn: () =>
-      api.get<PaginatedResponse<BindingItem>>("/api/v1/ai/knowledge-bases?pageSize=100").then((r) => r?.items ?? []),
-  })
-
-  const { data: kgItems = [], isLoading: kgLoading } = useQuery({
-    queryKey: ["ai-binding-knowledge-graphs"],
-    queryFn: () =>
-      api.get<PaginatedResponse<BindingItem>>("/api/v1/ai/knowledge/graphs?pageSize=100").then((r) => r?.items ?? []),
-  })
+  // Fetch capability sets used by agent bindings.
+  const { data: toolSets = [], isLoading: toolsLoading } = useCapabilitySets("tool")
+  const { data: mcpSets = [], isLoading: mcpLoading } = useCapabilitySets("mcp")
+  const { data: skillSets = [], isLoading: skillsLoading } = useCapabilitySets("skill")
+  const { data: kbSets = [], isLoading: kbLoading } = useCapabilitySets("knowledge_base")
+  const { data: kgSets = [], isLoading: kgLoading } = useCapabilitySets("knowledge_graph")
 
   function handleProviderChange(value: string) {
     form.setValue("providerId", value)
     form.setValue("modelId", undefined)
   }
 
-  const toolBindingGroups = useMemo<BindingGroup[]>(() => {
-    return toolGroups.map((group) => ({
-      key: group.toolkit,
-      title: t(`ai:tools.toolkits.${group.toolkit}.name`),
-      description: t(`ai:tools.toolkits.${group.toolkit}.description`),
-      items: group.tools,
-    }))
-  }, [toolGroups, t])
+  const toolBindingGroups = useMemo<BindingGroup[]>(() => capabilitySetsToGroups(toolSets, t), [toolSets, t])
+  const mcpBindingGroups = useMemo<BindingGroup[]>(() => capabilitySetsToGroups(mcpSets, t), [mcpSets, t])
+  const skillBindingGroups = useMemo<BindingGroup[]>(() => capabilitySetsToGroups(skillSets, t), [skillSets, t])
+  const kbBindingGroups = useMemo<BindingGroup[]>(() => capabilitySetsToGroups(kbSets, t), [kbSets, t])
+  const kgBindingGroups = useMemo<BindingGroup[]>(() => capabilitySetsToGroups(kgSets, t), [kgSets, t])
+
+  function groupFirstLabels(name: string, manageGroups: string, sheetTitle: string) {
+    return {
+      selectedGroupCount: (count: number) => t("ai:agents.selectedGroupCount", { count, name }),
+      manageGroups,
+      sheetTitle,
+      emptyTitle: t("ai:agents.noGroupsSelected", { name }),
+      emptyHint: t("ai:agents.manageGroupHint", { name }),
+      availableCount: (count: number) => t("ai:agents.availableItemCount", { count }),
+      unavailableCount: (count: number) => t("ai:agents.unavailableItemCount", { count }),
+    }
+  }
+
+  const capabilitySetBindings = useWatch({ control: form.control, name: "capabilitySetBindings" })
+  const selectedToolIds = useWatch({ control: form.control, name: "toolIds" }) ?? []
+  const selectedMcpServerIds = useWatch({ control: form.control, name: "mcpServerIds" }) ?? []
+  const selectedSkillIds = useWatch({ control: form.control, name: "skillIds" }) ?? []
+  const selectedKnowledgeBaseIds = useWatch({ control: form.control, name: "knowledgeBaseIds" }) ?? []
+  const selectedKnowledgeGraphIds = useWatch({ control: form.control, name: "knowledgeGraphIds" }) ?? []
+  const groupValueMap = useMemo(() => {
+    const map: Record<string, number[]> = {}
+    for (const binding of capabilitySetBindings ?? []) {
+      map[String(binding.setId)] = binding.itemIds ?? []
+    }
+    return map
+  }, [capabilitySetBindings])
+
+  function updateCapabilitySetBinding(
+    group: BindingGroup,
+    itemIds: number[],
+    flatField: "toolIds" | "skillIds" | "mcpServerIds" | "knowledgeBaseIds" | "knowledgeGraphIds"
+  ) {
+    if (!group.id) return
+    const current = form.getValues("capabilitySetBindings") ?? []
+    const next = current.filter((binding) => binding.setId !== group.id)
+    if (itemIds.length > 0) {
+      next.push({ setId: group.id, itemIds })
+    }
+    form.setValue("capabilitySetBindings", next, { shouldDirty: true })
+
+    const groupItemIds = group.items.map((item) => item.id)
+    const currentFlat = form.getValues(flatField) ?? []
+    const nextFlat = [...currentFlat.filter((id) => !groupItemIds.includes(id)), ...itemIds]
+    form.setValue(flatField, Array.from(new Set(nextFlat)), { shouldDirty: true })
+  }
 
   return (
     <Form {...form}>
       <form id="agent-form" onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
         {/* === Basic Info === */}
         <Card>
-          <CardHeader className="pb-4">
+          <CardHeader>
             <CardTitle className="text-base">{t("ai:agents.sections.basic")}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -249,7 +308,7 @@ export function AgentForm({ agentType, agent, onSubmit }: AgentFormProps) {
         {/* === Model Config (assistant only) === */}
         {agentType === "assistant" && (
           <Card>
-            <CardHeader className="pb-4">
+            <CardHeader>
               <CardTitle className="text-base">{t("ai:agents.sections.modelConfig")}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -342,7 +401,7 @@ export function AgentForm({ agentType, agent, onSubmit }: AgentFormProps) {
         {/* === Runtime Config (coding only) === */}
         {agentType === "coding" && (
           <Card>
-            <CardHeader className="pb-4">
+            <CardHeader>
               <CardTitle className="text-base">{t("ai:agents.sections.execution")}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -404,53 +463,93 @@ export function AgentForm({ agentType, agent, onSubmit }: AgentFormProps) {
           sheetDescription={t("ai:agents.toolsSheetDescription")}
           groups={toolBindingGroups}
           isLoading={toolsLoading}
-          value={form.watch("toolIds")}
+          value={selectedToolIds}
           onChange={(ids) => form.setValue("toolIds", ids)}
+          groupValues={groupValueMap}
+          onGroupItemsChange={(group, ids) => updateCapabilitySetBinding(group, ids, "toolIds")}
+          selectionMode="group-first"
+          groupFirstLabels={groupFirstLabels(
+            t("ai:agents.capabilityGroupNames.toolSet"),
+            t("ai:agents.manageCapabilityGroups.toolSet"),
+            t("ai:agents.manageCapabilityGroups.toolSet")
+          )}
         />
         <BindingSelectorSection
           title={t("ai:agents.mcpServers")}
           description={t("ai:agents.mcpServersDescription")}
           sheetTitle={t("ai:agents.selectMcpServers")}
           sheetDescription={t("ai:agents.mcpServersDescription")}
-          items={mcpItems}
+          groups={mcpBindingGroups}
           isLoading={mcpLoading}
-          value={form.watch("mcpServerIds")}
+          value={selectedMcpServerIds}
           onChange={(ids) => form.setValue("mcpServerIds", ids)}
+          groupValues={groupValueMap}
+          onGroupItemsChange={(group, ids) => updateCapabilitySetBinding(group, ids, "mcpServerIds")}
+          selectionMode="group-first"
+          groupFirstLabels={groupFirstLabels(
+            t("ai:agents.capabilityGroupNames.mcp"),
+            t("ai:agents.manageCapabilityGroups.mcp"),
+            t("ai:agents.manageCapabilityGroups.mcp")
+          )}
         />
         <BindingSelectorSection
           title={t("ai:agents.skills")}
           description={t("ai:agents.skillsDescription")}
           sheetTitle={t("ai:agents.selectSkills")}
           sheetDescription={t("ai:agents.skillsDescription")}
-          items={skillItems}
+          groups={skillBindingGroups}
           isLoading={skillsLoading}
-          value={form.watch("skillIds")}
+          value={selectedSkillIds}
           onChange={(ids) => form.setValue("skillIds", ids)}
+          groupValues={groupValueMap}
+          onGroupItemsChange={(group, ids) => updateCapabilitySetBinding(group, ids, "skillIds")}
+          selectionMode="group-first"
+          groupFirstLabels={groupFirstLabels(
+            t("ai:agents.capabilityGroupNames.skill"),
+            t("ai:agents.manageCapabilityGroups.skill"),
+            t("ai:agents.manageCapabilityGroups.skill")
+          )}
         />
         <BindingSelectorSection
           title={t("ai:agents.knowledgeBases")}
           description={t("ai:agents.knowledgeBasesDescription")}
           sheetTitle={t("ai:agents.selectKnowledgeBases")}
           sheetDescription={t("ai:agents.knowledgeBasesDescription")}
-          items={kbItems}
+          groups={kbBindingGroups}
           isLoading={kbLoading}
-          value={form.watch("knowledgeBaseIds")}
+          value={selectedKnowledgeBaseIds}
           onChange={(ids) => form.setValue("knowledgeBaseIds", ids)}
+          groupValues={groupValueMap}
+          onGroupItemsChange={(group, ids) => updateCapabilitySetBinding(group, ids, "knowledgeBaseIds")}
+          selectionMode="group-first"
+          groupFirstLabels={groupFirstLabels(
+            t("ai:agents.capabilityGroupNames.knowledgeBase"),
+            t("ai:agents.manageCapabilityGroups.knowledgeBase"),
+            t("ai:agents.manageCapabilityGroups.knowledgeBase")
+          )}
         />
         <BindingSelectorSection
           title={t("ai:agents.knowledgeGraphs")}
           description={t("ai:agents.knowledgeGraphsDescription")}
           sheetTitle={t("ai:agents.selectKnowledgeGraphs")}
           sheetDescription={t("ai:agents.knowledgeGraphsDescription")}
-          items={kgItems}
+          groups={kgBindingGroups}
           isLoading={kgLoading}
-          value={form.watch("knowledgeGraphIds")}
+          value={selectedKnowledgeGraphIds}
           onChange={(ids) => form.setValue("knowledgeGraphIds", ids)}
+          groupValues={groupValueMap}
+          onGroupItemsChange={(group, ids) => updateCapabilitySetBinding(group, ids, "knowledgeGraphIds")}
+          selectionMode="group-first"
+          groupFirstLabels={groupFirstLabels(
+            t("ai:agents.capabilityGroupNames.knowledgeGraph"),
+            t("ai:agents.manageCapabilityGroups.knowledgeGraph"),
+            t("ai:agents.manageCapabilityGroups.knowledgeGraph")
+          )}
         />
 
         {/* === Prompts (always visible) === */}
         <Card>
-          <CardHeader className="pb-4">
+          <CardHeader>
             <CardTitle className="text-base">{t("ai:agents.sections.prompts")}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">

@@ -111,9 +111,6 @@ func TestBuiltInSmartSeedsAlignParticipantsAndInstallAdminIdentity(t *testing.T)
 	if err := db.Where("code = ?", "it_admin").First(&pos).Error; err != nil {
 		t.Fatalf("load it_admin: %v", err)
 	}
-	if err := db.Create(&org.UserPosition{UserID: admin.ID, DepartmentID: dept.ID, PositionID: pos.ID, IsPrimary: true}).Error; err != nil {
-		t.Fatalf("assign admin identity: %v", err)
-	}
 
 	t.Run("org positions include required built-ins", func(t *testing.T) {
 		for _, code := range []string{"it_admin", "db_admin", "network_admin", "security_admin", "ops_admin", "serial_reviewer"} {
@@ -151,7 +148,7 @@ func TestBuiltInSmartSeedsAlignParticipantsAndInstallAdminIdentity(t *testing.T)
 			t.Fatalf("load smart services: %v", err)
 		}
 		wanted := map[string][]string{
-			"boss-serial-change-request":     {"serial-reviewer", "ops_admin"},
+			"boss-serial-change-request":     {"headquarters", "serial_reviewer", "ops_admin"},
 			"db-backup-whitelist-action-e2e": {"db_admin"},
 			"prod-server-temporary-access":   {"ops_admin", "network_admin", "security_admin"},
 			"vpn-access-request":             {"network_admin", "security_admin"},
@@ -169,6 +166,9 @@ func TestBuiltInSmartSeedsAlignParticipantsAndInstallAdminIdentity(t *testing.T)
 			}
 			if strings.Contains(svc.CollaborationSpec, "dba_admin") {
 				t.Fatalf("service %s should not reference legacy dba_admin code", svc.Code)
+			}
+			if svc.Code == "boss-serial-change-request" && strings.Contains(svc.CollaborationSpec, "serial-reviewer") {
+				t.Fatalf("service %s should not reference fixed serial-reviewer user", svc.Code)
 			}
 		}
 	})
@@ -216,4 +216,80 @@ func TestBuiltInSmartSeedsAlignParticipantsAndInstallAdminIdentity(t *testing.T)
 			t.Fatalf("expected admin to have primary it/it_admin identity, got %d", count)
 		}
 	})
+
+	t.Run("install admin gets all built-in ITSM test identities", func(t *testing.T) {
+		expected := []struct {
+			DeptCode string
+			PosCode  string
+			Primary  bool
+		}{
+			{DeptCode: "it", PosCode: "it_admin", Primary: true},
+			{DeptCode: "it", PosCode: "db_admin"},
+			{DeptCode: "it", PosCode: "network_admin"},
+			{DeptCode: "it", PosCode: "security_admin"},
+			{DeptCode: "it", PosCode: "ops_admin"},
+			{DeptCode: "headquarters", PosCode: "serial_reviewer"},
+		}
+		for _, item := range expected {
+			var count int64
+			if err := db.Table("user_positions AS up").
+				Joins("JOIN departments AS d ON d.id = up.department_id").
+				Joins("JOIN positions AS p ON p.id = up.position_id").
+				Where("up.user_id = ? AND d.code = ? AND p.code = ? AND up.is_primary = ?", admin.ID, item.DeptCode, item.PosCode, item.Primary).
+				Count(&count).Error; err != nil {
+				t.Fatalf("count admin identity %s/%s: %v", item.DeptCode, item.PosCode, err)
+			}
+			if count != 1 {
+				t.Fatalf("expected admin identity %s/%s primary=%v once, got %d", item.DeptCode, item.PosCode, item.Primary, count)
+			}
+		}
+	})
+
+	t.Run("repeated full seed keeps admin identities idempotent", func(t *testing.T) {
+		if err := orgApp.Seed(db, enforcer, true); err != nil {
+			t.Fatalf("repeat seed org: %v", err)
+		}
+		if err := itsmApp.Seed(db, enforcer, true); err != nil {
+			t.Fatalf("repeat seed itsm: %v", err)
+		}
+		var count int64
+		if err := db.Table("user_positions").Where("user_id = ?", admin.ID).Count(&count).Error; err != nil {
+			t.Fatalf("count admin identities after repeat seed: %v", err)
+		}
+		if count != 6 {
+			t.Fatalf("expected 6 admin identities after repeat seed, got %d", count)
+		}
+	})
+}
+
+func TestSeedEngineConfigUpdatesExistingWorkflowGeneratorPrompt(t *testing.T) {
+	db := newSeedAlignmentDB(t)
+	code := "itsm.generator"
+	agent := aiapp.Agent{
+		Name:         "旧工作流解析",
+		Code:         &code,
+		Type:         aiapp.AgentTypeInternal,
+		Visibility:   aiapp.AgentVisibilityTeam,
+		SystemPrompt: "stale prompt",
+		Temperature:  0.9,
+		IsActive:     false,
+	}
+	if err := db.Create(&agent).Error; err != nil {
+		t.Fatalf("create stale generator agent: %v", err)
+	}
+
+	if err := seedEngineConfig(db); err != nil {
+		t.Fatalf("seed engine config: %v", err)
+	}
+
+	var got aiapp.Agent
+	if err := db.Where("code = ?", code).First(&got).Error; err != nil {
+		t.Fatalf("load generator agent: %v", err)
+	}
+	if got.SystemPrompt != itsmGeneratorSystemPrompt {
+		t.Fatalf("expected generator prompt to be refreshed")
+	}
+	if got.Name != "ITSM 工作流解析" || got.Temperature != 0.3 || !got.IsActive {
+		t.Fatalf("expected generator metadata to be refreshed, got name=%q temp=%v active=%v", got.Name, got.Temperature, got.IsActive)
+	}
 }

@@ -66,6 +66,11 @@ func ValidateWorkflow(workflowJSON json.RawMessage) []ValidationError {
 		if n.Type == NodeEnd {
 			endNodes = append(endNodes, n)
 		}
+		if n.Type == NodeProcess || n.Type == NodeWait {
+			if participantErrs := validateHumanNodeParticipants(n); len(participantErrs) > 0 {
+				errs = append(errs, participantErrs...)
+			}
+		}
 	}
 
 	// 2. Exactly one start node
@@ -317,13 +322,13 @@ func ValidateWorkflow(workflowJSON json.RawMessage) []ValidationError {
 			continue
 		}
 
-		// b_timer must attach to human nodes (form/approve/process)
+		// b_timer must attach to human nodes (form/process)
 		if n.Type == NodeBTimer {
-			if hostNode.Type != NodeForm && hostNode.Type != NodeApprove && hostNode.Type != NodeProcess {
+			if hostNode.Type != NodeForm && hostNode.Type != NodeProcess {
 				errs = append(errs, ValidationError{
 					NodeID:  n.ID,
 					Level:   "error",
-					Message: fmt.Sprintf("边界定时器 %s 只能附着在人工节点（form/approve/process）上，当前附着在 %s", n.ID, hostNode.Type),
+					Message: fmt.Sprintf("边界定时器 %s 只能附着在人工节点（form/process）上，当前附着在 %s", n.ID, hostNode.Type),
 				})
 			}
 			// b_timer must have duration
@@ -438,6 +443,54 @@ func ValidateWorkflow(workflowJSON json.RawMessage) []ValidationError {
 		}
 	}
 
+	return errs
+}
+
+func validateHumanNodeParticipants(n *WFNode) []ValidationError {
+	nd, err := ParseNodeData(n.Data)
+	if err != nil {
+		return []ValidationError{{
+			NodeID:  n.ID,
+			Level:   "error",
+			Message: fmt.Sprintf("人工节点 %s 数据解析失败: %v", n.ID, err),
+		}}
+	}
+	if len(nd.Participants) == 0 {
+		return []ValidationError{{
+			NodeID:  n.ID,
+			Level:   "error",
+			Message: fmt.Sprintf("人工节点 %s 必须配置处理人", n.ID),
+		}}
+	}
+
+	var errs []ValidationError
+	for i, p := range nd.Participants {
+		switch p.Type {
+		case "user", "position", "department":
+			if p.Value == "" {
+				errs = append(errs, ValidationError{
+					NodeID:  n.ID,
+					Level:   "error",
+					Message: fmt.Sprintf("人工节点 %s 的第 %d 个处理人缺少 value", n.ID, i+1),
+				})
+			}
+		case "position_department":
+			if p.PositionCode == "" || p.DepartmentCode == "" {
+				errs = append(errs, ValidationError{
+					NodeID:  n.ID,
+					Level:   "error",
+					Message: fmt.Sprintf("人工节点 %s 的第 %d 个处理人必须同时配置 position_code 和 department_code", n.ID, i+1),
+				})
+			}
+		case "requester_manager":
+		default:
+			errs = append(errs, ValidationError{
+				NodeID:  n.ID,
+				Level:   "error",
+				Message: fmt.Sprintf("人工节点 %s 的第 %d 个处理人类型 %q 不支持", n.ID, i+1, p.Type),
+			})
+		}
+	}
 	return errs
 }
 

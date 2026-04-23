@@ -35,8 +35,10 @@ func (a *AIApp) Models() []any {
 		&KnowledgeBase{},
 		// Tool registry
 		&Tool{}, &MCPServer{}, &Skill{},
+		&CapabilitySet{}, &CapabilitySetItem{},
 		&AgentTool{}, &AgentMCPServer{}, &AgentSkill{},
 		// Agent runtime
+		&AgentCapabilitySet{}, &AgentCapabilitySetItem{},
 		&Agent{}, &AgentTemplate{}, &AgentKnowledgeBase{}, &AgentKnowledgeGraph{},
 		&AgentSession{}, &SessionMessage{}, &AgentMemory{},
 	}
@@ -68,6 +70,10 @@ func (a *AIApp) Providers(i do.Injector) {
 	do.Provide(i, NewKnowledgeSourceHandler)
 	do.Provide(i, NewKnowledgeLogRepo)
 	do.Provide(i, NewKnowledgeAssetService)
+	do.Provide(i, NewKnowledgeSearchService)
+	do.Provide(i, func(i do.Injector) (app.AIKnowledgeSearcher, error) {
+		return do.MustInvoke[*KnowledgeSearchService](i), nil
+	})
 	// Knowledge — graph engine
 	do.Provide(i, NewConceptMapEngine)
 	do.Provide(i, NewKnowledgeGraphHandler)
@@ -86,11 +92,15 @@ func (a *AIApp) Providers(i do.Injector) {
 	do.Provide(i, NewToolService)
 	do.Provide(i, NewToolHandler)
 	do.Provide(i, NewMCPServerRepo)
+	do.Provide(i, NewDefaultMCPRuntimeClient)
 	do.Provide(i, NewMCPServerService)
 	do.Provide(i, NewMCPServerHandler)
 	do.Provide(i, NewSkillRepo)
 	do.Provide(i, NewSkillService)
 	do.Provide(i, NewSkillHandler)
+	do.Provide(i, NewCapabilitySetRepo)
+	do.Provide(i, NewCapabilitySetService)
+	do.Provide(i, NewCapabilitySetHandler)
 	// Tool bindings & assembly
 	do.Provide(i, NewAgentToolRepo)
 	do.Provide(i, NewAgentMCPServerRepo)
@@ -109,7 +119,11 @@ func (a *AIApp) Providers(i do.Injector) {
 	do.Provide(i, NewMemoryService)
 	do.Provide(i, NewMemoryHandler)
 	do.Provide(i, NewAgentGateway)
+	do.Provide(i, func(i do.Injector) (app.AIAgentProvider, error) {
+		return do.MustInvoke[*AgentGateway](i), nil
+	})
 	do.Provide(i, NewKnowledgeQueryHandler)
+	do.Provide(i, NewKnowledgeToolRegistry)
 
 	// DecisionExecutor for smart workflow engine decision cycles
 	do.Provide(i, func(i do.Injector) (app.AIDecisionExecutor, error) {
@@ -236,6 +250,12 @@ func (a *AIApp) Routes(api *gin.RouterGroup) {
 		tools.PUT("/:id", toolH.Update)
 	}
 
+	capabilitySetH := do.MustInvoke[*CapabilitySetHandler](a.injector)
+	capabilitySets := api.Group("/ai/capability-sets")
+	{
+		capabilitySets.GET("", capabilitySetH.List)
+	}
+
 	mcpH := do.MustInvoke[*MCPServerHandler](a.injector)
 	mcpServers := api.Group("/ai/mcp-servers")
 	{
@@ -349,9 +369,11 @@ func (a *AIApp) Tasks() []scheduler.TaskDef {
 // app.ToolRegistryProvider (e.g. ITSM).
 func collectToolRegistries(i do.Injector) []ToolHandlerRegistry {
 	generalReg := do.MustInvoke[*GeneralToolRegistry](i)
+	knowledgeReg := do.MustInvoke[*KnowledgeToolRegistry](i)
 
 	var registries []ToolHandlerRegistry
 	registries = append(registries, generalReg)
+	registries = append(registries, knowledgeReg)
 
 	// Discover registries from other Apps.
 	for _, a := range app.All() {
@@ -367,6 +389,19 @@ func collectToolRegistries(i do.Injector) []ToolHandlerRegistry {
 	}
 
 	return registries
+}
+
+func collectRuntimeContextProviders() []app.AgentRuntimeContextProvider {
+	var providers []app.AgentRuntimeContextProvider
+	for _, a := range app.All() {
+		provider, ok := a.(app.AgentRuntimeContextProvider)
+		if !ok {
+			continue
+		}
+		providers = append(providers, provider)
+		slog.Info("AI: discovered runtime context provider", "app", a.Name())
+	}
+	return providers
 }
 
 // --- userFinderAdapter bridges service.UserService to the UserFinder interface ---
