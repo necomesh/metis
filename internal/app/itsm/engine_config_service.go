@@ -15,25 +15,26 @@ import (
 )
 
 const (
-	smartTicketIntakeAgentKey      = "itsm.smart_ticket.intake.agent_id"
-	smartTicketDecisionAgentKey    = "itsm.smart_ticket.decision.agent_id"
-	smartTicketDecisionModeKey     = "itsm.smart_ticket.decision.mode"
-	smartTicketPathMaxRetriesKey   = "itsm.smart_ticket.path.max_retries"
-	smartTicketPathTimeoutKey      = "itsm.smart_ticket.path.timeout_seconds"
-	smartTicketGuardAuditLevelKey  = "itsm.smart_ticket.guard.audit_level"
-	smartTicketGuardFallbackKey    = "itsm.smart_ticket.guard.fallback_assignee"
-	smartTicketPathBuilderAgentKey = "itsm.path_builder"
+	smartTicketIntakeAgentKey       = "itsm.smart_ticket.intake.agent_id"
+	smartTicketDecisionAgentKey     = "itsm.smart_ticket.decision.agent_id"
+	smartTicketSLAAssuranceAgentKey = "itsm.smart_ticket.sla_assurance.agent_id"
+	smartTicketDecisionModeKey      = "itsm.smart_ticket.decision.mode"
+	smartTicketPathMaxRetriesKey    = "itsm.smart_ticket.path.max_retries"
+	smartTicketPathTimeoutKey       = "itsm.smart_ticket.path.timeout_seconds"
+	smartTicketGuardAuditLevelKey   = "itsm.smart_ticket.guard.audit_level"
+	smartTicketGuardFallbackKey     = "itsm.smart_ticket.guard.fallback_assignee"
+	smartTicketPathBuilderAgentKey  = "itsm.path_builder"
 )
 
 var (
-	ErrEngineNotConfigured  = errors.New("智能工单引擎未配置，请前往引擎配置页面设置")
+	ErrEngineNotConfigured  = errors.New("智能岗位未配置，请前往智能岗位页面设置")
 	ErrModelNotFound        = errors.New("模型不存在或已停用")
 	ErrAgentNotFound        = errors.New("智能体不存在或已停用")
 	ErrFallbackUserNotFound = errors.New("兜底处理人不存在或已停用")
-	ErrInvalidEngineConfig  = errors.New("智能工单引擎配置无效")
+	ErrInvalidEngineConfig  = errors.New("智能岗位配置无效")
 )
 
-// EngineConfigService manages ITSM smart ticket engine configuration.
+// EngineConfigService manages ITSM smart staffing configuration.
 type EngineConfigService struct {
 	agentSvc      *ai.AgentService
 	modelRepo     *ai.ModelRepo
@@ -51,12 +52,21 @@ func NewEngineConfigService(i do.Injector) (*EngineConfigService, error) {
 	}, nil
 }
 
-type EngineConfig struct {
-	Intake   EngineAgentSelector  `json:"intake"`
-	Decision EngineDecisionConfig `json:"decision"`
-	Path     EnginePathConfig     `json:"path"`
-	Guard    EngineGuardConfig    `json:"guard"`
-	Health   EngineHealth         `json:"health"`
+type SmartStaffingConfig struct {
+	Posts   SmartStaffingPosts   `json:"posts"`
+	Runtime SmartStaffingRuntime `json:"runtime"`
+	Health  EngineHealth         `json:"health"`
+}
+
+type SmartStaffingPosts struct {
+	Intake       EngineAgentSelector  `json:"intake"`
+	Decision     EngineDecisionConfig `json:"decision"`
+	SLAAssurance EngineAgentSelector  `json:"slaAssurance"`
+}
+
+type SmartStaffingRuntime struct {
+	PathBuilder EnginePathConfig  `json:"pathBuilder"`
+	Guard       EngineGuardConfig `json:"guard"`
 }
 
 type EngineAgentSelector struct {
@@ -96,87 +106,105 @@ type EngineHealthItem struct {
 }
 
 type UpdateConfigRequest struct {
-	Intake struct {
-		AgentID uint `json:"agentId"`
-	} `json:"intake"`
-	Decision struct {
-		AgentID uint   `json:"agentId"`
-		Mode    string `json:"mode"`
-	} `json:"decision"`
-	Path struct {
-		ModelID        uint    `json:"modelId"`
-		Temperature    float64 `json:"temperature"`
-		MaxRetries     int     `json:"maxRetries"`
-		TimeoutSeconds int     `json:"timeoutSeconds"`
-	} `json:"path"`
-	Guard struct {
-		AuditLevel       string `json:"auditLevel"`
-		FallbackAssignee uint   `json:"fallbackAssignee"`
-	} `json:"guard"`
+	Posts struct {
+		Intake struct {
+			AgentID uint `json:"agentId"`
+		} `json:"intake"`
+		Decision struct {
+			AgentID uint   `json:"agentId"`
+			Mode    string `json:"mode"`
+		} `json:"decision"`
+		SLAAssurance struct {
+			AgentID uint `json:"agentId"`
+		} `json:"slaAssurance"`
+	} `json:"posts"`
+	Runtime struct {
+		PathBuilder struct {
+			ModelID        uint    `json:"modelId"`
+			Temperature    float64 `json:"temperature"`
+			MaxRetries     int     `json:"maxRetries"`
+			TimeoutSeconds int     `json:"timeoutSeconds"`
+		} `json:"pathBuilder"`
+		Guard struct {
+			AuditLevel       string `json:"auditLevel"`
+			FallbackAssignee uint   `json:"fallbackAssignee"`
+		} `json:"guard"`
+	} `json:"runtime"`
 }
 
-func (s *EngineConfigService) GetConfig() (*EngineConfig, error) {
-	cfg := &EngineConfig{
-		Intake: s.readAgentSelector(smartTicketIntakeAgentKey),
-		Decision: EngineDecisionConfig{
-			EngineAgentSelector: s.readAgentSelector(smartTicketDecisionAgentKey),
-			Mode:                s.DecisionMode(),
+func (s *EngineConfigService) GetConfig() (*SmartStaffingConfig, error) {
+	cfg := &SmartStaffingConfig{
+		Posts: SmartStaffingPosts{
+			Intake: s.readAgentSelector(smartTicketIntakeAgentKey),
+			Decision: EngineDecisionConfig{
+				EngineAgentSelector: s.readAgentSelector(smartTicketDecisionAgentKey),
+				Mode:                s.DecisionMode(),
+			},
+			SLAAssurance: s.readAgentSelector(smartTicketSLAAssuranceAgentKey),
 		},
-		Path:  s.readPathConfig(),
-		Guard: s.readGuardConfig(),
+		Runtime: SmartStaffingRuntime{
+			PathBuilder: s.readPathConfig(),
+			Guard:       s.readGuardConfig(),
+		},
 	}
 	cfg.Health = s.buildHealth(cfg)
 	return cfg, nil
 }
 
 func (s *EngineConfigService) UpdateConfig(req *UpdateConfigRequest) error {
-	if req.Intake.AgentID > 0 {
-		if err := s.validateActiveAgent(req.Intake.AgentID); err != nil {
+	if req.Posts.Intake.AgentID > 0 {
+		if err := s.validateActiveAgent(req.Posts.Intake.AgentID); err != nil {
 			return err
 		}
 	}
-	if req.Decision.AgentID > 0 {
-		if err := s.validateActiveAgent(req.Decision.AgentID); err != nil {
+	if req.Posts.Decision.AgentID > 0 {
+		if err := s.validateActiveAgent(req.Posts.Decision.AgentID); err != nil {
 			return err
 		}
 	}
-	if req.Path.ModelID > 0 {
-		if _, err := s.modelRepo.FindByID(req.Path.ModelID); err != nil {
+	if req.Posts.SLAAssurance.AgentID > 0 {
+		if err := s.validateActiveAgent(req.Posts.SLAAssurance.AgentID); err != nil {
+			return err
+		}
+	}
+	if req.Runtime.PathBuilder.ModelID > 0 {
+		if _, err := s.modelRepo.FindByID(req.Runtime.PathBuilder.ModelID); err != nil {
 			return ErrModelNotFound
 		}
 	}
-	if err := validateDecisionMode(req.Decision.Mode); err != nil {
+	if err := validateDecisionMode(req.Posts.Decision.Mode); err != nil {
 		return err
 	}
-	if err := validateAuditLevel(req.Guard.AuditLevel); err != nil {
+	if err := validateAuditLevel(req.Runtime.Guard.AuditLevel); err != nil {
 		return err
 	}
-	if req.Path.Temperature < 0 || req.Path.Temperature > 1 {
-		return fmt.Errorf("%w: 路径引擎温度必须在 0 到 1 之间", ErrInvalidEngineConfig)
+	if req.Runtime.PathBuilder.Temperature < 0 || req.Runtime.PathBuilder.Temperature > 1 {
+		return fmt.Errorf("%w: 参考路径温度必须在 0 到 1 之间", ErrInvalidEngineConfig)
 	}
-	if req.Path.MaxRetries < 0 || req.Path.MaxRetries > 10 {
-		return fmt.Errorf("%w: 路径引擎最大重试次数必须在 0 到 10 之间", ErrInvalidEngineConfig)
+	if req.Runtime.PathBuilder.MaxRetries < 0 || req.Runtime.PathBuilder.MaxRetries > 10 {
+		return fmt.Errorf("%w: 参考路径最大重试次数必须在 0 到 10 之间", ErrInvalidEngineConfig)
 	}
-	if req.Path.TimeoutSeconds < 10 || req.Path.TimeoutSeconds > 300 {
-		return fmt.Errorf("%w: 路径引擎超时时间必须在 10 到 300 秒之间", ErrInvalidEngineConfig)
+	if req.Runtime.PathBuilder.TimeoutSeconds < 10 || req.Runtime.PathBuilder.TimeoutSeconds > 300 {
+		return fmt.Errorf("%w: 参考路径超时时间必须在 10 到 300 秒之间", ErrInvalidEngineConfig)
 	}
-	if req.Guard.FallbackAssignee > 0 {
-		if err := s.validateFallbackAssignee(req.Guard.FallbackAssignee); err != nil {
+	if req.Runtime.Guard.FallbackAssignee > 0 {
+		if err := s.validateFallbackAssignee(req.Runtime.Guard.FallbackAssignee); err != nil {
 			return err
 		}
 	}
 
-	if err := s.updatePathBuilderAgent(req.Path.ModelID, req.Path.Temperature); err != nil {
+	if err := s.updatePathBuilderAgent(req.Runtime.PathBuilder.ModelID, req.Runtime.PathBuilder.Temperature); err != nil {
 		return err
 	}
 
-	s.setConfigValue(smartTicketIntakeAgentKey, strconv.FormatUint(uint64(req.Intake.AgentID), 10))
-	s.setConfigValue(smartTicketDecisionAgentKey, strconv.FormatUint(uint64(req.Decision.AgentID), 10))
-	s.setConfigValue(smartTicketDecisionModeKey, req.Decision.Mode)
-	s.setConfigValue(smartTicketPathMaxRetriesKey, strconv.Itoa(req.Path.MaxRetries))
-	s.setConfigValue(smartTicketPathTimeoutKey, strconv.Itoa(req.Path.TimeoutSeconds))
-	s.setConfigValue(smartTicketGuardAuditLevelKey, req.Guard.AuditLevel)
-	s.setConfigValue(smartTicketGuardFallbackKey, strconv.FormatUint(uint64(req.Guard.FallbackAssignee), 10))
+	s.setConfigValue(smartTicketIntakeAgentKey, strconv.FormatUint(uint64(req.Posts.Intake.AgentID), 10))
+	s.setConfigValue(smartTicketDecisionAgentKey, strconv.FormatUint(uint64(req.Posts.Decision.AgentID), 10))
+	s.setConfigValue(smartTicketSLAAssuranceAgentKey, strconv.FormatUint(uint64(req.Posts.SLAAssurance.AgentID), 10))
+	s.setConfigValue(smartTicketDecisionModeKey, req.Posts.Decision.Mode)
+	s.setConfigValue(smartTicketPathMaxRetriesKey, strconv.Itoa(req.Runtime.PathBuilder.MaxRetries))
+	s.setConfigValue(smartTicketPathTimeoutKey, strconv.Itoa(req.Runtime.PathBuilder.TimeoutSeconds))
+	s.setConfigValue(smartTicketGuardAuditLevelKey, req.Runtime.Guard.AuditLevel)
+	s.setConfigValue(smartTicketGuardFallbackKey, strconv.FormatUint(uint64(req.Runtime.Guard.FallbackAssignee), 10))
 
 	return nil
 }
@@ -296,9 +324,9 @@ func (s *EngineConfigService) setConfigValue(key, value string) {
 	_ = s.sysConfigRepo.Set(cfg)
 }
 
-func (s *EngineConfigService) buildHealth(cfg *EngineConfig) EngineHealth {
+func (s *EngineConfigService) buildHealth(cfg *SmartStaffingConfig) EngineHealth {
 	items := []EngineHealthItem{
-		s.agentHealth("intake", "受理引擎", cfg.Intake.AgentID, []string{
+		s.agentHealth("intake", "服务受理岗", cfg.Posts.Intake.AgentID, []string{
 			"itsm.service_match",
 			"itsm.service_load",
 			"itsm.draft_prepare",
@@ -306,53 +334,61 @@ func (s *EngineConfigService) buildHealth(cfg *EngineConfig) EngineHealth {
 			"itsm.validate_participants",
 			"itsm.ticket_create",
 		}),
-		s.agentHealth("decision", "决策引擎", cfg.Decision.AgentID, []string{
+		s.agentHealth("decision", "流程决策岗", cfg.Posts.Decision.AgentID, []string{
 			"decision.ticket_context",
 			"decision.resolve_participant",
+			"decision.sla_status",
 			"decision.list_actions",
 			"decision.execute_action",
 		}),
-		s.pathHealth(cfg.Path),
-		s.guardHealth(cfg.Guard),
+		s.agentHealth("slaAssurance", "SLA 保障岗", cfg.Posts.SLAAssurance.AgentID, []string{
+			"sla.risk_queue",
+			"sla.ticket_context",
+			"sla.escalation_rules",
+			"sla.trigger_escalation",
+			"sla.write_timeline",
+		}),
+		s.pathHealth(cfg.Runtime.PathBuilder),
+		s.guardHealth(cfg.Runtime.Guard),
 	}
 	return EngineHealth{Items: items}
 }
 
 func (s *EngineConfigService) agentHealth(key, label string, agentID uint, requiredTools []string) EngineHealthItem {
 	if agentID == 0 {
-		return EngineHealthItem{Key: key, Label: label, Status: "fail", Message: label + "未绑定智能体"}
+		return EngineHealthItem{Key: key, Label: label, Status: "fail", Message: label + "未上岗"}
 	}
 	agent, err := s.agentSvc.Get(agentID)
 	if err != nil || !agent.IsActive {
-		return EngineHealthItem{Key: key, Label: label, Status: "fail", Message: label + "绑定的智能体不存在或未启用"}
+		return EngineHealthItem{Key: key, Label: label, Status: "fail", Message: label + "上岗智能体不存在或未启用"}
 	}
 	if agent.ModelID == nil || *agent.ModelID == 0 {
-		return EngineHealthItem{Key: key, Label: label, Status: "fail", Message: label + "绑定的智能体未配置模型"}
+		return EngineHealthItem{Key: key, Label: label, Status: "fail", Message: label + "上岗智能体未配置模型"}
 	}
 	if missing := s.missingAgentTools(agentID, requiredTools); len(missing) > 0 {
-		return EngineHealthItem{Key: key, Label: label, Status: "fail", Message: label + "缺少必需工具：" + missing[0]}
+		return EngineHealthItem{Key: key, Label: label, Status: "fail", Message: label + "工具缺失：" + missing[0]}
 	}
-	return EngineHealthItem{Key: key, Label: label, Status: "pass", Message: label + "已就绪"}
+	return EngineHealthItem{Key: key, Label: label, Status: "pass", Message: label + "已上岗"}
 }
 
 func (s *EngineConfigService) pathHealth(path EnginePathConfig) EngineHealthItem {
 	if path.ModelID == 0 {
-		return EngineHealthItem{Key: "path", Label: "路径引擎", Status: "fail", Message: "路径引擎未配置模型"}
+		return EngineHealthItem{Key: "pathBuilder", Label: "参考路径参数", Status: "fail", Message: "参考路径生成未配置模型"}
 	}
 	if path.MaxRetries < 0 || path.TimeoutSeconds <= 0 {
-		return EngineHealthItem{Key: "path", Label: "路径引擎", Status: "fail", Message: "路径引擎运行参数无效"}
+		return EngineHealthItem{Key: "pathBuilder", Label: "参考路径参数", Status: "fail", Message: "参考路径运行参数无效"}
 	}
-	return EngineHealthItem{Key: "path", Label: "路径引擎", Status: "pass", Message: "路径引擎已就绪"}
+	return EngineHealthItem{Key: "pathBuilder", Label: "参考路径参数", Status: "pass", Message: "参考路径参数已就绪"}
 }
 
 func (s *EngineConfigService) guardHealth(guard EngineGuardConfig) EngineHealthItem {
 	if guard.FallbackAssignee == 0 {
-		return EngineHealthItem{Key: "guard", Label: "运行保障", Status: "warn", Message: "未指定兜底处理人，异常时只能进入人工处置队列"}
+		return EngineHealthItem{Key: "guard", Label: "异常兜底参数", Status: "warn", Message: "未指定兜底处理人，异常时只能进入人工处置队列"}
 	}
 	if err := s.validateFallbackAssignee(guard.FallbackAssignee); err != nil {
-		return EngineHealthItem{Key: "guard", Label: "运行保障", Status: "fail", Message: "兜底处理人不存在或未启用"}
+		return EngineHealthItem{Key: "guard", Label: "异常兜底参数", Status: "fail", Message: "兜底处理人不存在或未启用"}
 	}
-	return EngineHealthItem{Key: "guard", Label: "运行保障", Status: "pass", Message: "运行保障已就绪"}
+	return EngineHealthItem{Key: "guard", Label: "异常兜底参数", Status: "pass", Message: "异常兜底参数已就绪"}
 }
 
 func (s *EngineConfigService) missingAgentTools(agentID uint, required []string) []string {
@@ -385,7 +421,7 @@ func validateDecisionMode(mode string) error {
 	case "direct_first", "ai_only":
 		return nil
 	default:
-		return fmt.Errorf("%w: 决策引擎模式无效", ErrInvalidEngineConfig)
+		return fmt.Errorf("%w: 流程决策岗模式无效", ErrInvalidEngineConfig)
 	}
 }
 
@@ -408,6 +444,10 @@ func (s *EngineConfigService) DecisionMode() string {
 
 func (s *EngineConfigService) DecisionAgentID() uint {
 	return uint(s.getConfigInt(smartTicketDecisionAgentKey, 0))
+}
+
+func (s *EngineConfigService) SLAAssuranceAgentID() uint {
+	return uint(s.getConfigInt(smartTicketSLAAssuranceAgentKey, 0))
 }
 
 func (s *EngineConfigService) IntakeAgentID() uint {

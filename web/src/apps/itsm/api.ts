@@ -621,12 +621,12 @@ export interface EngineAgentConfig {
   temperature: number
 }
 
-export interface EngineAgentSelector {
+export interface StaffingAgentSelector {
   agentId: number
   agentName: string
 }
 
-export interface EnginePathConfig extends EngineAgentConfig {
+export interface StaffingPathBuilderConfig extends EngineAgentConfig {
   maxRetries: number
   timeoutSeconds: number
 }
@@ -638,35 +638,45 @@ export interface EngineHealthItem {
   message: string
 }
 
-export interface EngineConfig {
-  intake: EngineAgentSelector
-  decision: EngineAgentSelector & { mode: string }
-  path: EnginePathConfig
-  guard: {
-    auditLevel: string
-    fallbackAssignee: number
+export interface SmartStaffingConfig {
+  posts: {
+    intake: StaffingAgentSelector
+    decision: StaffingAgentSelector & { mode: string }
+    slaAssurance: StaffingAgentSelector
+  }
+  runtime: {
+    pathBuilder: StaffingPathBuilderConfig
+    guard: {
+      auditLevel: string
+      fallbackAssignee: number
+    }
   }
   health: {
     items: EngineHealthItem[]
   }
 }
 
-export interface EngineConfigUpdate {
-  intake: { agentId: number }
-  decision: { agentId: number; mode: string }
-  path: { modelId: number; temperature: number; maxRetries: number; timeoutSeconds: number }
-  guard: { auditLevel: string; fallbackAssignee: number }
+export interface SmartStaffingConfigUpdate {
+  posts: {
+    intake: { agentId: number }
+    decision: { agentId: number; mode: string }
+    slaAssurance: { agentId: number }
+  }
+  runtime: {
+    pathBuilder: { modelId: number; temperature: number; maxRetries: number; timeoutSeconds: number }
+    guard: { auditLevel: string; fallbackAssignee: number }
+  }
 }
 
-export function fetchEngineConfig() {
-  return api.get<EngineConfig>("/api/v1/itsm/engine/config")
+export function fetchSmartStaffingConfig() {
+  return api.get<SmartStaffingConfig>("/api/v1/itsm/smart-staffing/config")
 }
 
-export function updateEngineConfig(data: EngineConfigUpdate) {
-  return api.put("/api/v1/itsm/engine/config", data)
+export function updateSmartStaffingConfig(data: SmartStaffingConfigUpdate) {
+  return api.put("/api/v1/itsm/smart-staffing/config", data)
 }
 
-// ─── AI Provider / Model APIs (for engine config) ───────
+// ─── AI Provider / Model APIs (for smart staffing runtime) ───────
 
 export interface ProviderItem {
   id: number

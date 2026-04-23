@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { FormRenderer, type FormSchema } from "../../components/form-engine"
 import {
-  fetchEngineConfig,
+  fetchSmartStaffingConfig,
   submitServiceDeskDraft,
   type AgenticUISurface,
   type ITSMDraftFormSurface,
@@ -264,10 +264,10 @@ function NotOnDutyState({ loading }: { loading: boolean }) {
         )}
         <h2 className="mt-4 text-lg font-semibold">服务台智能体未配置</h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          需要在智能工单引擎配置中绑定受理引擎智能体。
+          需要在智能岗位中为服务受理岗安排智能体。
         </p>
-        <Button className="mt-5" onClick={() => navigate("/itsm/engine-config")}>
-          前往引擎配置
+        <Button className="mt-5" onClick={() => navigate("/itsm/smart-staffing")}>
+          前往智能岗位
         </Button>
       </div>
     </div>
@@ -639,12 +639,12 @@ export function Component() {
   const [pendingInitialPrompt, setPendingInitialPrompt] = useState<{ sessionId: number; text: string } | null>(null)
 
   const { data: config, isLoading: configLoading } = useQuery({
-    queryKey: ["itsm-engine-config"],
-    queryFn: fetchEngineConfig,
+    queryKey: ["itsm-smart-staffing-config"],
+    queryFn: fetchSmartStaffingConfig,
   })
 
-  const serviceDeskAgentId = config?.intake?.agentId ?? 0
-  const serviceDeskAgentName = config?.intake?.agentName || "IT 服务台"
+  const serviceDeskAgentId = config?.posts?.intake?.agentId ?? 0
+  const serviceDeskAgentName = config?.posts?.intake?.agentName || "IT 服务台"
 
   const sessionsQuery = useQuery({
     queryKey: ["ai-sessions", serviceDeskAgentId],

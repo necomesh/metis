@@ -70,14 +70,14 @@ func (m *LLMServiceMatcher) MatchServices(ctx context.Context, query string) ([]
 
 	agentID := m.config.IntakeAgentID()
 	if agentID == 0 {
-		return nil, tools.MatchDecision{}, fmt.Errorf("受理引擎未配置智能体")
+		return nil, tools.MatchDecision{}, fmt.Errorf("服务受理岗未上岗")
 	}
 	agentCfg, err := m.agentProvider.GetAgentConfig(agentID)
 	if err != nil {
 		return nil, tools.MatchDecision{}, fmt.Errorf("load service desk agent config: %w", err)
 	}
 	if agentCfg == nil || agentCfg.Model == "" || agentCfg.Protocol == "" {
-		return nil, tools.MatchDecision{}, fmt.Errorf("受理引擎智能体模型未配置")
+		return nil, tools.MatchDecision{}, fmt.Errorf("服务受理岗上岗智能体未配置模型")
 	}
 
 	candidates, err := m.loadCandidates()

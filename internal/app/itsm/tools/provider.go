@@ -99,7 +99,7 @@ func AllTools() []ITSMTool {
 		{
 			Name:        "itsm.validate_participants",
 			DisplayName: "参与者预检",
-				Description: "在创建工单前校验处理参与者是否可达。service_id 可传真实服务 ID 或候选序号，但工具会以当前已加载服务为准；form_data 缺省时复用当前草稿表单数据。",
+			Description: "在创建工单前校验处理参与者是否可达。service_id 可传真实服务 ID 或候选序号，但工具会以当前已加载服务为准；form_data 缺省时复用当前草稿表单数据。",
 			ParametersSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
@@ -145,6 +145,70 @@ func AllTools() []ITSMTool {
 					"reason": {"type": "string", "description": "撤回原因（可选）"}
 				},
 				"required": ["ticket_code"]
+			}`),
+		},
+		{
+			Name:        "sla.risk_queue",
+			DisplayName: "SLA 风险队列",
+			Description: "读取未终态工单的 SLA 风险与超时候选队列，供 SLA 保障岗判断需要处理的对象。",
+			ParametersSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"status": {"type": "string", "description": "风险状态筛选，可选值：warning、critical、breached"}
+				}
+			}`),
+		},
+		{
+			Name:        "sla.ticket_context",
+			DisplayName: "SLA 工单上下文",
+			Description: "读取指定工单的 SLA 状态、服务、优先级、责任人、当前活动和最近时间线。",
+			ParametersSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"ticket_id": {"type": "integer", "description": "工单 ID"}
+				},
+				"required": ["ticket_id"]
+			}`),
+		},
+		{
+			Name:        "sla.escalation_rules",
+			DisplayName: "SLA 升级规则",
+			Description: "读取指定工单命中的 SLA 升级规则，返回触发类型、级别、等待时间和动作配置。",
+			ParametersSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"ticket_id": {"type": "integer", "description": "工单 ID"},
+					"trigger_type": {"type": "string", "description": "触发类型：response_timeout 或 resolution_timeout"}
+				},
+				"required": ["ticket_id", "trigger_type"]
+			}`),
+		},
+		{
+			Name:        "sla.trigger_escalation",
+			DisplayName: "触发 SLA 升级",
+			Description: "在已命中 SLA 规则时触发通知、改派或提优先级动作；调用结果必须写入审计时间线。",
+			ParametersSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"ticket_id": {"type": "integer", "description": "工单 ID"},
+					"rule_id": {"type": "integer", "description": "升级规则 ID"},
+					"reasoning": {"type": "string", "description": "触发动作的证据和理由"}
+				},
+				"required": ["ticket_id", "rule_id", "reasoning"]
+			}`),
+		},
+		{
+			Name:        "sla.write_timeline",
+			DisplayName: "写入 SLA 审计",
+			Description: "把 SLA 保障岗的观察、建议、跳过原因或动作结果写入工单时间线。",
+			ParametersSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"ticket_id": {"type": "integer", "description": "工单 ID"},
+					"message": {"type": "string", "description": "时间线消息"},
+					"reasoning": {"type": "string", "description": "证据、规则和判断依据"}
+				},
+				"required": ["ticket_id", "message"]
 			}`),
 		},
 	}
@@ -201,6 +265,8 @@ func SeedTools(db *gorm.DB) error {
 			toolkit := "itsm"
 			if len(tool.Name) > 9 && tool.Name[:9] == "decision." {
 				toolkit = "decision"
+			} else if len(tool.Name) > 4 && tool.Name[:4] == "sla." {
+				toolkit = "sla"
 			}
 			if err := db.Table("ai_tools").Create(map[string]any{
 				"toolkit":           toolkit,
@@ -312,6 +378,26 @@ const decisionAgentSystemPrompt = `你是流程决策智能体，负责为智能
 - 不允许把姓名当 username，不允许把岗位名称当 position_code，不允许把部门名称当 department_code。
 - confidence 必须反映证据强度：未解析到参与者、知识冲突、动作失败或上下文不足时降低置信度。`
 
+const slaAssuranceAgentSystemPrompt = `你是 SLA 保障岗，负责监督智能 ITSM 工单的 SLA 风险并在规则命中时触发升级动作。
+
+## 职责边界
+
+- SLA 是否超时只以系统计时器和 SLA 状态为准，不做主观改写。
+- 你可以读取风险队列、工单上下文和升级规则，并在规则已命中时触发通知、改派或提优先级。
+- 每次动作都必须说明证据：工单、触发类型、规则级别、动作类型、目标对象和风险原因。
+- 未配置规则、证据不足或动作不允许时，不触发升级，只写入时间线说明。
+
+## 操作要求
+
+1. 先读取 sla.risk_queue 或指定工单上下文。
+2. 对候选工单读取 sla.ticket_context 和 sla.escalation_rules。
+3. 只有规则已命中时才调用 sla.trigger_escalation。
+4. 所有观察、跳过、触发结果都用 sla.write_timeline 留痕。
+
+## 输出
+
+- 面向管理员，简洁说明已处理的风险和仍需人工介入的事项。`
+
 // SeedAgents creates preset ITSM agents in the ai_agents table.
 // Skips entirely if ai_agents table doesn't exist (AI App not installed).
 func SeedAgents(db *gorm.DB) error {
@@ -382,6 +468,25 @@ func SeedAgents(db *gorm.DB) error {
 				"decision.sla_status",
 				"decision.list_actions",
 				"decision.execute_action",
+			},
+		},
+		{
+			Name:         "SLA 保障智能体",
+			Code:         "itsm.sla_assurance",
+			Description:  "SLA 保障岗智能体，读取 SLA 风险队列和升级规则，在规则命中时触发通知、改派或提优先级并写入审计时间线",
+			Type:         "assistant",
+			Visibility:   "private",
+			Strategy:     "react",
+			Temperature:  0.2,
+			MaxTokens:    4096,
+			MaxTurns:     8,
+			SystemPrompt: slaAssuranceAgentSystemPrompt,
+			ToolNames: []string{
+				"sla.risk_queue",
+				"sla.ticket_context",
+				"sla.escalation_rules",
+				"sla.trigger_escalation",
+				"sla.write_timeline",
 			},
 		},
 	}

@@ -345,7 +345,7 @@ func seedServiceHealthPathEngine(t *testing.T, db *gorm.DB) ai.Agent {
 	modelID := uint(1)
 	code := smartTicketPathBuilderAgentKey
 	agent := ai.Agent{
-		Name:       "ITSM 路径引擎",
+		Name:       "ITSM 参考路径生成",
 		Code:       &code,
 		Type:       ai.AgentTypeInternal,
 		ModelID:    &modelID,

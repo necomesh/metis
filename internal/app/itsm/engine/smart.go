@@ -572,7 +572,7 @@ func (e *SmartEngine) tryFallbackAssignment(tx *gorm.DB, ticketID uint, activity
 	if err := tx.Table("users").Where("id = ? AND deleted_at IS NULL", fallbackID).
 		Select("username, is_active").First(&user).Error; err != nil || !user.IsActive {
 		e.recordTimeline(tx, ticketID, &activityID, 0, "participant_fallback_warning",
-			fmt.Sprintf("兜底处理人无效（ID=%d），请检查引擎配置", fallbackID), "")
+			fmt.Sprintf("兜底处理人无效（ID=%d），请检查智能岗位", fallbackID), "")
 		return
 	}
 
@@ -1110,7 +1110,7 @@ func (e *SmartEngine) agenticDecision(ctx context.Context, tx *gorm.DB, ticketID
 		agentID = e.configProvider.DecisionAgentID()
 	}
 	if agentID == 0 {
-		return nil, fmt.Errorf("决策引擎未配置智能体")
+		return nil, fmt.Errorf("流程决策岗未上岗")
 	}
 
 	// Build seed messages (domain context)

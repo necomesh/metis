@@ -26,7 +26,7 @@ registerApp({
         "itsm:sla:list",
       ],
     },
-    { label: "systemConfig", items: ["itsm:engine:config"] },
+    { label: "systemConfig", items: ["itsm:smart-staffing:config"] },
   ],
   routes: [
     {
@@ -125,11 +125,11 @@ registerApp({
       ],
     },
     {
-      path: "itsm/engine-config",
+      path: "itsm/smart-staffing",
       children: [
         {
           index: true,
-          lazy: () => import("./pages/engine-config/index"),
+          lazy: () => import("./pages/smart-staffing/index"),
         },
       ],
     },

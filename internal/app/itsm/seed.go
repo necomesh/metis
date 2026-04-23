@@ -348,8 +348,9 @@ func seedMenus(db *gorm.DB) error {
 		{Name: "删除优先级", Type: model.MenuTypeButton, Permission: "itsm:priority:delete", Sort: 2},
 	})
 
-	// 引擎配置
-	seedMenu(db, &itsmDir.ID, "引擎配置", model.MenuTypeMenu, "/itsm/engine-config", "Settings", "itsm:engine:config", 9)
+	// 智能岗位
+	seedMenu(db, &itsmDir.ID, "智能岗位", model.MenuTypeMenu, "/itsm/smart-staffing", "Briefcase", "itsm:smart-staffing:config", 10)
+	db.Where("permission = ?", "itsm:engine:config").Delete(&model.Menu{})
 
 	// 表单管理 - migrated away: remove menu and buttons
 	var formMenu model.Menu
@@ -437,9 +438,9 @@ func seedPolicies(enforcer *casbin.Enforcer) error {
 		{"admin", "/api/v1/itsm/services/:id/knowledge-documents", "POST"},
 		{"admin", "/api/v1/itsm/services/:id/knowledge-documents", "GET"},
 		{"admin", "/api/v1/itsm/services/:id/knowledge-documents/:docId", "DELETE"},
-		// Engine Config
-		{"admin", "/api/v1/itsm/engine/config", "GET"},
-		{"admin", "/api/v1/itsm/engine/config", "PUT"},
+		// Smart Staffing
+		{"admin", "/api/v1/itsm/smart-staffing/config", "GET"},
+		{"admin", "/api/v1/itsm/smart-staffing/config", "PUT"},
 		// Workflow Generate
 		{"admin", "/api/v1/itsm/workflows/generate", "POST"},
 		// Service Desk
@@ -506,7 +507,7 @@ func seedPolicies(enforcer *casbin.Enforcer) error {
 		{"admin", "itsm:sla:create", "read"},
 		{"admin", "itsm:sla:update", "read"},
 		{"admin", "itsm:sla:delete", "read"},
-		{"admin", "itsm:engine:config", "read"},
+		{"admin", "itsm:smart-staffing:config", "read"},
 	}
 
 	allPolicies := append(policies, menuPerms...)
@@ -517,6 +518,10 @@ func seedPolicies(enforcer *casbin.Enforcer) error {
 			}
 		}
 	}
+
+	_, _ = enforcer.RemovePolicy("admin", "/api/v1/itsm/engine/config", "GET")
+	_, _ = enforcer.RemovePolicy("admin", "/api/v1/itsm/engine/config", "PUT")
+	_, _ = enforcer.RemovePolicy("admin", "itsm:engine:config", "read")
 
 	return nil
 }
@@ -733,7 +738,7 @@ func seedServiceDefinitions(db *gorm.DB) error {
 	return nil
 }
 
-// seedEngineConfig creates internal agents and default SystemConfig for the smart ticket engine.
+// seedEngineConfig creates internal agents and default SystemConfig for smart staffing.
 func seedEngineConfig(db *gorm.DB) error {
 	type agentSeed struct {
 		Name         string
@@ -744,7 +749,7 @@ func seedEngineConfig(db *gorm.DB) error {
 
 	agents := []agentSeed{
 		{
-			Name:         "ITSM 路径引擎",
+			Name:         "ITSM 参考路径生成",
 			Code:         smartTicketPathBuilderAgentKey,
 			Temperature:  0.3,
 			SystemPrompt: itsmPathBuilderSystemPrompt,
@@ -829,8 +834,9 @@ func seedEngineConfig(db *gorm.DB) error {
 
 	// Seed default agent_id for intake and decision engines from preset agents.
 	agentDefaults := map[string]string{
-		smartTicketIntakeAgentKey:   "itsm.servicedesk",
-		smartTicketDecisionAgentKey: "itsm.decision",
+		smartTicketIntakeAgentKey:       "itsm.servicedesk",
+		smartTicketDecisionAgentKey:     "itsm.decision",
+		smartTicketSLAAssuranceAgentKey: "itsm.sla_assurance",
 	}
 	for configKey, agentCode := range agentDefaults {
 		var existing model.SystemConfig
@@ -859,6 +865,7 @@ func migrateSmartTicketEngineConfig(db *gorm.DB) {
 	keyMap := map[string]string{
 		"itsm.engine.servicedesk.agent_id":      smartTicketIntakeAgentKey,
 		"itsm.engine.decision.agent_id":         smartTicketDecisionAgentKey,
+		"itsm.engine.sla_assurance.agent_id":    smartTicketSLAAssuranceAgentKey,
 		"itsm.engine.decision.decision_mode":    smartTicketDecisionModeKey,
 		"itsm.engine.general.max_retries":       smartTicketPathMaxRetriesKey,
 		"itsm.engine.general.timeout_seconds":   smartTicketPathTimeoutKey,
@@ -887,6 +894,7 @@ func deleteLegacySmartTicketEngineConfig(db *gorm.DB) {
 	legacyKeys := []string{
 		"itsm.engine.servicedesk.agent_id",
 		"itsm.engine.decision.agent_id",
+		"itsm.engine.sla_assurance.agent_id",
 		"itsm.engine.decision.decision_mode",
 		"itsm.engine.general.max_retries",
 		"itsm.engine.general.timeout_seconds",
@@ -921,7 +929,7 @@ func deleteLegacyPathBuilderAgent(db *gorm.DB) {
 	}
 }
 
-const itsmPathBuilderSystemPrompt = `你是 ITSM 路径引擎。根据用户的协作规范（Collaboration Spec）生成工作流 JSON。
+const itsmPathBuilderSystemPrompt = `你是 ITSM 参考路径生成器。根据用户的协作规范（Collaboration Spec）生成工作流 JSON。
 
 ## 输出格式
 

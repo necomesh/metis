@@ -45,9 +45,9 @@ func (h *EngineConfigHandler) Update(c *gin.Context) {
 		return
 	}
 
-	c.Set("audit_action", "itsm.engine_config.update")
-	c.Set("audit_resource", "itsm_engine_config")
-	c.Set("audit_summary", "Updated ITSM engine configuration")
+	c.Set("audit_action", "itsm.smart_staffing.update")
+	c.Set("audit_resource", "itsm_smart_staffing")
+	c.Set("audit_summary", "Updated ITSM smart staffing configuration")
 
 	handler.OK(c, nil)
 }

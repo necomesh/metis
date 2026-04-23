@@ -245,13 +245,13 @@ func (s *ServiceDefService) computePublishHealthCheck(svc *ServiceDefinition) *S
 
 	decisionAgentID := strings.TrimSpace(s.systemConfigValue(smartTicketDecisionAgentKey))
 	if decisionAgentID == "" || decisionAgentID == "0" {
-		add("decision_agent", "决策引擎", "fail", "决策引擎未绑定智能体")
+		add("decision_agent", "流程决策岗", "fail", "流程决策岗未上岗")
 	} else {
 		id, err := strconv.ParseUint(decisionAgentID, 10, 64)
 		if err != nil {
-			add("decision_agent", "决策引擎", "fail", "决策引擎配置值不是有效智能体 ID")
+			add("decision_agent", "流程决策岗", "fail", "流程决策岗配置值不是有效智能体 ID")
 		} else if agentID := uint(id); agentID == 0 || s.validateAgent(&agentID) != nil {
-			add("decision_agent", "决策引擎", "fail", "决策引擎绑定的智能体不存在或未启用")
+			add("decision_agent", "流程决策岗", "fail", "流程决策岗上岗智能体不存在或未启用")
 		}
 	}
 
@@ -278,17 +278,17 @@ func (s *ServiceDefService) checkPathEngineRisk() *ServiceHealthItem {
 	if err := s.db.Table("ai_agents").Where("code = ?", smartTicketPathBuilderAgentKey).Select("id, model_id").First(&row).Error; err != nil {
 		return &ServiceHealthItem{
 			Key:     "path_engine",
-			Label:   "路径引擎",
+			Label:   "参考路径生成",
 			Status:  "fail",
-			Message: "路径引擎不存在，无法生成协作路径",
+			Message: "参考路径生成能力不存在，无法生成协作路径",
 		}
 	}
 	if row.ModelID == nil || *row.ModelID == 0 {
 		return &ServiceHealthItem{
 			Key:     "path_engine",
-			Label:   "路径引擎",
+			Label:   "参考路径生成",
 			Status:  "fail",
-			Message: "路径引擎未配置模型，无法生成协作路径",
+			Message: "参考路径生成未配置模型，无法生成协作路径",
 		}
 	}
 	return nil

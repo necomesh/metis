@@ -68,8 +68,12 @@ func TestEngineConfigServiceReadsAndUpdatesSmartTicketConfig(t *testing.T) {
 	if err := db.Where("code = ?", "itsm.decision").First(&decisionAgent).Error; err != nil {
 		t.Fatalf("load decision agent: %v", err)
 	}
-	if err := db.Model(&aiapp.Agent{}).Where("id IN ?", []uint{intakeAgent.ID, decisionAgent.ID}).Update("model_id", model.ID).Error; err != nil {
-		t.Fatalf("bind engine agent models: %v", err)
+	var slaAssuranceAgent aiapp.Agent
+	if err := db.Where("code = ?", "itsm.sla_assurance").First(&slaAssuranceAgent).Error; err != nil {
+		t.Fatalf("load SLA assurance agent: %v", err)
+	}
+	if err := db.Model(&aiapp.Agent{}).Where("id IN ?", []uint{intakeAgent.ID, decisionAgent.ID, slaAssuranceAgent.ID}).Update("model_id", model.ID).Error; err != nil {
+		t.Fatalf("bind staffing agent models: %v", err)
 	}
 
 	fallback := coremodel.User{Username: "fallback", IsActive: true}
@@ -78,15 +82,16 @@ func TestEngineConfigServiceReadsAndUpdatesSmartTicketConfig(t *testing.T) {
 	}
 
 	var req UpdateConfigRequest
-	req.Intake.AgentID = intakeAgent.ID
-	req.Decision.AgentID = decisionAgent.ID
-	req.Decision.Mode = "ai_only"
-	req.Path.ModelID = model.ID
-	req.Path.Temperature = 0.25
-	req.Path.MaxRetries = 4
-	req.Path.TimeoutSeconds = 90
-	req.Guard.AuditLevel = "summary"
-	req.Guard.FallbackAssignee = fallback.ID
+	req.Posts.Intake.AgentID = intakeAgent.ID
+	req.Posts.Decision.AgentID = decisionAgent.ID
+	req.Posts.Decision.Mode = "ai_only"
+	req.Posts.SLAAssurance.AgentID = slaAssuranceAgent.ID
+	req.Runtime.PathBuilder.ModelID = model.ID
+	req.Runtime.PathBuilder.Temperature = 0.25
+	req.Runtime.PathBuilder.MaxRetries = 4
+	req.Runtime.PathBuilder.TimeoutSeconds = 90
+	req.Runtime.Guard.AuditLevel = "summary"
+	req.Runtime.Guard.FallbackAssignee = fallback.ID
 	if err := svc.UpdateConfig(&req); err != nil {
 		t.Fatalf("update config: %v", err)
 	}
@@ -95,24 +100,25 @@ func TestEngineConfigServiceReadsAndUpdatesSmartTicketConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get config: %v", err)
 	}
-	if got.Intake.AgentID != intakeAgent.ID || got.Decision.AgentID != decisionAgent.ID || got.Decision.Mode != "ai_only" {
-		t.Fatalf("unexpected engine agents: %+v", got)
+	if got.Posts.Intake.AgentID != intakeAgent.ID || got.Posts.Decision.AgentID != decisionAgent.ID || got.Posts.Decision.Mode != "ai_only" || got.Posts.SLAAssurance.AgentID != slaAssuranceAgent.ID {
+		t.Fatalf("unexpected smart staffing posts: %+v", got)
 	}
-	if got.Path.ModelID != model.ID || got.Path.ProviderID != provider.ID || got.Path.MaxRetries != 4 || got.Path.TimeoutSeconds != 90 {
-		t.Fatalf("unexpected path config: %+v", got.Path)
+	if got.Runtime.PathBuilder.ModelID != model.ID || got.Runtime.PathBuilder.ProviderID != provider.ID || got.Runtime.PathBuilder.MaxRetries != 4 || got.Runtime.PathBuilder.TimeoutSeconds != 90 {
+		t.Fatalf("unexpected path config: %+v", got.Runtime.PathBuilder)
 	}
-	if got.Guard.AuditLevel != "summary" || got.Guard.FallbackAssignee != fallback.ID {
-		t.Fatalf("unexpected guard config: %+v", got.Guard)
+	if got.Runtime.Guard.AuditLevel != "summary" || got.Runtime.Guard.FallbackAssignee != fallback.ID {
+		t.Fatalf("unexpected guard config: %+v", got.Runtime.Guard)
 	}
 
 	expectedKeys := map[string]string{
-		smartTicketIntakeAgentKey:     strconv.FormatUint(uint64(intakeAgent.ID), 10),
-		smartTicketDecisionAgentKey:   strconv.FormatUint(uint64(decisionAgent.ID), 10),
-		smartTicketDecisionModeKey:    "ai_only",
-		smartTicketPathMaxRetriesKey:  "4",
-		smartTicketPathTimeoutKey:     "90",
-		smartTicketGuardAuditLevelKey: "summary",
-		smartTicketGuardFallbackKey:   strconv.FormatUint(uint64(fallback.ID), 10),
+		smartTicketIntakeAgentKey:       strconv.FormatUint(uint64(intakeAgent.ID), 10),
+		smartTicketDecisionAgentKey:     strconv.FormatUint(uint64(decisionAgent.ID), 10),
+		smartTicketSLAAssuranceAgentKey: strconv.FormatUint(uint64(slaAssuranceAgent.ID), 10),
+		smartTicketDecisionModeKey:      "ai_only",
+		smartTicketPathMaxRetriesKey:    "4",
+		smartTicketPathTimeoutKey:       "90",
+		smartTicketGuardAuditLevelKey:   "summary",
+		smartTicketGuardFallbackKey:     strconv.FormatUint(uint64(fallback.ID), 10),
 	}
 	for key, value := range expectedKeys {
 		var cfg coremodel.SystemConfig
@@ -128,11 +134,11 @@ func TestEngineConfigServiceReadsAndUpdatesSmartTicketConfig(t *testing.T) {
 func TestEngineConfigServiceRejectsInvalidFallbackAssignee(t *testing.T) {
 	svc, _ := newEngineConfigTestService(t)
 	var req UpdateConfigRequest
-	req.Decision.Mode = "direct_first"
-	req.Path.MaxRetries = 3
-	req.Path.TimeoutSeconds = 120
-	req.Guard.AuditLevel = "full"
-	req.Guard.FallbackAssignee = 999
+	req.Posts.Decision.Mode = "direct_first"
+	req.Runtime.PathBuilder.MaxRetries = 3
+	req.Runtime.PathBuilder.TimeoutSeconds = 120
+	req.Runtime.Guard.AuditLevel = "full"
+	req.Runtime.Guard.FallbackAssignee = 999
 	if err := svc.UpdateConfig(&req); err != ErrFallbackUserNotFound {
 		t.Fatalf("expected ErrFallbackUserNotFound, got %v", err)
 	}

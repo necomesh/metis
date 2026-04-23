@@ -14,15 +14,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/components/ui/slider"
 import {
   type AgentItem,
-  type EngineConfig,
-  type EngineConfigUpdate,
   type EngineHealthItem,
+  type SmartStaffingConfig,
+  type SmartStaffingConfigUpdate,
   fetchAgents,
-  fetchEngineConfig,
   fetchModels,
   fetchProviders,
+  fetchSmartStaffingConfig,
   fetchUsers,
-  updateEngineConfig,
+  updateSmartStaffingConfig,
 } from "../../api"
 
 type SectionStatus = "pass" | "warn" | "fail"
@@ -231,7 +231,7 @@ function PathEngineFields({
   )
 }
 
-function EngineSection({
+function StaffingSection({
   icon,
   title,
   description,
@@ -265,33 +265,34 @@ function EngineSection({
   )
 }
 
-function configFormKey(config: EngineConfig) {
+function configFormKey(config: SmartStaffingConfig) {
   return [
-    config.intake.agentId,
-    config.decision.agentId,
-    config.decision.mode,
-    config.path.providerId,
-    config.path.modelId,
-    config.path.temperature,
-    config.path.maxRetries,
-    config.path.timeoutSeconds,
-    config.guard.auditLevel,
-    config.guard.fallbackAssignee,
+    config.posts.intake.agentId,
+    config.posts.decision.agentId,
+    config.posts.decision.mode,
+    config.posts.slaAssurance.agentId,
+    config.runtime.pathBuilder.providerId,
+    config.runtime.pathBuilder.modelId,
+    config.runtime.pathBuilder.temperature,
+    config.runtime.pathBuilder.maxRetries,
+    config.runtime.pathBuilder.timeoutSeconds,
+    config.runtime.guard.auditLevel,
+    config.runtime.guard.fallbackAssignee,
   ].join(":")
 }
 
-function EngineConfigForm({ config }: { config: EngineConfig }) {
+function SmartStaffingForm({ config }: { config: SmartStaffingConfig }) {
   const { t } = useTranslation(["itsm", "common"])
   const queryClient = useQueryClient()
 
   const { data: agents = [] } = useQuery({
-    queryKey: ["ai-agents-for-smart-ticket-engine"],
+    queryKey: ["ai-agents-for-smart-staffing"],
     queryFn: fetchAgents,
     select: (list) => list.filter((a) => a.type === "assistant" && a.isActive),
   })
 
   const { data: fallbackUsers = [] } = useQuery({
-    queryKey: ["users-for-engine-fallback"],
+    queryKey: ["users-for-smart-staffing-fallback"],
     queryFn: () => fetchUsers(),
   })
 
@@ -303,23 +304,24 @@ function EngineConfigForm({ config }: { config: EngineConfig }) {
     return map
   }, [config.health.items])
 
-  const [intakeAgentId, setIntakeAgentId] = useState(config.intake.agentId)
-  const [decisionAgentId, setDecisionAgentId] = useState(config.decision.agentId)
-  const [decisionMode, setDecisionMode] = useState(config.decision.mode || "direct_first")
-  const [pathProviderId, setPathProviderId] = useState(config.path.providerId)
-  const [pathModelId, setPathModelId] = useState(config.path.modelId)
-  const [pathTemperature, setPathTemperature] = useState(config.path.temperature)
-  const [pathMaxRetries, setPathMaxRetries] = useState(config.path.maxRetries)
-  const [pathTimeoutSeconds, setPathTimeoutSeconds] = useState(config.path.timeoutSeconds)
-  const [auditLevel, setAuditLevel] = useState(config.guard.auditLevel)
-  const [fallbackAssignee, setFallbackAssignee] = useState(config.guard.fallbackAssignee)
+  const [intakeAgentId, setIntakeAgentId] = useState(config.posts.intake.agentId)
+  const [decisionAgentId, setDecisionAgentId] = useState(config.posts.decision.agentId)
+  const [decisionMode, setDecisionMode] = useState(config.posts.decision.mode || "direct_first")
+  const [slaAssuranceAgentId, setSlaAssuranceAgentId] = useState(config.posts.slaAssurance.agentId)
+  const [pathProviderId, setPathProviderId] = useState(config.runtime.pathBuilder.providerId)
+  const [pathModelId, setPathModelId] = useState(config.runtime.pathBuilder.modelId)
+  const [pathTemperature, setPathTemperature] = useState(config.runtime.pathBuilder.temperature)
+  const [pathMaxRetries, setPathMaxRetries] = useState(config.runtime.pathBuilder.maxRetries)
+  const [pathTimeoutSeconds, setPathTimeoutSeconds] = useState(config.runtime.pathBuilder.timeoutSeconds)
+  const [auditLevel, setAuditLevel] = useState(config.runtime.guard.auditLevel)
+  const [fallbackAssignee, setFallbackAssignee] = useState(config.runtime.guard.fallbackAssignee)
 
   const fallbackUserKnown = fallbackAssignee === 0 || fallbackUsers.some((u) => u.id === fallbackAssignee)
 
   const saveMut = useMutation({
-    mutationFn: (data: EngineConfigUpdate) => updateEngineConfig(data),
+    mutationFn: (data: SmartStaffingConfigUpdate) => updateSmartStaffingConfig(data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["itsm-engine-config"] })
+      queryClient.invalidateQueries({ queryKey: ["itsm-smart-staffing-config"] })
       toast.success(t("itsm:engineConfig.saveSuccess"))
     },
     onError: (err) => toast.error(err.message),
@@ -327,15 +329,20 @@ function EngineConfigForm({ config }: { config: EngineConfig }) {
 
   function handleSave() {
     saveMut.mutate({
-      intake: { agentId: intakeAgentId },
-      decision: { agentId: decisionAgentId, mode: decisionMode },
-      path: {
-        modelId: pathModelId,
-        temperature: pathTemperature,
-        maxRetries: pathMaxRetries,
-        timeoutSeconds: pathTimeoutSeconds,
+      posts: {
+        intake: { agentId: intakeAgentId },
+        decision: { agentId: decisionAgentId, mode: decisionMode },
+        slaAssurance: { agentId: slaAssuranceAgentId },
       },
-      guard: { auditLevel, fallbackAssignee },
+      runtime: {
+        pathBuilder: {
+          modelId: pathModelId,
+          temperature: pathTemperature,
+          maxRetries: pathMaxRetries,
+          timeoutSeconds: pathTimeoutSeconds,
+        },
+        guard: { auditLevel, fallbackAssignee },
+      },
     })
   }
 
@@ -352,101 +359,116 @@ function EngineConfigForm({ config }: { config: EngineConfig }) {
         </Button>
       </div>
 
-      <EngineSection
-        icon={Bot}
-        title={t("itsm:engineConfig.intakeTitle")}
-        description={t("itsm:engineConfig.intakeDesc")}
-        health={healthByKey.get("intake")}
-      >
-        <AgentField agentId={intakeAgentId} agents={agents} onAgentChange={setIntakeAgentId} />
-      </EngineSection>
+      <div className="grid gap-4 xl:grid-cols-3">
+        <StaffingSection
+          icon={Bot}
+          title={t("itsm:engineConfig.intakeTitle")}
+          description={t("itsm:engineConfig.intakeDesc")}
+          health={healthByKey.get("intake")}
+        >
+          <AgentField agentId={intakeAgentId} agents={agents} onAgentChange={setIntakeAgentId} />
+        </StaffingSection>
 
-      <EngineSection
-        icon={Activity}
-        title={t("itsm:engineConfig.decisionTitle")}
-        description={t("itsm:engineConfig.decisionDesc")}
-        health={healthByKey.get("decision")}
-      >
-        <div className="grid gap-4 lg:grid-cols-[minmax(260px,1fr)_minmax(190px,260px)] lg:items-start">
-          <AgentField agentId={decisionAgentId} agents={agents} onAgentChange={setDecisionAgentId} />
-          <div className="space-y-1.5">
-            <Label>{t("itsm:engineConfig.decisionMode")}</Label>
-            <Select value={decisionMode} onValueChange={setDecisionMode}>
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="direct_first">{t("itsm:engineConfig.modeDirectFirst")}</SelectItem>
-                <SelectItem value="ai_only">{t("itsm:engineConfig.modeAiOnly")}</SelectItem>
-              </SelectContent>
-            </Select>
+        <StaffingSection
+          icon={Activity}
+          title={t("itsm:engineConfig.decisionTitle")}
+          description={t("itsm:engineConfig.decisionDesc")}
+          health={healthByKey.get("decision")}
+        >
+          <div className="grid gap-4">
+            <AgentField agentId={decisionAgentId} agents={agents} onAgentChange={setDecisionAgentId} />
+            <div className="space-y-1.5">
+              <Label>{t("itsm:engineConfig.decisionMode")}</Label>
+              <Select value={decisionMode} onValueChange={setDecisionMode}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="direct_first">{t("itsm:engineConfig.modeDirectFirst")}</SelectItem>
+                  <SelectItem value="ai_only">{t("itsm:engineConfig.modeAiOnly")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </StaffingSection>
+
+        <StaffingSection
+          icon={ShieldCheck}
+          title={t("itsm:engineConfig.slaAssuranceTitle")}
+          description={t("itsm:engineConfig.slaAssuranceDesc")}
+          health={healthByKey.get("slaAssurance")}
+        >
+          <AgentField agentId={slaAssuranceAgentId} agents={agents} onAgentChange={setSlaAssuranceAgentId} />
+        </StaffingSection>
+      </div>
+
+      <Card className="gap-0 overflow-hidden py-0">
+        <div className="flex flex-col gap-3 border-b border-border/45 px-5 py-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex min-w-0 gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border bg-muted/45">
+              <Route className="h-4.5 w-4.5 text-foreground" />
+            </div>
+            <div className="min-w-0">
+              <CardTitle className="text-sm">{t("itsm:engineConfig.runtimeTitle")}</CardTitle>
+              <CardDescription className="mt-1 text-xs leading-5">{t("itsm:engineConfig.runtimeDesc")}</CardDescription>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <EngineStatus status={statusFromHealth(healthByKey.get("pathBuilder"))} label={healthByKey.get("pathBuilder")?.label} />
+            <EngineStatus status={statusFromHealth(healthByKey.get("guard"))} label={healthByKey.get("guard")?.label} />
           </div>
         </div>
-      </EngineSection>
-
-      <EngineSection
-        icon={Route}
-        title={t("itsm:engineConfig.pathTitle")}
-        description={t("itsm:engineConfig.pathDesc")}
-        health={healthByKey.get("path")}
-      >
-        <PathEngineFields
-          providerId={pathProviderId}
-          modelId={pathModelId}
-          temperature={pathTemperature}
-          maxRetries={pathMaxRetries}
-          timeoutSeconds={pathTimeoutSeconds}
-          onProviderChange={setPathProviderId}
-          onModelChange={setPathModelId}
-          onTemperatureChange={setPathTemperature}
-          onMaxRetriesChange={setPathMaxRetries}
-          onTimeoutSecondsChange={setPathTimeoutSeconds}
-        />
-      </EngineSection>
-
-      <EngineSection
-        icon={ShieldCheck}
-        title={t("itsm:engineConfig.guardTitle")}
-        description={t("itsm:engineConfig.guardDesc")}
-        health={healthByKey.get("guard")}
-      >
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-[minmax(180px,240px)_minmax(220px,300px)]">
-          <div className="space-y-1.5">
-            <Label>{t("itsm:engineConfig.auditLevel")}</Label>
-            <Select value={auditLevel} onValueChange={setAuditLevel}>
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="full">{t("itsm:engineConfig.logFull")}</SelectItem>
-                <SelectItem value="summary">{t("itsm:engineConfig.logSummary")}</SelectItem>
-                <SelectItem value="off">{t("itsm:engineConfig.logOff")}</SelectItem>
-              </SelectContent>
-            </Select>
+        <CardContent className="space-y-5 px-5 py-4">
+          <PathEngineFields
+            providerId={pathProviderId}
+            modelId={pathModelId}
+            temperature={pathTemperature}
+            maxRetries={pathMaxRetries}
+            timeoutSeconds={pathTimeoutSeconds}
+            onProviderChange={setPathProviderId}
+            onModelChange={setPathModelId}
+            onTemperatureChange={setPathTemperature}
+            onMaxRetriesChange={setPathMaxRetries}
+            onTimeoutSecondsChange={setPathTimeoutSeconds}
+          />
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-[minmax(180px,240px)_minmax(220px,300px)]">
+            <div className="space-y-1.5">
+              <Label>{t("itsm:engineConfig.auditLevel")}</Label>
+              <Select value={auditLevel} onValueChange={setAuditLevel}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="full">{t("itsm:engineConfig.logFull")}</SelectItem>
+                  <SelectItem value="summary">{t("itsm:engineConfig.logSummary")}</SelectItem>
+                  <SelectItem value="off">{t("itsm:engineConfig.logOff")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>{t("itsm:engineConfig.fallbackAssignee")}</Label>
+              <Select value={String(fallbackAssignee)} onValueChange={(v) => setFallbackAssignee(Number(v))}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder={t("itsm:engineConfig.fallbackAssigneePlaceholder")} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="0">{t("itsm:engineConfig.fallbackAssigneeNone")}</SelectItem>
+                  {!fallbackUserKnown && (
+                    <SelectItem value={String(fallbackAssignee)}>
+                      {t("itsm:engineConfig.fallbackAssigneeUnknown", { id: fallbackAssignee })}
+                    </SelectItem>
+                  )}
+                  {fallbackUsers.map((user) => (
+                    <SelectItem key={user.id} value={String(user.id)}>
+                      {user.username}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
-          <div className="space-y-1.5">
-            <Label>{t("itsm:engineConfig.fallbackAssignee")}</Label>
-            <Select value={String(fallbackAssignee)} onValueChange={(v) => setFallbackAssignee(Number(v))}>
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder={t("itsm:engineConfig.fallbackAssigneePlaceholder")} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="0">{t("itsm:engineConfig.fallbackAssigneeNone")}</SelectItem>
-                {!fallbackUserKnown && (
-                  <SelectItem value={String(fallbackAssignee)}>
-                    {t("itsm:engineConfig.fallbackAssigneeUnknown", { id: fallbackAssignee })}
-                  </SelectItem>
-                )}
-                {fallbackUsers.map((user) => (
-                  <SelectItem key={user.id} value={String(user.id)}>
-                    {user.username}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-      </EngineSection>
+        </CardContent>
+      </Card>
     </div>
   )
 }
@@ -455,8 +477,8 @@ export function Component() {
   const { t } = useTranslation("common")
 
   const { data: config, isLoading } = useQuery({
-    queryKey: ["itsm-engine-config"],
-    queryFn: fetchEngineConfig,
+    queryKey: ["itsm-smart-staffing-config"],
+    queryFn: fetchSmartStaffingConfig,
   })
 
   if (isLoading || !config) {
@@ -467,5 +489,5 @@ export function Component() {
     )
   }
 
-  return <EngineConfigForm key={configFormKey(config)} config={config} />
+  return <SmartStaffingForm key={configFormKey(config)} config={config} />
 }

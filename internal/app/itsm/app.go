@@ -291,9 +291,9 @@ func (a *ITSMApp) Routes(api *gin.RouterGroup) {
 		g.GET("/services/:id/knowledge-documents", knowledgeDocH.List)
 		g.DELETE("/services/:id/knowledge-documents/:docId", knowledgeDocH.Delete)
 
-		// Engine Config
-		g.GET("/engine/config", engineConfigH.Get)
-		g.PUT("/engine/config", engineConfigH.Update)
+		// Smart Staffing
+		g.GET("/smart-staffing/config", engineConfigH.Get)
+		g.PUT("/smart-staffing/config", engineConfigH.Update)
 
 		// Workflow Generate
 		g.POST("/workflows/generate", workflowGenH.Generate)
@@ -356,6 +356,7 @@ func (a *ITSMApp) Tasks() []scheduler.TaskDef {
 	db := do.MustInvoke[*database.DB](a.injector)
 	classicEngine := do.MustInvoke[*engine.ClassicEngine](a.injector)
 	smartEngine := do.MustInvoke[*engine.SmartEngine](a.injector)
+	configProvider := do.MustInvoke[*EngineConfigService](a.injector)
 	knowledgeDocSvc := do.MustInvoke[*KnowledgeDocService](a.injector)
 
 	return []scheduler.TaskDef{
@@ -394,7 +395,7 @@ func (a *ITSMApp) Tasks() []scheduler.TaskDef {
 			Type:        scheduler.TypeScheduled,
 			CronExpr:    "*/1 * * * *",
 			Description: "Check SLA breaches and trigger escalation rules",
-			Handler:     engine.HandleSLACheck(db.DB),
+			Handler:     engine.HandleSLACheck(db.DB, configProvider),
 		},
 		{
 			Name:        "itsm-smart-recovery",

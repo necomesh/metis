@@ -310,7 +310,7 @@ func TestSeedEngineConfigUpdatesExistingPathEnginePrompt(t *testing.T) {
 	if got.SystemPrompt != itsmPathBuilderSystemPrompt {
 		t.Fatalf("expected path engine prompt to be refreshed")
 	}
-	if got.Name != "ITSM 路径引擎" || got.Temperature != 0.3 || !got.IsActive {
+	if got.Name != "ITSM 参考路径生成" || got.Temperature != 0.3 || !got.IsActive {
 		t.Fatalf("expected path engine metadata to be refreshed, got name=%q temp=%v active=%v", got.Name, got.Temperature, got.IsActive)
 	}
 }
@@ -333,6 +333,7 @@ func TestSeedEngineConfigMigratesLegacySmartTicketConfig(t *testing.T) {
 	legacyConfigs := []coremodel.SystemConfig{
 		{Key: "itsm.engine.servicedesk.agent_id", Value: "11"},
 		{Key: "itsm.engine.decision.agent_id", Value: "12"},
+		{Key: "itsm.engine.sla_assurance.agent_id", Value: "14"},
 		{Key: "itsm.engine.decision.decision_mode", Value: "ai_only"},
 		{Key: "itsm.engine.general.max_retries", Value: "4"},
 		{Key: "itsm.engine.general.timeout_seconds", Value: "90"},
@@ -350,13 +351,14 @@ func TestSeedEngineConfigMigratesLegacySmartTicketConfig(t *testing.T) {
 	}
 
 	expected := map[string]string{
-		smartTicketIntakeAgentKey:     "11",
-		smartTicketDecisionAgentKey:   "12",
-		smartTicketDecisionModeKey:    "ai_only",
-		smartTicketPathMaxRetriesKey:  "4",
-		smartTicketPathTimeoutKey:     "90",
-		smartTicketGuardAuditLevelKey: "summary",
-		smartTicketGuardFallbackKey:   "13",
+		smartTicketIntakeAgentKey:       "11",
+		smartTicketDecisionAgentKey:     "12",
+		smartTicketSLAAssuranceAgentKey: "14",
+		smartTicketDecisionModeKey:      "ai_only",
+		smartTicketPathMaxRetriesKey:    "4",
+		smartTicketPathTimeoutKey:       "90",
+		smartTicketGuardAuditLevelKey:   "summary",
+		smartTicketGuardFallbackKey:     "13",
 	}
 	for key, value := range expected {
 		var got coremodel.SystemConfig
@@ -380,7 +382,7 @@ func TestSeedEngineConfigMigratesLegacySmartTicketConfig(t *testing.T) {
 	if err := db.Where("code = ?", smartTicketPathBuilderAgentKey).First(&pathAgent).Error; err != nil {
 		t.Fatalf("load migrated path agent: %v", err)
 	}
-	if pathAgent.Name != "ITSM 路径引擎" || pathAgent.SystemPrompt != itsmPathBuilderSystemPrompt {
+	if pathAgent.Name != "ITSM 参考路径生成" || pathAgent.SystemPrompt != itsmPathBuilderSystemPrompt {
 		t.Fatalf("path agent was not migrated cleanly")
 	}
 	var legacyCount int64
