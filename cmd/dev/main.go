@@ -61,13 +61,9 @@ func buildPlan(args []string) (devPlan, error) {
 		return devPlan{}, err
 	}
 
-	apiPort, err := freePort()
+	webPort, apiPort, err := freeDevPortPair()
 	if err != nil {
-		return devPlan{}, fmt.Errorf("find API port: %w", err)
-	}
-	webPort, err := freePortExcept(apiPort)
-	if err != nil {
-		return devPlan{}, fmt.Errorf("find web port: %w", err)
+		return devPlan{}, fmt.Errorf("find dev ports: %w", err)
 	}
 	bunPath, err := findBun()
 	if err != nil {
@@ -110,17 +106,28 @@ func findBun() (string, error) {
 	return "", fmt.Errorf("bun not found; install Bun or set BUN_BIN")
 }
 
-func freePortExcept(except int) (int, error) {
-	for i := 0; i < 10; i++ {
-		port, err := freePort()
-		if err != nil {
-			return 0, err
-		}
-		if port != except {
-			return port, nil
+func freeDevPortPair() (int, int, error) {
+	return freePortPair(3000, 8000, 1000)
+}
+
+func freePortPair(webStart, apiStart, attempts int) (int, int, error) {
+	for offset := 0; offset < attempts; offset++ {
+		webPort := webStart + offset
+		apiPort := apiStart + offset
+		if portAvailable(webPort) && portAvailable(apiPort) {
+			return webPort, apiPort, nil
 		}
 	}
-	return 0, fmt.Errorf("failed to allocate a port distinct from %d", except)
+	return 0, 0, fmt.Errorf("no available web/API port pair from %d/%d after %d attempts", webStart, apiStart, attempts)
+}
+
+func portAvailable(port int) bool {
+	ln, err := net.Listen("tcp", ":"+strconv.Itoa(port))
+	if err != nil {
+		return false
+	}
+	_ = ln.Close()
+	return true
 }
 
 func freePort() (int, error) {
