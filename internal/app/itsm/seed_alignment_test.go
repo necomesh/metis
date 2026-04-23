@@ -36,7 +36,7 @@ func newSeedAlignmentDB(t *testing.T) *gorm.DB {
 		&ServiceCatalog{}, &ServiceDefinition{}, &ServiceAction{}, &Priority{}, &SLATemplate{},
 		&org.Department{}, &org.Position{}, &org.DepartmentPosition{}, &org.UserPosition{},
 		&coremodel.User{}, &coremodel.Role{}, &coremodel.Menu{}, &coremodel.SystemConfig{},
-		&aiapp.Agent{}, &aiapp.Tool{}, &aiapp.AgentTool{},
+		&aiapp.Provider{}, &aiapp.AIModel{}, &aiapp.Agent{}, &aiapp.Tool{}, &aiapp.AgentTool{},
 	); err != nil {
 		t.Fatalf("migrate db: %v", err)
 	}
@@ -262,34 +262,140 @@ func TestBuiltInSmartSeedsAlignParticipantsAndInstallAdminIdentity(t *testing.T)
 	})
 }
 
-func TestSeedEngineConfigUpdatesExistingWorkflowGeneratorPrompt(t *testing.T) {
+func TestMigratePriorityCommitmentColumnsDropsLegacyColumns(t *testing.T) {
 	db := newSeedAlignmentDB(t)
-	code := "itsm.generator"
+
+	for _, column := range []string{"default_response_minutes", "default_resolution_minutes"} {
+		if err := db.Exec("ALTER TABLE itsm_priorities ADD COLUMN " + column + " INTEGER DEFAULT 0").Error; err != nil {
+			t.Fatalf("add legacy column %s: %v", column, err)
+		}
+		if !db.Migrator().HasColumn("itsm_priorities", column) {
+			t.Fatalf("expected legacy column %s to exist before migration", column)
+		}
+	}
+
+	migratePriorityCommitmentColumns(db)
+
+	for _, column := range []string{"default_response_minutes", "default_resolution_minutes"} {
+		if db.Migrator().HasColumn("itsm_priorities", column) {
+			t.Fatalf("expected legacy column %s to be dropped", column)
+		}
+	}
+}
+
+func TestSeedEngineConfigMigratesAndDeletesExistingPathEngineAgent(t *testing.T) {
+	db := newSeedAlignmentDB(t)
+	code := "itsm.path_builder"
+	modelID := uint(42)
 	agent := aiapp.Agent{
-		Name:         "旧工作流解析",
+		Name:         "旧路径引擎",
 		Code:         &code,
 		Type:         aiapp.AgentTypeInternal,
 		Visibility:   aiapp.AgentVisibilityTeam,
 		SystemPrompt: "stale prompt",
 		Temperature:  0.9,
+		ModelID:      &modelID,
 		IsActive:     false,
 	}
 	if err := db.Create(&agent).Error; err != nil {
-		t.Fatalf("create stale generator agent: %v", err)
+		t.Fatalf("create stale path builder agent: %v", err)
 	}
 
 	if err := seedEngineConfig(db); err != nil {
 		t.Fatalf("seed engine config: %v", err)
 	}
 
-	var got aiapp.Agent
-	if err := db.Where("code = ?", code).First(&got).Error; err != nil {
-		t.Fatalf("load generator agent: %v", err)
+	var modelConfig coremodel.SystemConfig
+	if err := db.Where("\"key\" = ?", smartTicketPathModelKey).First(&modelConfig).Error; err != nil {
+		t.Fatalf("load path model config: %v", err)
 	}
-	if got.SystemPrompt != itsmGeneratorSystemPrompt {
-		t.Fatalf("expected generator prompt to be refreshed")
+	if modelConfig.Value != "42" {
+		t.Fatalf("expected path model config to be migrated, got %s", modelConfig.Value)
 	}
-	if got.Name != "ITSM 工作流解析" || got.Temperature != 0.3 || !got.IsActive {
-		t.Fatalf("expected generator metadata to be refreshed, got name=%q temp=%v active=%v", got.Name, got.Temperature, got.IsActive)
+	var tempConfig coremodel.SystemConfig
+	if err := db.Where("\"key\" = ?", smartTicketPathTemperatureKey).First(&tempConfig).Error; err != nil {
+		t.Fatalf("load path temperature config: %v", err)
+	}
+	if tempConfig.Value != "0.9" {
+		t.Fatalf("expected path temperature config to be migrated, got %s", tempConfig.Value)
+	}
+	var count int64
+	if err := db.Model(&aiapp.Agent{}).Where("code = ?", code).Count(&count).Error; err != nil {
+		t.Fatalf("count legacy path agent: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected path builder agent to be deleted")
+	}
+}
+
+func TestSeedEngineConfigMigratesLegacySmartTicketConfig(t *testing.T) {
+	db := newSeedAlignmentDB(t)
+	legacyCode := "itsm.generator"
+	legacyAgent := aiapp.Agent{
+		Name:         "旧工作流解析",
+		Code:         &legacyCode,
+		Type:         aiapp.AgentTypeInternal,
+		Visibility:   aiapp.AgentVisibilityTeam,
+		SystemPrompt: "stale prompt",
+		Temperature:  0.9,
+		IsActive:     false,
+	}
+	if err := db.Create(&legacyAgent).Error; err != nil {
+		t.Fatalf("create legacy path agent: %v", err)
+	}
+	legacyConfigs := []coremodel.SystemConfig{
+		{Key: "itsm.engine.servicedesk.agent_id", Value: "11"},
+		{Key: "itsm.engine.decision.agent_id", Value: "12"},
+		{Key: "itsm.engine.sla_assurance.agent_id", Value: "14"},
+		{Key: "itsm.engine.decision.decision_mode", Value: "ai_only"},
+		{Key: "itsm.engine.general.max_retries", Value: "4"},
+		{Key: "itsm.engine.general.timeout_seconds", Value: "90"},
+		{Key: "itsm.engine.general.reasoning_log", Value: "summary"},
+		{Key: "itsm.engine.general.fallback_assignee", Value: "13"},
+	}
+	for _, cfg := range legacyConfigs {
+		if err := db.Create(&cfg).Error; err != nil {
+			t.Fatalf("create legacy config %s: %v", cfg.Key, err)
+		}
+	}
+
+	if err := seedEngineConfig(db); err != nil {
+		t.Fatalf("seed engine config: %v", err)
+	}
+
+	expected := map[string]string{
+		smartTicketIntakeAgentKey:       "11",
+		smartTicketDecisionAgentKey:     "12",
+		smartTicketSLAAssuranceAgentKey: "14",
+		smartTicketDecisionModeKey:      "ai_only",
+		smartTicketPathMaxRetriesKey:    "4",
+		smartTicketPathTimeoutKey:       "90",
+		smartTicketGuardAuditLevelKey:   "summary",
+		smartTicketGuardFallbackKey:     "13",
+	}
+	for key, value := range expected {
+		var got coremodel.SystemConfig
+		if err := db.Where("\"key\" = ?", key).First(&got).Error; err != nil {
+			t.Fatalf("load migrated config %s: %v", key, err)
+		}
+		if got.Value != value {
+			t.Fatalf("expected %s=%s, got %s", key, value, got.Value)
+		}
+	}
+	for _, cfg := range legacyConfigs {
+		var count int64
+		if err := db.Model(&coremodel.SystemConfig{}).Where("\"key\" = ?", cfg.Key).Count(&count).Error; err != nil {
+			t.Fatalf("count legacy config %s: %v", cfg.Key, err)
+		}
+		if count != 0 {
+			t.Fatalf("expected legacy config %s to be deleted", cfg.Key)
+		}
+	}
+	var legacyCount int64
+	if err := db.Model(&aiapp.Agent{}).Where("code = ?", legacyCode).Count(&legacyCount).Error; err != nil {
+		t.Fatalf("count legacy path agent: %v", err)
+	}
+	if legacyCount != 0 {
+		t.Fatalf("expected legacy path agent code to be removed")
 	}
 }

@@ -3,6 +3,7 @@ package itsm
 import (
 	"log/slog"
 	"strconv"
+	"time"
 
 	"github.com/casbin/casbin/v2"
 	"gorm.io/gorm"
@@ -12,6 +13,8 @@ import (
 )
 
 func seedITSM(db *gorm.DB, enforcer *casbin.Enforcer) error {
+	migratePriorityCommitmentColumns(db)
+
 	if err := seedMenus(db); err != nil {
 		return err
 	}
@@ -36,7 +39,97 @@ func seedITSM(db *gorm.DB, enforcer *casbin.Enforcer) error {
 	if err := seedEngineConfig(db); err != nil {
 		return err
 	}
-	return seedServiceDefinitions(db)
+	if err := seedServiceDefinitions(db); err != nil {
+		return err
+	}
+	return repairCompletedHumanAssignments(db)
+}
+
+func migratePriorityCommitmentColumns(db *gorm.DB) {
+	if !db.Migrator().HasTable(&Priority{}) {
+		return
+	}
+
+	for _, column := range []string{"default_response_minutes", "default_resolution_minutes"} {
+		if !db.Migrator().HasColumn("itsm_priorities", column) {
+			continue
+		}
+		if err := db.Exec("ALTER TABLE itsm_priorities DROP COLUMN " + column).Error; err != nil {
+			slog.Warn("seed: failed to drop priority commitment column", "column", column, "error", err)
+			continue
+		}
+		slog.Info("seed: dropped priority commitment column", "column", column)
+	}
+}
+
+func repairCompletedHumanAssignments(db *gorm.DB) error {
+	if !db.Migrator().HasTable(&TicketAssignment{}) ||
+		!db.Migrator().HasTable(&TicketActivity{}) ||
+		!db.Migrator().HasTable(&TicketTimeline{}) {
+		return nil
+	}
+
+	type repairRow struct {
+		AssignmentID       uint
+		OperatorID         uint
+		ActivityFinishedAt *time.Time
+		TimelineCreatedAt  *time.Time
+	}
+
+	var rows []repairRow
+	err := db.Table("itsm_ticket_assignments AS assign").
+		Select(`
+			assign.id AS assignment_id,
+			tl.operator_id AS operator_id,
+			act.finished_at AS activity_finished_at,
+			tl.created_at AS timeline_created_at
+		`).
+		Joins("JOIN itsm_ticket_activities AS act ON act.id = assign.activity_id").
+		Joins("JOIN itsm_ticket_timelines AS tl ON tl.ticket_id = act.ticket_id AND tl.activity_id = act.id").
+		Where("act.activity_type IN ?", []string{"approve", "form", "process"}).
+		Where("act.status = ?", "completed").
+		Where("assign.status = ?", "pending").
+		Where("tl.event_type = ? AND tl.operator_id > 0", "activity_completed").
+		Where("assign.user_id = tl.operator_id OR assign.assignee_id = tl.operator_id").
+		Scan(&rows).Error
+	if err != nil {
+		return err
+	}
+
+	repaired := 0
+	seen := make(map[uint]struct{}, len(rows))
+	for _, row := range rows {
+		if _, ok := seen[row.AssignmentID]; ok {
+			continue
+		}
+		seen[row.AssignmentID] = struct{}{}
+
+		finishedAt := row.ActivityFinishedAt
+		if finishedAt == nil {
+			finishedAt = row.TimelineCreatedAt
+		}
+		updates := map[string]any{
+			"assignee_id": row.OperatorID,
+			"status":      "completed",
+			"is_current":  false,
+		}
+		if finishedAt != nil {
+			updates["finished_at"] = *finishedAt
+		}
+		result := db.Model(&TicketAssignment{}).
+			Where("id = ? AND status = ?", row.AssignmentID, AssignmentPending).
+			Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected > 0 {
+			repaired++
+		}
+	}
+	if repaired > 0 {
+		slog.Info("seed: repaired completed ITSM assignments", "count", repaired)
+	}
+	return nil
 }
 
 func seedCatalogs(db *gorm.DB) error {
@@ -206,16 +299,22 @@ func seedMenus(db *gorm.DB) error {
 	if err := db.Where("permission = ?", "itsm:ticket:history").Delete(&model.Menu{}).Error; err != nil {
 		slog.Warn("seed: failed to remove history ticket menu", "error", err)
 	}
+	if err := db.Where("permission IN ?", []string{
+		"itsm:ticket:todo",
+		"itsm:ticket:approvals",
+		"itsm:ticket:approval:pending",
+	}).Delete(&model.Menu{}).Error; err != nil {
+		slog.Warn("seed: failed to remove obsolete approval menus", "error", err)
+	}
 	// 服务台
-	seedMenu(db, &itsmDir.ID, "服务台", model.MenuTypeMenu, "/itsm/service-desk", "MessageSquare", "itsm:service-desk:use", 0)
+	seedMenu(db, &itsmDir.ID, "服务台", model.MenuTypeMenu, "/itsm/service-desk", "Headset", "itsm:service-desk:use", 0)
 
 	// 我的工单
 	seedMenu(db, &itsmDir.ID, "我的工单", model.MenuTypeMenu, "/itsm/tickets/mine", "User", "itsm:ticket:mine", 1)
-	seedMenu(db, &itsmDir.ID, "我的待办", model.MenuTypeMenu, "/itsm/tickets/approvals/pending", "ClipboardCheck", "itsm:ticket:approval:pending", 2)
 	seedMenu(db, &itsmDir.ID, "历史工单", model.MenuTypeMenu, "/itsm/tickets/approvals/history", "History", "itsm:ticket:approval:history", 3)
 
-	// 工单管理
-	allTicketMenu := seedMenu(db, &itsmDir.ID, "工单管理", model.MenuTypeMenu, "/itsm/tickets", "List", "itsm:ticket:list", 4)
+	// 工单监控
+	allTicketMenu := seedMenu(db, &itsmDir.ID, "工单监控", model.MenuTypeMenu, "/itsm/tickets", "List", "itsm:ticket:list", 4)
 	seedButtons(db, allTicketMenu, []model.Menu{
 		{Name: "指派工单", Type: model.MenuTypeButton, Permission: "itsm:ticket:assign", Sort: 1},
 		{Name: "取消工单", Type: model.MenuTypeButton, Permission: "itsm:ticket:cancel", Sort: 3},
@@ -249,8 +348,11 @@ func seedMenus(db *gorm.DB) error {
 		{Name: "删除优先级", Type: model.MenuTypeButton, Permission: "itsm:priority:delete", Sort: 2},
 	})
 
-	// 引擎配置
-	seedMenu(db, &itsmDir.ID, "引擎配置", model.MenuTypeMenu, "/itsm/engine-config", "Settings", "itsm:engine:config", 9)
+	// 智能岗位
+	seedMenu(db, &itsmDir.ID, "智能岗位", model.MenuTypeMenu, "/itsm/smart-staffing", "Briefcase", "itsm:smart-staffing:config", 10)
+	// 引擎设置
+	seedMenu(db, &itsmDir.ID, "引擎设置", model.MenuTypeMenu, "/itsm/engine-settings", "Settings", "itsm:engine-settings:config", 11)
+	db.Where("permission = ?", "itsm:engine:config").Delete(&model.Menu{})
 
 	// 表单管理 - migrated away: remove menu and buttons
 	var formMenu model.Menu
@@ -338,9 +440,11 @@ func seedPolicies(enforcer *casbin.Enforcer) error {
 		{"admin", "/api/v1/itsm/services/:id/knowledge-documents", "POST"},
 		{"admin", "/api/v1/itsm/services/:id/knowledge-documents", "GET"},
 		{"admin", "/api/v1/itsm/services/:id/knowledge-documents/:docId", "DELETE"},
-		// Engine Config
-		{"admin", "/api/v1/itsm/engine/config", "GET"},
-		{"admin", "/api/v1/itsm/engine/config", "PUT"},
+		// Smart Staffing
+		{"admin", "/api/v1/itsm/smart-staffing/config", "GET"},
+		{"admin", "/api/v1/itsm/smart-staffing/config", "PUT"},
+		{"admin", "/api/v1/itsm/engine-settings/config", "GET"},
+		{"admin", "/api/v1/itsm/engine-settings/config", "PUT"},
 		// Workflow Generate
 		{"admin", "/api/v1/itsm/workflows/generate", "POST"},
 		// Service Desk
@@ -407,7 +511,8 @@ func seedPolicies(enforcer *casbin.Enforcer) error {
 		{"admin", "itsm:sla:create", "read"},
 		{"admin", "itsm:sla:update", "read"},
 		{"admin", "itsm:sla:delete", "read"},
-		{"admin", "itsm:engine:config", "read"},
+		{"admin", "itsm:smart-staffing:config", "read"},
+		{"admin", "itsm:engine-settings:config", "read"},
 	}
 
 	allPolicies := append(policies, menuPerms...)
@@ -419,16 +524,20 @@ func seedPolicies(enforcer *casbin.Enforcer) error {
 		}
 	}
 
+	_, _ = enforcer.RemovePolicy("admin", "/api/v1/itsm/engine/config", "GET")
+	_, _ = enforcer.RemovePolicy("admin", "/api/v1/itsm/engine/config", "PUT")
+	_, _ = enforcer.RemovePolicy("admin", "itsm:engine:config", "read")
+
 	return nil
 }
 
 func seedPriorities(db *gorm.DB) error {
 	priorities := []Priority{
-		{Name: "紧急", Code: "P0", Value: 1, Color: "#FF0000", Description: "紧急问题，需要立即处理", DefaultResponseMinutes: 15, DefaultResolutionMinutes: 120, IsActive: true},
-		{Name: "高", Code: "P1", Value: 2, Color: "#FF6600", Description: "高优先级，需要尽快处理", DefaultResponseMinutes: 60, DefaultResolutionMinutes: 480, IsActive: true},
-		{Name: "中", Code: "P2", Value: 3, Color: "#FFAA00", Description: "中等优先级", DefaultResponseMinutes: 240, DefaultResolutionMinutes: 1440, IsActive: true},
-		{Name: "低", Code: "P3", Value: 4, Color: "#00AA00", Description: "低优先级", DefaultResponseMinutes: 480, DefaultResolutionMinutes: 4320, IsActive: true},
-		{Name: "最低", Code: "P4", Value: 5, Color: "#888888", Description: "最低优先级", DefaultResponseMinutes: 1440, DefaultResolutionMinutes: 10080, IsActive: true},
+		{Name: "紧急", Code: "P0", Value: 1, Color: "#FF0000", Description: "紧急问题，需要立即处理", IsActive: true},
+		{Name: "高", Code: "P1", Value: 2, Color: "#FF6600", Description: "高优先级，需要尽快处理", IsActive: true},
+		{Name: "中", Code: "P2", Value: 3, Color: "#FFAA00", Description: "中等优先级", IsActive: true},
+		{Name: "低", Code: "P3", Value: 4, Color: "#00AA00", Description: "低优先级", IsActive: true},
+		{Name: "最低", Code: "P4", Value: 5, Color: "#888888", Description: "最低优先级", IsActive: true},
 	}
 
 	for _, p := range priorities {
@@ -634,81 +743,15 @@ func seedServiceDefinitions(db *gorm.DB) error {
 	return nil
 }
 
-// seedEngineConfig creates internal agents and default SystemConfig for ITSM engine.
+// seedEngineConfig creates default SystemConfig for smart staffing and engine settings.
 func seedEngineConfig(db *gorm.DB) error {
-	type agentSeed struct {
-		Name         string
-		Code         string
-		SystemPrompt string
-		Temperature  float64
-	}
+	migrateSmartTicketEngineConfig(db)
 
-	agents := []agentSeed{
-		{
-			Name:         "ITSM 工作流解析",
-			Code:         "itsm.generator",
-			Temperature:  0.3,
-			SystemPrompt: itsmGeneratorSystemPrompt,
-		},
-	}
-
-	for _, a := range agents {
-		var existing struct{ ID uint }
-		if err := db.Table("ai_agents").Where("code = ?", a.Code).Select("id").First(&existing).Error; err == nil {
-			if err := db.Table("ai_agents").Where("id = ?", existing.ID).Updates(map[string]any{
-				"name":          a.Name,
-				"type":          "internal",
-				"system_prompt": a.SystemPrompt,
-				"temperature":   a.Temperature,
-				"is_active":     true,
-				"visibility":    "team",
-			}).Error; err != nil {
-				slog.Error("seed: failed to update internal agent", "code", a.Code, "error", err)
-				continue
-			}
-			slog.Info("seed: updated internal agent", "code", a.Code, "name", a.Name)
-			continue
-		}
-		if err := db.Table("ai_agents").Create(map[string]any{
-			"name":          a.Name,
-			"code":          a.Code,
-			"type":          "internal",
-			"system_prompt": a.SystemPrompt,
-			"temperature":   a.Temperature,
-			"is_active":     true,
-			"visibility":    "team",
-			"created_by":    0,
-		}).Error; err != nil {
-			slog.Error("seed: failed to create internal agent", "code", a.Code, "error", err)
-			continue
-		}
-		slog.Info("seed: created internal agent", "code", a.Code, "name", a.Name)
-	}
-
-	defaults := map[string]string{
-		"itsm.engine.decision.decision_mode":  "direct_first",
-		"itsm.engine.general.max_retries":     "3",
-		"itsm.engine.general.timeout_seconds": "120",
-		"itsm.engine.general.reasoning_log":   "full",
-	}
-
-	for key, value := range defaults {
-		var existing model.SystemConfig
-		if err := db.Where("\"key\" = ?", key).First(&existing).Error; err == nil {
-			continue
-		}
-		cfg := model.SystemConfig{Key: key, Value: value}
-		if err := db.Create(&cfg).Error; err != nil {
-			slog.Error("seed: failed to create system config", "key", key, "error", err)
-			continue
-		}
-		slog.Info("seed: created system config", "key", key, "value", value)
-	}
-
-	// Seed default agent_id for servicedesk and decision from preset agents
+	// Seed default agent_id for smart staffing posts from preset agents.
 	agentDefaults := map[string]string{
-		"itsm.engine.servicedesk.agent_id": "itsm.servicedesk",
-		"itsm.engine.decision.agent_id":    "itsm.decision",
+		smartTicketIntakeAgentKey:       "itsm.servicedesk",
+		smartTicketDecisionAgentKey:     "itsm.decision",
+		smartTicketSLAAssuranceAgentKey: "itsm.sla_assurance",
 	}
 	for configKey, agentCode := range agentDefaults {
 		var existing model.SystemConfig
@@ -728,10 +771,169 @@ func seedEngineConfig(db *gorm.DB) error {
 		slog.Info("seed: created system config", "key", configKey, "value", value)
 	}
 
+	migrateServiceMatcherEngineConfig(db)
+	migratePathEngineAgentConfig(db)
+
+	defaults := map[string]string{
+		smartTicketDecisionModeKey:              "direct_first",
+		smartTicketServiceMatcherModelKey:       "0",
+		smartTicketServiceMatcherTemperatureKey: "0.2",
+		smartTicketServiceMatcherMaxTokensKey:   "1024",
+		smartTicketServiceMatcherTimeoutKey:     "30",
+		smartTicketPathModelKey:                 "0",
+		smartTicketPathTemperatureKey:           "0.3",
+		smartTicketPathMaxRetriesKey:            "3",
+		smartTicketPathTimeoutKey:               "120",
+		smartTicketGuardAuditLevelKey:           "full",
+		smartTicketGuardFallbackKey:             "0",
+	}
+
+	for key, value := range defaults {
+		var existing model.SystemConfig
+		if err := db.Where("\"key\" = ?", key).First(&existing).Error; err == nil {
+			continue
+		}
+		cfg := model.SystemConfig{Key: key, Value: value}
+		if err := db.Create(&cfg).Error; err != nil {
+			slog.Error("seed: failed to create system config", "key", key, "error", err)
+			continue
+		}
+		slog.Info("seed: created system config", "key", key, "value", value)
+	}
+
+	deleteLegacySmartTicketEngineConfig(db)
+	deleteLegacyPathBuilderAgents(db)
+
 	return nil
 }
 
-const itsmGeneratorSystemPrompt = `你是 ITSM 工作流解析引擎。根据用户的协作规范（Collaboration Spec）生成工作流 JSON。
+func migrateSmartTicketEngineConfig(db *gorm.DB) {
+	keyMap := map[string]string{
+		"itsm.engine.servicedesk.agent_id":      smartTicketIntakeAgentKey,
+		"itsm.engine.decision.agent_id":         smartTicketDecisionAgentKey,
+		"itsm.engine.sla_assurance.agent_id":    smartTicketSLAAssuranceAgentKey,
+		"itsm.engine.decision.decision_mode":    smartTicketDecisionModeKey,
+		"itsm.engine.general.max_retries":       smartTicketPathMaxRetriesKey,
+		"itsm.engine.general.timeout_seconds":   smartTicketPathTimeoutKey,
+		"itsm.engine.general.reasoning_log":     smartTicketGuardAuditLevelKey,
+		"itsm.engine.general.fallback_assignee": smartTicketGuardFallbackKey,
+	}
+	for legacyKey, newKey := range keyMap {
+		var existing model.SystemConfig
+		if err := db.Where("\"key\" = ?", newKey).First(&existing).Error; err == nil {
+			continue
+		}
+		var legacy model.SystemConfig
+		if err := db.Where("\"key\" = ?", legacyKey).First(&legacy).Error; err != nil {
+			continue
+		}
+		cfg := model.SystemConfig{Key: newKey, Value: legacy.Value}
+		if err := db.Create(&cfg).Error; err != nil {
+			slog.Error("seed: failed to migrate system config", "from", legacyKey, "to", newKey, "error", err)
+			continue
+		}
+		slog.Info("seed: migrated system config", "from", legacyKey, "to", newKey)
+	}
+}
+
+func migrateServiceMatcherEngineConfig(db *gorm.DB) {
+	var existing model.SystemConfig
+	if err := db.Where("\"key\" = ?", smartTicketServiceMatcherModelKey).First(&existing).Error; err == nil {
+		return
+	}
+
+	agentID := uint(0)
+	var intakeConfig model.SystemConfig
+	if err := db.Where("\"key\" = ?", smartTicketIntakeAgentKey).First(&intakeConfig).Error; err == nil {
+		if id, parseErr := strconv.ParseUint(intakeConfig.Value, 10, 64); parseErr == nil {
+			agentID = uint(id)
+		}
+	}
+	var agentRow struct {
+		ID          uint
+		ModelID     *uint
+		Temperature float64
+		MaxTokens   int
+	}
+	query := db.Table("ai_agents").Select("id", "model_id", "temperature", "max_tokens")
+	var err error
+	if agentID > 0 {
+		err = query.Where("id = ?", agentID).First(&agentRow).Error
+	} else {
+		err = query.Where("code = ?", "itsm.servicedesk").First(&agentRow).Error
+	}
+	if err != nil || agentRow.ModelID == nil {
+		return
+	}
+	ensureSystemConfig(db, smartTicketServiceMatcherModelKey, strconv.FormatUint(uint64(*agentRow.ModelID), 10))
+	if agentRow.Temperature >= 0 {
+		ensureSystemConfig(db, smartTicketServiceMatcherTemperatureKey, strconv.FormatFloat(agentRow.Temperature, 'f', -1, 64))
+	}
+	if agentRow.MaxTokens > 0 {
+		ensureSystemConfig(db, smartTicketServiceMatcherMaxTokensKey, strconv.Itoa(agentRow.MaxTokens))
+	}
+	slog.Info("seed: migrated service matcher engine config from intake agent")
+}
+
+func migratePathEngineAgentConfig(db *gorm.DB) {
+	type pathAgentRow struct {
+		ID          uint
+		Code        *string
+		ModelID     *uint
+		Temperature float64
+	}
+	var rows []pathAgentRow
+	if err := db.Table("ai_agents").
+		Where("code IN ?", []string{"itsm.path_builder", "itsm.generator"}).
+		Select("id", "code", "model_id", "temperature").
+		Order("CASE WHEN code = 'itsm.path_builder' THEN 0 ELSE 1 END").
+		Find(&rows).Error; err != nil {
+		return
+	}
+	for _, row := range rows {
+		if row.ModelID != nil {
+			ensureSystemConfig(db, smartTicketPathModelKey, strconv.FormatUint(uint64(*row.ModelID), 10))
+			ensureSystemConfig(db, smartTicketPathTemperatureKey, strconv.FormatFloat(row.Temperature, 'f', -1, 64))
+			slog.Info("seed: migrated path engine config from legacy internal agent")
+			return
+		}
+	}
+}
+
+func ensureSystemConfig(db *gorm.DB, key string, value string) {
+	var existing model.SystemConfig
+	if err := db.Where("\"key\" = ?", key).First(&existing).Error; err == nil {
+		return
+	}
+	cfg := model.SystemConfig{Key: key, Value: value}
+	if err := db.Create(&cfg).Error; err != nil {
+		slog.Error("seed: failed to create system config", "key", key, "error", err)
+	}
+}
+
+func deleteLegacySmartTicketEngineConfig(db *gorm.DB) {
+	legacyKeys := []string{
+		"itsm.engine.servicedesk.agent_id",
+		"itsm.engine.decision.agent_id",
+		"itsm.engine.sla_assurance.agent_id",
+		"itsm.engine.decision.decision_mode",
+		"itsm.engine.general.max_retries",
+		"itsm.engine.general.timeout_seconds",
+		"itsm.engine.general.reasoning_log",
+		"itsm.engine.general.fallback_assignee",
+	}
+	if err := db.Where("\"key\" IN ?", legacyKeys).Delete(&model.SystemConfig{}).Error; err != nil {
+		slog.Warn("seed: failed to delete legacy smart ticket engine config", "error", err)
+	}
+}
+
+func deleteLegacyPathBuilderAgents(db *gorm.DB) {
+	if err := db.Exec("DELETE FROM ai_agents WHERE code IN ?", []string{"itsm.path_builder", "itsm.generator"}).Error; err != nil {
+		slog.Warn("seed: failed to delete legacy path agents", "error", err)
+	}
+}
+
+const itsmPathBuilderSystemPrompt = `你是 ITSM 参考路径生成器。根据用户的协作规范（Collaboration Spec）生成工作流 JSON。
 
 ## 输出格式
 

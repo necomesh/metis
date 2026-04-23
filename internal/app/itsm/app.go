@@ -29,18 +29,6 @@ type ITSMApp struct {
 	injector do.Injector
 }
 
-type lazyAIAgentProvider struct {
-	injector do.Injector
-}
-
-func (p *lazyAIAgentProvider) GetAgentConfig(agentID uint) (*app.AIAgentConfig, error) {
-	provider, err := do.InvokeAs[app.AIAgentProvider](p.injector)
-	if err != nil {
-		return nil, err
-	}
-	return provider.GetAgentConfig(agentID)
-}
-
 func (a *ITSMApp) Name() string { return "itsm" }
 
 // GetToolRegistry implements app.ToolRegistryProvider.
@@ -235,7 +223,7 @@ func (a *ITSMApp) Providers(i do.Injector) {
 		var ticketCreator tools.TicketCreator
 		ticketCreator = &lazyTicketCreator{injector: i}
 		configProvider := do.MustInvoke[*EngineConfigService](i)
-		matcher := NewLLMServiceMatcher(db.DB, configProvider, &lazyAIAgentProvider{injector: i}, nil)
+		matcher := NewLLMServiceMatcher(db.DB, configProvider, nil)
 		return tools.NewOperator(db.DB, resolver, orgResolver, withdrawFunc, ticketCreator, matcher), nil
 	})
 	do.Provide(i, func(i do.Injector) (*tools.SessionStateStore, error) {
@@ -291,9 +279,11 @@ func (a *ITSMApp) Routes(api *gin.RouterGroup) {
 		g.GET("/services/:id/knowledge-documents", knowledgeDocH.List)
 		g.DELETE("/services/:id/knowledge-documents/:docId", knowledgeDocH.Delete)
 
-		// Engine Config
-		g.GET("/engine/config", engineConfigH.Get)
-		g.PUT("/engine/config", engineConfigH.Update)
+		// Smart Staffing
+		g.GET("/smart-staffing/config", engineConfigH.GetSmartStaffing)
+		g.PUT("/smart-staffing/config", engineConfigH.UpdateSmartStaffing)
+		g.GET("/engine-settings/config", engineConfigH.GetEngineSettings)
+		g.PUT("/engine-settings/config", engineConfigH.UpdateEngineSettings)
 
 		// Workflow Generate
 		g.POST("/workflows/generate", workflowGenH.Generate)
@@ -356,7 +346,12 @@ func (a *ITSMApp) Tasks() []scheduler.TaskDef {
 	db := do.MustInvoke[*database.DB](a.injector)
 	classicEngine := do.MustInvoke[*engine.ClassicEngine](a.injector)
 	smartEngine := do.MustInvoke[*engine.SmartEngine](a.injector)
+	configProvider := do.MustInvoke[*EngineConfigService](a.injector)
 	knowledgeDocSvc := do.MustInvoke[*KnowledgeDocService](a.injector)
+	var slaAssuranceExecutor app.AIDecisionExecutor
+	if executor, err := do.InvokeAs[app.AIDecisionExecutor](a.injector); err == nil {
+		slaAssuranceExecutor = executor
+	}
 
 	return []scheduler.TaskDef{
 		{
@@ -394,7 +389,7 @@ func (a *ITSMApp) Tasks() []scheduler.TaskDef {
 			Type:        scheduler.TypeScheduled,
 			CronExpr:    "*/1 * * * *",
 			Description: "Check SLA breaches and trigger escalation rules",
-			Handler:     engine.HandleSLACheck(db.DB),
+			Handler:     engine.HandleSLACheck(db.DB, configProvider, slaAssuranceExecutor),
 		},
 		{
 			Name:        "itsm-smart-recovery",

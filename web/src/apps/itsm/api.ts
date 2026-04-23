@@ -178,8 +178,6 @@ export interface PriorityItem {
   value: number
   color: string
   description: string
-  defaultResponseMinutes: number
-  defaultResolutionMinutes: number
   isActive: boolean
   createdAt: string
   updatedAt: string
@@ -195,8 +193,6 @@ export function createPriority(data: {
   value: number
   color: string
   description?: string
-  defaultResponseMinutes?: number
-  defaultResolutionMinutes?: number
 }) {
   return api.post<PriorityItem>("/api/v1/itsm/priorities", data)
 }
@@ -625,39 +621,86 @@ export interface EngineAgentConfig {
   temperature: number
 }
 
-export interface EngineAgentSelector {
+export interface StaffingAgentSelector {
   agentId: number
   agentName: string
 }
 
-export interface EngineConfig {
-  generator: EngineAgentConfig
-  servicedesk: EngineAgentSelector
-  decision: EngineAgentSelector & { decisionMode: string }
-  general: {
-    maxRetries: number
-    timeoutSeconds: number
-    reasoningLog: string
-    fallbackAssignee: number
+export interface StaffingPathBuilderConfig extends EngineAgentConfig {
+  maxRetries: number
+  timeoutSeconds: number
+}
+
+export interface StaffingServiceMatcherConfig extends EngineAgentConfig {
+  maxTokens: number
+  timeoutSeconds: number
+}
+
+export interface EngineHealthItem {
+  key: string
+  label: string
+  status: "pass" | "warn" | "fail"
+  message: string
+}
+
+export interface SmartStaffingConfig {
+  posts: {
+    intake: StaffingAgentSelector
+    decision: StaffingAgentSelector & { mode: string }
+    slaAssurance: StaffingAgentSelector
+  }
+  health: {
+    items: EngineHealthItem[]
   }
 }
 
-export interface EngineConfigUpdate {
-  generator: { modelId: number; temperature: number }
-  servicedesk: { agentId: number }
-  decision: { agentId: number; decisionMode: string }
-  general: { maxRetries: number; timeoutSeconds: number; reasoningLog: string; fallbackAssignee: number }
+export interface EngineSettingsConfig {
+  runtime: {
+    serviceMatcher: StaffingServiceMatcherConfig
+    pathBuilder: StaffingPathBuilderConfig
+    guard: {
+      auditLevel: string
+      fallbackAssignee: number
+    }
+  }
+  health: {
+    items: EngineHealthItem[]
+  }
 }
 
-export function fetchEngineConfig() {
-  return api.get<EngineConfig>("/api/v1/itsm/engine/config")
+export interface SmartStaffingConfigUpdate {
+  posts: {
+    intake: { agentId: number }
+    decision: { agentId: number; mode: string }
+    slaAssurance: { agentId: number }
+  }
 }
 
-export function updateEngineConfig(data: EngineConfigUpdate) {
-  return api.put("/api/v1/itsm/engine/config", data)
+export interface EngineSettingsConfigUpdate {
+  runtime: {
+    serviceMatcher: { modelId: number; temperature: number; maxTokens: number; timeoutSeconds: number }
+    pathBuilder: { modelId: number; temperature: number; maxRetries: number; timeoutSeconds: number }
+    guard: { auditLevel: string; fallbackAssignee: number }
+  }
 }
 
-// ─── AI Provider / Model APIs (for engine config) ───────
+export function fetchSmartStaffingConfig() {
+  return api.get<SmartStaffingConfig>("/api/v1/itsm/smart-staffing/config")
+}
+
+export function updateSmartStaffingConfig(data: SmartStaffingConfigUpdate) {
+  return api.put("/api/v1/itsm/smart-staffing/config", data)
+}
+
+export function fetchEngineSettingsConfig() {
+  return api.get<EngineSettingsConfig>("/api/v1/itsm/engine-settings/config")
+}
+
+export function updateEngineSettingsConfig(data: EngineSettingsConfigUpdate) {
+  return api.put("/api/v1/itsm/engine-settings/config", data)
+}
+
+// ─── AI Provider / Model APIs (for smart staffing runtime) ───────
 
 export interface ProviderItem {
   id: number

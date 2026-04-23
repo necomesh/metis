@@ -8,6 +8,7 @@ import "time"
 type ticketModel struct {
 	ID                    uint       `gorm:"primaryKey"`
 	Code                  string     `gorm:"column:code"`
+	Title                 string     `gorm:"column:title"`
 	Status                string     `gorm:"column:status"`
 	EngineType            string     `gorm:"column:engine_type"`
 	WorkflowJSON          string     `gorm:"column:workflow_json;type:text"`
@@ -80,6 +81,7 @@ type timelineModel struct {
 	OperatorID uint      `gorm:"column:operator_id;not null"`
 	EventType  string    `gorm:"column:event_type;size:32;not null"`
 	Message    string    `gorm:"column:message;size:512"`
+	Details    string    `gorm:"column:details;type:text"`
 	Reasoning  string    `gorm:"column:reasoning;type:text"`
 	CreatedAt  time.Time `gorm:"column:created_at;autoCreateTime"`
 }

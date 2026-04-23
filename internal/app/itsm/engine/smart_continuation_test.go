@@ -187,7 +187,7 @@ func newSmartContinuationDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := db.AutoMigrate(&ticketModel{}, &activityModel{}, &timelineModel{}); err != nil {
+	if err := db.AutoMigrate(&ticketModel{}, &activityModel{}, &assignmentModel{}, &timelineModel{}); err != nil {
 		t.Fatalf("migrate db: %v", err)
 	}
 	return db

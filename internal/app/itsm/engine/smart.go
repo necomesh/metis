@@ -44,6 +44,8 @@ type EngineConfigProvider interface {
 	DecisionMode() string
 	// DecisionAgentID returns the configured decision agent ID (0 = not configured).
 	DecisionAgentID() uint
+	// AuditLevel returns how much AI reasoning is written to the ticket timeline.
+	AuditLevel() string
 }
 
 // ParticipantCandidate is a user available for assignment.
@@ -86,7 +88,7 @@ func ParseSmartServiceConfig(raw string) SmartServiceConfig {
 
 // DecisionPlan is the structured output from the AI agent.
 type DecisionPlan struct {
-	NextStepType  string             `json:"next_step_type"` // process|action|notify|form|complete|escalate
+	NextStepType  string             `json:"next_step_type"` // approve|process|action|notify|form|complete|escalate
 	ExecutionMode string             `json:"execution_mode"` // ""|"single"|"parallel"
 	Activities    []DecisionActivity `json:"activities"`
 	Reasoning     string             `json:"reasoning"`
@@ -106,7 +108,7 @@ type DecisionActivity struct {
 
 // Allowed next_step_types for smart engine.
 var AllowedSmartStepTypes = map[string]bool{
-	"process": true, "action": true,
+	"approve": true, "process": true, "action": true,
 	"notify": true, "form": true, "complete": true, "escalate": true,
 }
 
@@ -529,7 +531,7 @@ func (e *SmartEngine) executeSinglePlan(tx *gorm.DB, ticketID uint, plan *Decisi
 		}
 	} else if da.ParticipantType == "position_department" && da.PositionCode != "" && da.DepartmentCode != "" {
 		e.createPositionAssignment(tx, ticketID, act.ID, da.PositionCode, da.DepartmentCode)
-	} else if da.Type == "process" || da.Type == "form" {
+	} else if da.Type == NodeApprove || da.Type == NodeProcess || da.Type == NodeForm {
 		e.tryFallbackAssignment(tx, ticketID, act.ID)
 	}
 
@@ -570,7 +572,7 @@ func (e *SmartEngine) tryFallbackAssignment(tx *gorm.DB, ticketID uint, activity
 	if err := tx.Table("users").Where("id = ? AND deleted_at IS NULL", fallbackID).
 		Select("username, is_active").First(&user).Error; err != nil || !user.IsActive {
 		e.recordTimeline(tx, ticketID, &activityID, 0, "participant_fallback_warning",
-			fmt.Sprintf("兜底处理人无效（ID=%d），请检查引擎配置", fallbackID), "")
+			fmt.Sprintf("兜底处理人无效（ID=%d），请检查引擎设置", fallbackID), "")
 		return
 	}
 
@@ -835,9 +837,31 @@ func (e *SmartEngine) recordTimeline(tx *gorm.DB, ticketID uint, activityID *uin
 		OperatorID: operatorID,
 		EventType:  eventType,
 		Message:    message,
-		Reasoning:  reasoning,
+		Reasoning:  e.auditReasoning(reasoning),
 	}
 	return tx.Create(tl).Error
+}
+
+func (e *SmartEngine) auditReasoning(reasoning string) string {
+	if reasoning == "" || e.configProvider == nil {
+		return reasoning
+	}
+	switch e.configProvider.AuditLevel() {
+	case "off":
+		return ""
+	case "summary":
+		return truncateReasoning(reasoning, 240)
+	default:
+		return reasoning
+	}
+}
+
+func truncateReasoning(reasoning string, limit int) string {
+	reasoning = strings.TrimSpace(reasoning)
+	if len(reasoning) <= limit {
+		return reasoning
+	}
+	return reasoning[:limit] + "..."
 }
 
 func parseDecisionPlan(content string) (*DecisionPlan, error) {
@@ -1086,7 +1110,7 @@ func (e *SmartEngine) agenticDecision(ctx context.Context, tx *gorm.DB, ticketID
 		agentID = e.configProvider.DecisionAgentID()
 	}
 	if agentID == 0 {
-		return nil, fmt.Errorf("决策智能体未配置")
+		return nil, fmt.Errorf("流程决策岗未上岗")
 	}
 
 	// Build seed messages (domain context)
@@ -1309,7 +1333,7 @@ const agenticOutputFormat = "## 输出要求\n\n" +
 	"当你完成信息收集和推理后，直接输出以下 JSON 格式的决策（不要再调用任何工具）：\n\n" +
 	"```json\n" +
 	"{\n" +
-	"  \"next_step_type\": \"process|action|notify|form|complete|escalate\",\n" +
+	"  \"next_step_type\": \"approve|process|action|notify|form|complete|escalate\",\n" +
 	"  \"execution_mode\": \"single|parallel\",\n" +
 	"  \"activities\": [\n" +
 	"    {\n" +

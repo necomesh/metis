@@ -3,6 +3,7 @@
 #   APPS    — Comma-separated frontend modules (e.g., system,ai)
 EDITION ?=
 APPS    ?=
+BUN     ?= $(shell command -v bun 2>/dev/null || echo $(HOME)/.bun/bin/bun)
 
 GO_TAGS := $(if $(EDITION),-tags $(EDITION),)
 
@@ -23,23 +24,24 @@ web-full-registry:
 web-build:
 ifdef APPS
 	APPS=$(APPS) ./scripts/gen-registry.sh
-	cd ./web && bun run build
+	cd ./web && $(BUN) run build
 	./scripts/gen-registry.sh
 else
 	$(MAKE) web-full-registry
-	cd ./web && bun run build
+	cd ./web && $(BUN) run build
 endif
 
 web-install:
-	cd ./web && bun install
+	cd ./web && $(BUN) install
 
 # --- Development ---
 
 dev: web-full-registry
-	go run -tags dev -ldflags '$(LDFLAGS)' ./cmd/server
+	@if [ -f .env.dev ]; then $(MAKE) seed-dev; fi
+	METIS_DEV_SERVER_LDFLAGS="$(LDFLAGS)" go run ./cmd/dev
 
 web-dev: web-full-registry
-	cd ./web && bun run dev
+	cd ./web && $(BUN) run dev
 
 # --- Build & Release ---
 
@@ -95,6 +97,12 @@ refer-clone:
 
 seed:
 	go run -tags dev -ldflags '$(LDFLAGS)' ./cmd/server seed
+
+seed-dev:
+	go run -tags dev -ldflags '$(LDFLAGS)' ./cmd/server seed-dev
+
+clean:
+	rm -f config.yml metis.db metis.db-wal metis.db-shm
 
 push:
 	git add .
@@ -167,7 +175,7 @@ test-bdd-vpn:
 	ITSM_BDD_PATHS=features/vpn_classic_flow.feature,features/vpn_dialog_coverage.feature,features/vpn_dialog_validation.feature,features/vpn_draft_recovery.feature,features/vpn_e2e_dialog_flow.feature,features/vpn_participant_validation.feature,features/vpn_smart_engine_deterministic.feature,features/vpn_smart_flow.feature,features/vpn_ticket_withdraw.feature \
 	go test ./internal/app/itsm/ -run TestBDD -v -timeout 20m
 
-.PHONY: web-full-registry web-build web-install web-dev dev build run release release-license build-license build-sidecar release-sidecar refer-clone seed push test test-license test-fuzz test-llm test-pretty test-cover test-report test-llm-report test-bdd test-bdd-vpn
+.PHONY: web-full-registry web-build web-install web-dev dev build run release release-license build-license build-sidecar release-sidecar refer-clone seed seed-dev clean push test test-license test-fuzz test-llm test-pretty test-cover test-report test-llm-report test-bdd test-bdd-vpn
 
 # Backward-compat aliases
 license: build-license

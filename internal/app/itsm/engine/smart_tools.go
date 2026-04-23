@@ -115,12 +115,12 @@ func toolTicketContext() decisionToolDef {
 				history = append(history, entry)
 				if a.Status == ActivityCompleted && isHumanActivityType(a.ActivityType) {
 					completedRequirements = append(completedRequirements, map[string]any{
-						"type":         a.ActivityType,
-						"name":         a.Name,
-						"outcome":      a.TransitionOutcome,
+						"type":             a.ActivityType,
+						"name":             a.Name,
+						"outcome":          a.TransitionOutcome,
 						"operator_opinion": a.DecisionReasoning,
-						"participants": assignmentFacts(assignments),
-						"satisfied":    isPositiveActivityOutcome(a.TransitionOutcome),
+						"participants":     assignmentFacts(assignments),
+						"satisfied":        isPositiveActivityOutcome(a.TransitionOutcome),
 					})
 				}
 			}
@@ -267,7 +267,7 @@ func assignmentFacts(assignments []ActivityAssignmentInfo) []map[string]any {
 
 func isHumanActivityType(activityType string) bool {
 	switch activityType {
-	case NodeProcess, NodeForm:
+	case NodeApprove, NodeProcess, NodeForm:
 		return true
 	default:
 		return false

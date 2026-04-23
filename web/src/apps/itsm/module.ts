@@ -22,9 +22,11 @@ registerApp({
       items: [
         "itsm:ticket:list",
         "itsm:service:list",
+        "itsm:priority:list",
+        "itsm:sla:list",
       ],
     },
-    { label: "systemConfig", items: ["itsm:sla:list", "itsm:priority:list", "itsm:engine:config"] },
+    { label: "systemConfig", items: ["itsm:smart-staffing:config", "itsm:engine-settings:config"] },
   ],
   routes: [
     {
@@ -123,11 +125,20 @@ registerApp({
       ],
     },
     {
-      path: "itsm/engine-config",
+      path: "itsm/smart-staffing",
       children: [
         {
           index: true,
-          lazy: () => import("./pages/engine-config/index"),
+          lazy: () => import("./pages/smart-staffing/index"),
+        },
+      ],
+    },
+    {
+      path: "itsm/engine-settings",
+      children: [
+        {
+          index: true,
+          lazy: () => import("./pages/engine-settings/index"),
         },
       ],
     },

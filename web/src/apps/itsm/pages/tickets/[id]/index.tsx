@@ -86,8 +86,8 @@ import { WorkflowViewer } from "../../../components/workflow"
 
 const ACTIVE_STATUSES = new Set(["pending", "in_progress", "waiting_action"])
 const TERMINAL_STATUSES = new Set(["completed", "cancelled", "failed"])
-const HUMAN_ACTIVITY_TYPES = new Set(["form", "process"])
-const DEFAULT_DECISIONING_MESSAGE = "决策引擎正在生成下一步，页面会自动刷新。"
+const HUMAN_ACTIVITY_TYPES = new Set(["approve", "form", "process"])
+const DEFAULT_DECISIONING_MESSAGE = "流程决策岗正在生成下一步，页面会自动刷新。"
 type ApprovalOutcome = "approved" | "rejected"
 
 const DEFAULT_EVENT_STYLE = { icon: Clock, bg: "bg-muted", fg: "text-muted-foreground" }
@@ -147,14 +147,14 @@ function useCancelSchema() {
 }
 
 function useApprovalSchema() {
-  const { t } = useTranslation("itsm")
   return z.object({
-    opinion: z.string().min(1, t("validation.opinionRequired")),
+    opinion: z.string(),
   })
 }
 
 function getNodeOutcomes(activityType: string): ApprovalOutcome[] {
   switch (activityType) {
+    case "approve":
     case "form":
     case "process":
       return ["approved", "rejected"]

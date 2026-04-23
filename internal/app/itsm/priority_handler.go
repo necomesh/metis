@@ -20,13 +20,11 @@ func NewPriorityHandler(i do.Injector) (*PriorityHandler, error) {
 }
 
 type CreatePriorityRequest struct {
-	Name                     string `json:"name" binding:"required,max=64"`
-	Code                     string `json:"code" binding:"required,max=16"`
-	Value                    int    `json:"value" binding:"required"`
-	Color                    string `json:"color" binding:"required,max=16"`
-	Description              string `json:"description" binding:"max=255"`
-	DefaultResponseMinutes   int    `json:"defaultResponseMinutes"`
-	DefaultResolutionMinutes int    `json:"defaultResolutionMinutes"`
+	Name        string `json:"name" binding:"required,max=64"`
+	Code        string `json:"code" binding:"required,max=16"`
+	Value       int    `json:"value" binding:"required"`
+	Color       string `json:"color" binding:"required,max=16"`
+	Description string `json:"description" binding:"max=255"`
 }
 
 func (h *PriorityHandler) Create(c *gin.Context) {
@@ -40,13 +38,11 @@ func (h *PriorityHandler) Create(c *gin.Context) {
 	c.Set("audit_resource", "priority")
 
 	p := &Priority{
-		Name:                     req.Name,
-		Code:                     req.Code,
-		Value:                    req.Value,
-		Color:                    req.Color,
-		Description:              req.Description,
-		DefaultResponseMinutes:   req.DefaultResponseMinutes,
-		DefaultResolutionMinutes: req.DefaultResolutionMinutes,
+		Name:        req.Name,
+		Code:        req.Code,
+		Value:       req.Value,
+		Color:       req.Color,
+		Description: req.Description,
 	}
 
 	result, err := h.svc.Create(p)
@@ -78,14 +74,12 @@ func (h *PriorityHandler) List(c *gin.Context) {
 }
 
 type UpdatePriorityRequest struct {
-	Name                     *string `json:"name" binding:"omitempty,max=64"`
-	Code                     *string `json:"code" binding:"omitempty,max=16"`
-	Value                    *int    `json:"value"`
-	Color                    *string `json:"color" binding:"omitempty,max=16"`
-	Description              *string `json:"description" binding:"omitempty,max=255"`
-	DefaultResponseMinutes   *int    `json:"defaultResponseMinutes"`
-	DefaultResolutionMinutes *int    `json:"defaultResolutionMinutes"`
-	IsActive                 *bool   `json:"isActive"`
+	Name        *string `json:"name" binding:"omitempty,max=64"`
+	Code        *string `json:"code" binding:"omitempty,max=16"`
+	Value       *int    `json:"value"`
+	Color       *string `json:"color" binding:"omitempty,max=16"`
+	Description *string `json:"description" binding:"omitempty,max=255"`
+	IsActive    *bool   `json:"isActive"`
 }
 
 func (h *PriorityHandler) Update(c *gin.Context) {
@@ -120,12 +114,6 @@ func (h *PriorityHandler) Update(c *gin.Context) {
 	}
 	if req.Description != nil {
 		updates["description"] = *req.Description
-	}
-	if req.DefaultResponseMinutes != nil {
-		updates["default_response_minutes"] = *req.DefaultResponseMinutes
-	}
-	if req.DefaultResolutionMinutes != nil {
-		updates["default_resolution_minutes"] = *req.DefaultResolutionMinutes
 	}
 	if req.IsActive != nil {
 		updates["is_active"] = *req.IsActive

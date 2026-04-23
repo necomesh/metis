@@ -18,20 +18,19 @@ import (
 )
 
 var (
-	ErrTicketNotFound       = errors.New("ticket not found")
-	ErrTicketTerminal       = errors.New("ticket is in a terminal state and cannot be modified")
-	ErrServiceNotActive     = errors.New("service is not active")
-	ErrActivityNotOwner     = errors.New("only the assignee or admin can progress this activity")
-	ErrActivityNotWait      = errors.New("signal is only allowed on wait nodes")
-	ErrActivityAlready      = errors.New("activity already completed")
-	ErrSLAAlreadyPaused     = errors.New("SLA is already paused")
-	ErrSLANotPaused         = errors.New("SLA is not paused")
-	ErrAssignmentNotFound   = errors.New("assignment not found")
-	ErrAssignmentNotPending = errors.New("assignment is not in pending status")
-	ErrNoActiveAssignment   = errors.New("no active pending assignment for this activity")
-	ErrNotRequester         = errors.New("only the ticket requester can withdraw")
-	ErrTicketClaimed        = errors.New("ticket has been claimed and cannot be withdrawn")
-	ErrOpinionRequired      = errors.New("处理意见不能为空")
+	ErrTicketNotFound         = errors.New("ticket not found")
+	ErrTicketTerminal         = errors.New("ticket is in a terminal state and cannot be modified")
+	ErrServiceNotActive       = errors.New("service is not active")
+	ErrActivityNotOwner       = errors.New("only the assignee or admin can progress this activity")
+	ErrActivityNotWait        = errors.New("signal is only allowed on wait nodes")
+	ErrActivityAlready        = errors.New("activity already completed")
+	ErrSLAAlreadyPaused       = errors.New("SLA is already paused")
+	ErrSLANotPaused           = errors.New("SLA is not paused")
+	ErrAssignmentNotFound     = errors.New("assignment not found")
+	ErrAssignmentNotPending   = errors.New("assignment is not in pending status")
+	ErrNoActiveAssignment     = errors.New("no active pending assignment for this activity")
+	ErrNotRequester           = errors.New("only the ticket requester can withdraw")
+	ErrTicketClaimed          = errors.New("ticket has been claimed and cannot be withdrawn")
 	ErrInvalidProgressOutcome = errors.New("人工节点只能提交 approved 或 rejected")
 )
 
@@ -602,16 +601,13 @@ func (s *TicketService) validateHumanProgress(ticketID uint, activityID uint, ou
 	if err := s.ticketRepo.DB().Where("ticket_id = ? AND id = ?", ticketID, activityID).First(&activity).Error; err != nil {
 		return engine.ErrActivityNotFound
 	}
-	if activity.ActivityType != engine.NodeProcess && activity.ActivityType != engine.NodeForm {
+	if activity.ActivityType != engine.NodeApprove && activity.ActivityType != engine.NodeProcess && activity.ActivityType != engine.NodeForm {
 		return nil
 	}
 	switch strings.TrimSpace(outcome) {
 	case "approved", "rejected":
 	default:
 		return ErrInvalidProgressOutcome
-	}
-	if opinion == "" {
-		return ErrOpinionRequired
 	}
 	return nil
 }

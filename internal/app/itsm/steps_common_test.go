@@ -554,6 +554,10 @@ func (p *bddConfigProvider) DecisionAgentID() uint {
 	return 0
 }
 
+func (p *bddConfigProvider) AuditLevel() string {
+	return "full"
+}
+
 var _ engine.EngineConfigProvider = (*bddConfigProvider)(nil)
 
 // ---------------------------------------------------------------------------
