@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test"
 import {
   shouldProcessServiceDeskHistorySnapshot,
   shouldSyncServiceDeskHistory,
-} from "./use-service-desk-chat"
+} from "./service-desk-chat-sync"
 
 describe("shouldSyncServiceDeskHistory", () => {
   test("does not apply server history while a live run is submitted or streaming", () => {
@@ -58,6 +58,8 @@ describe("shouldProcessServiceDeskHistorySnapshot", () => {
       shouldProcessServiceDeskHistorySnapshot({
         status: "ready",
         hasServerSnapshot: true,
+        serverMessageCount: 0,
+        localMessageCount: 0,
         serverSnapshotKey: "101:empty-history",
         syncedServerSnapshotKey: "101:empty-history",
       }),
@@ -69,6 +71,8 @@ describe("shouldProcessServiceDeskHistorySnapshot", () => {
       shouldProcessServiceDeskHistorySnapshot({
         status: "ready",
         hasServerSnapshot: true,
+        serverMessageCount: 2,
+        localMessageCount: 2,
         serverSnapshotKey: "101:persisted-history",
         syncedServerSnapshotKey: "101:empty-history",
       }),
@@ -77,7 +81,22 @@ describe("shouldProcessServiceDeskHistorySnapshot", () => {
       shouldProcessServiceDeskHistorySnapshot({
         status: "streaming",
         hasServerSnapshot: true,
+        serverMessageCount: 2,
+        localMessageCount: 2,
         serverSnapshotKey: "101:persisted-history",
+        syncedServerSnapshotKey: "101:empty-history",
+      }),
+    ).toBe(false)
+  })
+
+  test("skips server snapshots that have not caught up with the live messages", () => {
+    expect(
+      shouldProcessServiceDeskHistorySnapshot({
+        status: "ready",
+        hasServerSnapshot: true,
+        serverMessageCount: 1,
+        localMessageCount: 2,
+        serverSnapshotKey: "101:user-only",
         syncedServerSnapshotKey: "101:empty-history",
       }),
     ).toBe(false)

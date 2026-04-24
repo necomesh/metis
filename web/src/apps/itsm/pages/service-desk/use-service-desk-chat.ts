@@ -3,10 +3,14 @@
 import { useEffect, useMemo, useRef } from "react"
 import { useChat, Chat, type UseChatHelpers } from "@ai-sdk/react"
 import { useAISDKRuntime } from "@assistant-ui/react-ai-sdk"
-import { DefaultChatTransport, type ChatStatus, type UIMessage } from "ai"
+import { DefaultChatTransport, type UIMessage } from "ai"
 
 import { api, sessionApi, type SessionMessage } from "@/lib/api"
 import { sessionMessagesToUIMessages } from "@/components/chat-workspace"
+import {
+  shouldProcessServiceDeskHistorySnapshot,
+  shouldSyncServiceDeskHistory,
+} from "./service-desk-chat-sync"
 
 function sessionMessagesSignature(messages: SessionMessage[] | undefined) {
   if (!messages) return ""
@@ -41,38 +45,6 @@ function fastSnapshot(message: UIMessage): UIMessage {
 export interface UseServiceDeskChatOptions {
   onFinish?: () => void
   onError?: (error: Error) => void
-}
-
-export function shouldSyncServiceDeskHistory({
-  status,
-  hasServerSnapshot,
-  serverSignature,
-  localSignature,
-}: {
-  status: ChatStatus
-  hasServerSnapshot: boolean
-  serverSignature: string
-  localSignature: string
-}) {
-  if (!hasServerSnapshot) return false
-  if (status === "submitted" || status === "streaming") return false
-  return serverSignature !== localSignature
-}
-
-export function shouldProcessServiceDeskHistorySnapshot({
-  status,
-  hasServerSnapshot,
-  serverSnapshotKey,
-  syncedServerSnapshotKey,
-}: {
-  status: ChatStatus
-  hasServerSnapshot: boolean
-  serverSnapshotKey: string
-  syncedServerSnapshotKey: string
-}) {
-  if (!hasServerSnapshot) return false
-  if (status === "submitted" || status === "streaming") return false
-  return serverSnapshotKey !== syncedServerSnapshotKey
 }
 
 export function useServiceDeskChat(
@@ -136,6 +108,8 @@ export function useServiceDeskChat(
       !shouldProcessServiceDeskHistorySnapshot({
         status: chatStatus,
         hasServerSnapshot: initialSessionMessages !== undefined,
+        serverMessageCount: serverMessages.length,
+        localMessageCount: chat.messages.length,
         serverSnapshotKey,
         syncedServerSnapshotKey: syncedServerSnapshotRef.current,
       })
@@ -158,6 +132,7 @@ export function useServiceDeskChat(
     chatStatus,
     initialSignature,
     initialSessionMessages,
+    chat.messages.length,
     localMessagesSignature,
     serverMessages,
     serverMessagesSignature,
