@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -243,6 +244,97 @@ func TestSmartStartInitializesWorkflowWithoutRunningDecision(t *testing.T) {
 	}
 }
 
+func TestSmartDecisionPositionAssignmentSingleSQLiteConnectionDoesNotBlock(t *testing.T) {
+	db := newSmartContinuationDB(t)
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get sql db: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+	if err := db.Exec(`CREATE TABLE users (id integer primary key, username text, is_active boolean)`).Error; err != nil {
+		t.Fatalf("create users: %v", err)
+	}
+	if err := db.Exec(`CREATE TABLE positions (id integer primary key, code text)`).Error; err != nil {
+		t.Fatalf("create positions: %v", err)
+	}
+	if err := db.Exec(`CREATE TABLE departments (id integer primary key, code text)`).Error; err != nil {
+		t.Fatalf("create departments: %v", err)
+	}
+	if err := db.Exec(`CREATE TABLE user_positions (user_id integer, position_id integer, department_id integer)`).Error; err != nil {
+		t.Fatalf("create user_positions: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO users (id, username, is_active) VALUES (7, 'network-operator', true)`).Error; err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO positions (id, code) VALUES (77, 'network_admin')`).Error; err != nil {
+		t.Fatalf("seed position: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO departments (id, code) VALUES (88, 'it')`).Error; err != nil {
+		t.Fatalf("seed department: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO user_positions (user_id, position_id, department_id) VALUES (7, 77, 88)`).Error; err != nil {
+		t.Fatalf("seed user position: %v", err)
+	}
+
+	ticket := ticketModel{Status: "in_progress", EngineType: "smart"}
+	if err := db.Create(&ticket).Error; err != nil {
+		t.Fatalf("create ticket: %v", err)
+	}
+	eng := NewSmartEngine(
+		availableDecisionExecutor{},
+		nil,
+		nil,
+		NewParticipantResolver(&rootDBPositionResolver{db: db}),
+		nil,
+		nil,
+	)
+	plan := &DecisionPlan{
+		NextStepType:  NodeProcess,
+		ExecutionMode: "single",
+		Activities: []DecisionActivity{{
+			Type:            NodeProcess,
+			ParticipantType: "position_department",
+			PositionCode:    "network_admin",
+			DepartmentCode:  "it",
+			Instructions:    "网络管理员处理",
+		}},
+		Confidence: 0.95,
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- db.Transaction(func(tx *gorm.DB) error {
+			return eng.executeDecisionPlan(tx, ticket.ID, plan)
+		})
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("execute decision plan: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("smart decision position assignment blocked with a single SQLite connection")
+	}
+
+	var assignment assignmentModel
+	if err := db.Where("ticket_id = ?", ticket.ID).First(&assignment).Error; err != nil {
+		t.Fatalf("load assignment: %v", err)
+	}
+	if assignment.UserID == nil || *assignment.UserID != 7 || assignment.PositionID == nil || *assignment.PositionID != 77 || assignment.DepartmentID == nil || *assignment.DepartmentID != 88 {
+		t.Fatalf("expected transaction-scoped position assignment, got %+v", assignment)
+	}
+
+	var reloaded ticketModel
+	if err := db.First(&reloaded, ticket.ID).Error; err != nil {
+		t.Fatalf("reload ticket: %v", err)
+	}
+	if reloaded.CurrentActivityID == nil {
+		t.Fatal("expected current activity to be set")
+	}
+}
+
 func newSmartContinuationDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
@@ -278,4 +370,63 @@ func createSmartContinuationTicket(t *testing.T, db *gorm.DB, groupID string, ac
 	}
 	ticket.CurrentActivityID = &activity.ID
 	return ticket, activity
+}
+
+type rootDBPositionResolver struct {
+	db *gorm.DB
+}
+
+func (r *rootDBPositionResolver) GetUserDeptScope(uint, bool) ([]uint, error) {
+	return nil, nil
+}
+
+func (r *rootDBPositionResolver) GetUserPositionIDs(uint) ([]uint, error) {
+	return nil, nil
+}
+
+func (r *rootDBPositionResolver) GetUserDepartmentIDs(uint) ([]uint, error) {
+	return nil, nil
+}
+
+func (r *rootDBPositionResolver) GetUserPositions(uint) ([]appcore.OrgPosition, error) {
+	return nil, nil
+}
+
+func (r *rootDBPositionResolver) GetUserDepartment(uint) (*appcore.OrgDepartment, error) {
+	return nil, nil
+}
+
+func (r *rootDBPositionResolver) QueryContext(string, string, string, bool) (*appcore.OrgContextResult, error) {
+	return nil, nil
+}
+
+func (r *rootDBPositionResolver) FindUsersByPositionCode(string) ([]uint, error) {
+	return nil, nil
+}
+
+func (r *rootDBPositionResolver) FindUsersByDepartmentCode(string) ([]uint, error) {
+	return nil, nil
+}
+
+func (r *rootDBPositionResolver) FindUsersByPositionAndDepartment(posCode, deptCode string) ([]uint, error) {
+	var userIDs []uint
+	err := r.db.Table("user_positions").
+		Joins("JOIN positions ON positions.id = user_positions.position_id").
+		Joins("JOIN departments ON departments.id = user_positions.department_id").
+		Joins("JOIN users ON users.id = user_positions.user_id").
+		Where("positions.code = ? AND departments.code = ? AND users.is_active = ?", posCode, deptCode, true).
+		Pluck("DISTINCT users.id", &userIDs).Error
+	return userIDs, err
+}
+
+func (r *rootDBPositionResolver) FindUsersByPositionID(uint) ([]uint, error) {
+	return nil, nil
+}
+
+func (r *rootDBPositionResolver) FindUsersByDepartmentID(uint) ([]uint, error) {
+	return nil, nil
+}
+
+func (r *rootDBPositionResolver) FindManagerByUserID(uint) (uint, error) {
+	return 0, nil
 }

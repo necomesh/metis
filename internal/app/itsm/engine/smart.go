@@ -600,21 +600,18 @@ func (e *SmartEngine) tryFallbackAssignment(tx *gorm.DB, ticketID uint, activity
 // createPositionAssignment resolves position_department participant type to actual
 // users and creates the assignment with position/department IDs.
 func (e *SmartEngine) createPositionAssignment(tx *gorm.DB, ticketID, activityID uint, positionCode, departmentCode string) {
-	if e.resolver == nil || e.resolver.orgResolver == nil {
-		slog.Warn("position assignment skipped: org resolver not available", "ticketID", ticketID)
-		return
-	}
-
-	// Resolve user IDs via org service
-	userIDs, err := e.resolver.orgResolver.FindUsersByPositionAndDepartment(positionCode, departmentCode)
-	if err != nil || len(userIDs) == 0 {
-		slog.Warn("position assignment: no users found", "positionCode", positionCode, "departmentCode", departmentCode)
-	}
-
 	// Look up position and department IDs (best-effort, tables may not exist in tests)
 	var positionID, departmentID uint
 	tx.Table("positions").Where("code = ?", positionCode).Select("id").Scan(&positionID)
 	tx.Table("departments").Where("code = ?", departmentCode).Select("id").Scan(&departmentID)
+	userIDs, err := resolveUsersByPositionDepartmentInTx(tx, positionID, departmentID)
+	if err != nil {
+		slog.Warn("position assignment: failed to resolve users in workflow transaction",
+			"positionCode", positionCode, "departmentCode", departmentCode, "error", err)
+	}
+	if len(userIDs) == 0 {
+		slog.Warn("position assignment: no users found", "positionCode", positionCode, "departmentCode", departmentCode)
+	}
 
 	assignment := &assignmentModel{
 		TicketID:        ticketID,
@@ -641,6 +638,19 @@ func (e *SmartEngine) createPositionAssignment(tx *gorm.DB, ticketID, activityID
 	if len(userIDs) > 0 {
 		tx.Model(&ticketModel{}).Where("id = ?", ticketID).Update("assignee_id", userIDs[0])
 	}
+}
+
+func resolveUsersByPositionDepartmentInTx(tx *gorm.DB, positionID, departmentID uint) ([]uint, error) {
+	if positionID == 0 || departmentID == 0 {
+		return nil, nil
+	}
+	var userIDs []uint
+	err := tx.Table("user_positions").
+		Joins("JOIN users ON users.id = user_positions.user_id").
+		Where("user_positions.position_id = ? AND user_positions.department_id = ? AND users.is_active = ?",
+			positionID, departmentID, true).
+		Pluck("DISTINCT users.id", &userIDs).Error
+	return userIDs, err
 }
 
 func (e *SmartEngine) createRequesterAssignment(tx *gorm.DB, ticketID, activityID uint) {
