@@ -4,6 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"metis/internal/app/itsm/bootstrap"
+	"metis/internal/app/itsm/catalog"
+	"metis/internal/app/itsm/config"
+	"metis/internal/app/itsm/definition"
+	"metis/internal/app/itsm/desk"
+	"metis/internal/app/itsm/domain"
+	"metis/internal/app/itsm/sla"
+	"metis/internal/app/itsm/ticket"
 	"strings"
 	"time"
 
@@ -44,7 +52,7 @@ func (a *ITSMApp) BuildAgentRuntimeContext(ctx context.Context, _ string, sessio
 	if sessionID == 0 {
 		return "", nil
 	}
-	configProvider := do.MustInvoke[*EngineConfigService](a.injector)
+	configProvider := do.MustInvoke[*config.EngineConfigService](a.injector)
 	intakeAgentID := configProvider.IntakeAgentID()
 	if intakeAgentID == 0 {
 		return "", nil
@@ -92,48 +100,48 @@ func (a *ITSMApp) BuildAgentRuntimeContext(ctx context.Context, _ string, sessio
 func (a *ITSMApp) Models() []any {
 	return []any{
 		// Configuration models
-		&ServiceCatalog{},
-		&ServiceDefinition{},
-		&ServiceAction{},
-		&Priority{},
-		&SLATemplate{},
-		&EscalationRule{},
-		// Ticket lifecycle models
-		&Ticket{},
-		&TicketActivity{},
-		&TicketAssignment{},
-		&TicketTimeline{},
-		&TicketActionExecution{},
-		&ServiceDeskSubmission{},
+		&domain.ServiceCatalog{},
+		&domain.ServiceDefinition{},
+		&domain.ServiceAction{},
+		&domain.Priority{},
+		&domain.SLATemplate{},
+		&domain.EscalationRule{},
+		// domain.Ticket lifecycle models
+		&domain.Ticket{},
+		&domain.TicketActivity{},
+		&domain.TicketAssignment{},
+		&domain.TicketTimeline{},
+		&domain.TicketActionExecution{},
+		&domain.ServiceDeskSubmission{},
 		// Incident models
-		&TicketLink{},
-		&PostMortem{},
+		&domain.TicketLink{},
+		&domain.PostMortem{},
 		// Process variables
-		&ProcessVariable{},
+		&domain.ProcessVariable{},
 		// Execution tokens
-		&ExecutionToken{},
+		&domain.ExecutionToken{},
 		// Knowledge documents
-		&ServiceKnowledgeDocument{},
+		&domain.ServiceKnowledgeDocument{},
 	}
 }
 
 func (a *ITSMApp) Seed(db *gorm.DB, enforcer *casbin.Enforcer, _ bool) error {
-	return seedITSM(db, enforcer)
+	return bootstrap.SeedITSM(db, enforcer)
 }
 
 func (a *ITSMApp) Providers(i do.Injector) {
 	a.injector = i
 	// Repositories
-	do.Provide(i, NewCatalogRepo)
-	do.Provide(i, NewServiceDefRepo)
-	do.Provide(i, NewServiceActionRepo)
-	do.Provide(i, NewPriorityRepo)
-	do.Provide(i, NewSLATemplateRepo)
-	do.Provide(i, NewEscalationRuleRepo)
-	do.Provide(i, NewTicketRepo)
-	do.Provide(i, NewTimelineRepo)
-	do.Provide(i, NewVariableRepository)
-	do.Provide(i, NewTokenRepository)
+	do.Provide(i, catalog.NewCatalogRepo)
+	do.Provide(i, definition.NewServiceDefRepo)
+	do.Provide(i, definition.NewServiceActionRepo)
+	do.Provide(i, sla.NewPriorityRepo)
+	do.Provide(i, sla.NewSLATemplateRepo)
+	do.Provide(i, sla.NewEscalationRuleRepo)
+	do.Provide(i, ticket.NewTicketRepo)
+	do.Provide(i, ticket.NewTimelineRepo)
+	do.Provide(i, ticket.NewVariableRepository)
+	do.Provide(i, ticket.NewTokenRepository)
 
 	// Engine components
 	do.Provide(i, func(i do.Injector) (*engine.ParticipantResolver, error) {
@@ -186,7 +194,7 @@ func (a *ITSMApp) Providers(i do.Injector) {
 		resolver := do.MustInvoke[*engine.ParticipantResolver](i)
 
 		// Engine config provider for fallback assignee
-		configProvider := do.MustInvoke[*EngineConfigService](i)
+		configProvider := do.MustInvoke[*config.EngineConfigService](i)
 
 		se := engine.NewSmartEngine(decisionExecutor, knowledgeSearcher, userProvider, resolver, submitter, configProvider)
 		se.SetActionExecutor(engine.NewActionExecutor(db.DB))
@@ -194,46 +202,46 @@ func (a *ITSMApp) Providers(i do.Injector) {
 	})
 
 	// Services
-	do.Provide(i, NewCatalogService)
-	do.Provide(i, NewServiceDefService)
-	do.Provide(i, NewServiceActionService)
-	do.Provide(i, NewPriorityService)
-	do.Provide(i, NewSLATemplateService)
-	do.Provide(i, NewEscalationRuleService)
-	do.Provide(i, NewTicketService)
-	do.Provide(i, NewTimelineService)
-	do.Provide(i, NewVariableService)
-	do.Provide(i, NewKnowledgeDocRepo)
-	do.Provide(i, NewKnowledgeDocService)
+	do.Provide(i, catalog.NewCatalogService)
+	do.Provide(i, definition.NewServiceDefService)
+	do.Provide(i, definition.NewServiceActionService)
+	do.Provide(i, sla.NewPriorityService)
+	do.Provide(i, sla.NewSLATemplateService)
+	do.Provide(i, sla.NewEscalationRuleService)
+	do.Provide(i, ticket.NewTicketService)
+	do.Provide(i, ticket.NewTimelineService)
+	do.Provide(i, ticket.NewVariableService)
+	do.Provide(i, definition.NewKnowledgeDocRepo)
+	do.Provide(i, definition.NewKnowledgeDocService)
 	// Engine config
-	do.Provide(i, NewEngineConfigService)
+	do.Provide(i, config.NewEngineConfigService)
 	// Workflow generate
-	do.Provide(i, NewWorkflowGenerateService)
+	do.Provide(i, definition.NewWorkflowGenerateService)
 	// Handlers
-	do.Provide(i, NewCatalogHandler)
-	do.Provide(i, NewServiceDefHandler)
-	do.Provide(i, NewServiceActionHandler)
-	do.Provide(i, NewPriorityHandler)
-	do.Provide(i, NewSLATemplateHandler)
-	do.Provide(i, NewEscalationRuleHandler)
-	do.Provide(i, NewTicketHandler)
-	do.Provide(i, NewKnowledgeDocHandler)
-	do.Provide(i, NewEngineConfigHandler)
-	do.Provide(i, NewWorkflowGenerateHandler)
-	do.Provide(i, NewVariableHandler)
-	do.Provide(i, NewTokenHandler)
-	do.Provide(i, NewServiceDeskHandler)
+	do.Provide(i, catalog.NewCatalogHandler)
+	do.Provide(i, definition.NewServiceDefHandler)
+	do.Provide(i, definition.NewServiceActionHandler)
+	do.Provide(i, sla.NewPriorityHandler)
+	do.Provide(i, sla.NewSLATemplateHandler)
+	do.Provide(i, sla.NewEscalationRuleHandler)
+	do.Provide(i, ticket.NewTicketHandler)
+	do.Provide(i, definition.NewKnowledgeDocHandler)
+	do.Provide(i, config.NewEngineConfigHandler)
+	do.Provide(i, definition.NewWorkflowGenerateHandler)
+	do.Provide(i, ticket.NewVariableHandler)
+	do.Provide(i, ticket.NewTokenHandler)
+	do.Provide(i, desk.NewServiceDeskHandler)
 
 	// ITSM tool chain (Operator, StateStore, Registry)
-	// NOTE: TicketService is resolved lazily inside withdrawFunc to break a circular
-	// dependency: TicketService → SmartEngine → AgentGateway → collectToolRegistries
-	// → tools.Registry → tools.Operator → TicketService.
+	// NOTE: ticket.TicketService is resolved lazily inside withdrawFunc to break a circular
+	// dependency: ticket.TicketService → SmartEngine → AgentGateway → collectToolRegistries
+	// → tools.Registry → tools.Operator → ticket.TicketService.
 	do.Provide(i, func(i do.Injector) (*tools.Operator, error) {
 		db := do.MustInvoke[*database.DB](i)
 		resolver := do.MustInvoke[*engine.ParticipantResolver](i)
 		orgResolver, _ := do.InvokeAs[app.OrgResolver](i)
 		withdrawFunc := func(ticketID uint, reason string, operatorID uint) error {
-			ticketSvc := do.MustInvoke[*TicketService](i)
+			ticketSvc := do.MustInvoke[*ticket.TicketService](i)
 			_, err := ticketSvc.Withdraw(ticketID, reason, operatorID)
 			return err
 		}
@@ -241,7 +249,7 @@ func (a *ITSMApp) Providers(i do.Injector) {
 		var ticketCreator tools.TicketCreator
 		ticketCreator = &lazyTicketCreator{injector: i}
 		runtimeProvider := do.MustInvoke[*aiapp.ToolRuntimeService](i)
-		matcher := NewLLMServiceMatcher(db.DB, runtimeProvider, nil)
+		matcher := definition.NewLLMServiceMatcher(db.DB, runtimeProvider, nil)
 		return tools.NewOperator(db.DB, resolver, orgResolver, withdrawFunc, ticketCreator, matcher), nil
 	})
 	do.Provide(i, func(i do.Injector) (*tools.SessionStateStore, error) {
@@ -256,19 +264,19 @@ func (a *ITSMApp) Providers(i do.Injector) {
 }
 
 func (a *ITSMApp) Routes(api *gin.RouterGroup) {
-	catalogH := do.MustInvoke[*CatalogHandler](a.injector)
-	serviceH := do.MustInvoke[*ServiceDefHandler](a.injector)
-	actionH := do.MustInvoke[*ServiceActionHandler](a.injector)
-	priorityH := do.MustInvoke[*PriorityHandler](a.injector)
-	slaH := do.MustInvoke[*SLATemplateHandler](a.injector)
-	escalationH := do.MustInvoke[*EscalationRuleHandler](a.injector)
-	ticketH := do.MustInvoke[*TicketHandler](a.injector)
-	knowledgeDocH := do.MustInvoke[*KnowledgeDocHandler](a.injector)
-	engineConfigH := do.MustInvoke[*EngineConfigHandler](a.injector)
-	workflowGenH := do.MustInvoke[*WorkflowGenerateHandler](a.injector)
-	variableH := do.MustInvoke[*VariableHandler](a.injector)
-	tokenH := do.MustInvoke[*TokenHandler](a.injector)
-	serviceDeskH := do.MustInvoke[*ServiceDeskHandler](a.injector)
+	catalogH := do.MustInvoke[*catalog.CatalogHandler](a.injector)
+	serviceH := do.MustInvoke[*definition.ServiceDefHandler](a.injector)
+	actionH := do.MustInvoke[*definition.ServiceActionHandler](a.injector)
+	priorityH := do.MustInvoke[*sla.PriorityHandler](a.injector)
+	slaH := do.MustInvoke[*sla.SLATemplateHandler](a.injector)
+	escalationH := do.MustInvoke[*sla.EscalationRuleHandler](a.injector)
+	ticketH := do.MustInvoke[*ticket.TicketHandler](a.injector)
+	knowledgeDocH := do.MustInvoke[*definition.KnowledgeDocHandler](a.injector)
+	engineConfigH := do.MustInvoke[*config.EngineConfigHandler](a.injector)
+	workflowGenH := do.MustInvoke[*definition.WorkflowGenerateHandler](a.injector)
+	variableH := do.MustInvoke[*ticket.VariableHandler](a.injector)
+	tokenH := do.MustInvoke[*ticket.TokenHandler](a.injector)
+	serviceDeskH := do.MustInvoke[*desk.ServiceDeskHandler](a.injector)
 
 	g := api.Group("/itsm")
 	{
@@ -366,9 +374,9 @@ func (a *ITSMApp) Tasks() []scheduler.TaskDef {
 	db := do.MustInvoke[*database.DB](a.injector)
 	classicEngine := do.MustInvoke[*engine.ClassicEngine](a.injector)
 	smartEngine := do.MustInvoke[*engine.SmartEngine](a.injector)
-	configProvider := do.MustInvoke[*EngineConfigService](a.injector)
+	configProvider := do.MustInvoke[*config.EngineConfigService](a.injector)
 	resolver := do.MustInvoke[*engine.ParticipantResolver](a.injector)
-	knowledgeDocSvc := do.MustInvoke[*KnowledgeDocService](a.injector)
+	knowledgeDocSvc := do.MustInvoke[*definition.KnowledgeDocService](a.injector)
 	var slaAssuranceExecutor app.AIDecisionExecutor
 	if executor, err := do.InvokeAs[app.AIDecisionExecutor](a.injector); err == nil {
 		slaAssuranceExecutor = executor
@@ -408,7 +416,7 @@ func (a *ITSMApp) Tasks() []scheduler.TaskDef {
 			Name:        "itsm-doc-parse",
 			Type:        scheduler.TypeAsync,
 			Description: "Parse uploaded knowledge documents for ITSM services",
-			Handler:     handleDocParse(knowledgeDocSvc),
+			Handler:     definition.HandleDocParse(knowledgeDocSvc),
 		},
 		{
 			Name:        "itsm-sla-check",
@@ -502,13 +510,13 @@ var _ engine.WorkflowEngine = (*engine.SmartEngine)(nil)
 var _ app.ToolRegistryProvider = (*ITSMApp)(nil)
 var _ app.AgentRuntimeContextProvider = (*ITSMApp)(nil)
 
-// lazyTicketCreator defers resolution of TicketService to break circular dependency.
+// lazyTicketCreator defers resolution of ticket.TicketService to break circular dependency.
 type lazyTicketCreator struct {
 	injector do.Injector
 }
 
 func (l *lazyTicketCreator) CreateFromAgent(ctx context.Context, req tools.AgentTicketRequest) (*tools.AgentTicketResult, error) {
-	ticketSvc := do.MustInvoke[*TicketService](l.injector)
+	ticketSvc := do.MustInvoke[*ticket.TicketService](l.injector)
 	return ticketSvc.CreateFromAgent(ctx, req)
 }
 

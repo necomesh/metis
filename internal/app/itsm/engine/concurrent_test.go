@@ -212,11 +212,11 @@ func TestProgress_ActivityNotFound(t *testing.T) {
 // UPDATE lock would serialize access and exactly 1 goroutine would succeed.
 //
 // This test validates:
-// 1. At least 1 goroutine succeeds (the workflow advances).
-// 2. Every goroutine either succeeds or receives an expected error
-//    (ErrActivityNotActive or ErrTokenNotActive — the latter occurs when the
-//    token was already completed by another goroutine reaching the end node).
-// 3. No panics or unexpected errors occur under concurrent access.
+//  1. At least 1 goroutine succeeds (the workflow advances).
+//  2. Every goroutine either succeeds or receives an expected error
+//     (ErrActivityNotActive or ErrTokenNotActive — the latter occurs when the
+//     token was already completed by another goroutine reaching the end node).
+//  3. No panics or unexpected errors occur under concurrent access.
 func TestProgress_ConcurrentGoroutines(t *testing.T) {
 	db, eng, ticketID, _, activityID := setupConcurrencyTest(t)
 
