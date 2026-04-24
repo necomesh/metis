@@ -118,6 +118,7 @@ async function startServiceDeskStreamServer() {
 export class ServiceDeskSSEWorld {
   private streamServer: StreamServer | null = null
   private chatRequestCount = 0
+  private runtimeErrors: string[] = []
 
   constructor(private readonly page: Page) {}
 
@@ -127,6 +128,12 @@ export class ServiceDeskSSEWorld {
   }
 
   async givenAdminCanUseServiceDesk() {
+    this.page.on("pageerror", (error) => this.runtimeErrors.push(error.message))
+    this.page.on("console", (message) => {
+      if (message.type() === "error") {
+        this.runtimeErrors.push(message.text())
+      }
+    })
     await this.page.addInitScript(() => {
       localStorage.setItem("metis_access_token", "e2e-access")
       localStorage.setItem("metis_refresh_token", "e2e-refresh")
@@ -167,6 +174,16 @@ export class ServiceDeskSSEWorld {
     await expect(this.page.getByTestId("itsm-draft-form-surface")).toBeVisible()
     await expect(this.page.getByText("VPN 账号")).toBeVisible()
     await expect(this.page.getByText("正在为你准备 VPN 申请草稿")).toHaveCount(0)
+  }
+
+  async thenNoAIStreamValidationErrorAppears() {
+    await expect(this.page.getByText(/Type validation failed|invalid_union/)).toHaveCount(0)
+    expect(this.runtimeErrors.join("\n")).not.toMatch(/Type validation failed|invalid_union|Unrecognized keys/)
+  }
+
+  async thenConversationDoesNotDuplicateOrRollback() {
+    await expect(this.page.getByText("我想申请 VPN，线上支持用")).toHaveCount(1)
+    await expect(this.page.getByTestId("itsm-draft-form-surface")).toHaveCount(1)
   }
 
   private async routeAPI(route: Route) {

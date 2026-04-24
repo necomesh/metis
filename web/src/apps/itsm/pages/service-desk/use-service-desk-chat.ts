@@ -59,12 +59,29 @@ export function shouldSyncServiceDeskHistory({
   return serverSignature !== localSignature
 }
 
+export function shouldProcessServiceDeskHistorySnapshot({
+  status,
+  hasServerSnapshot,
+  serverSnapshotKey,
+  syncedServerSnapshotKey,
+}: {
+  status: ChatStatus
+  hasServerSnapshot: boolean
+  serverSnapshotKey: string
+  syncedServerSnapshotKey: string
+}) {
+  if (!hasServerSnapshot) return false
+  if (status === "submitted" || status === "streaming") return false
+  return serverSnapshotKey !== syncedServerSnapshotKey
+}
+
 export function useServiceDeskChat(
   sessionId: number,
   initialSessionMessages?: SessionMessage[],
   options?: UseServiceDeskChatOptions,
 ) {
   const optionsRef = useRef(options)
+  const syncedServerSnapshotRef = useRef("")
   useEffect(() => {
     optionsRef.current = options
   }, [options])
@@ -114,24 +131,37 @@ export function useServiceDeskChat(
 
   const { setMessages: setChatMessages, status: chatStatus } = chat
   useEffect(() => {
+    const serverSnapshotKey = `${sessionId}:${initialSignature}`
     if (
-      !shouldSyncServiceDeskHistory({
+      !shouldProcessServiceDeskHistorySnapshot({
         status: chatStatus,
         hasServerSnapshot: initialSessionMessages !== undefined,
-        serverSignature: serverMessagesSignature,
-        localSignature: localMessagesSignature,
+        serverSnapshotKey,
+        syncedServerSnapshotKey: syncedServerSnapshotRef.current,
       })
     ) {
       return
     }
 
-    setChatMessages(serverMessages)
+    syncedServerSnapshotRef.current = serverSnapshotKey
+    if (
+      shouldSyncServiceDeskHistory({
+        status: chatStatus,
+        hasServerSnapshot: true,
+        serverSignature: serverMessagesSignature,
+        localSignature: localMessagesSignature,
+      })
+    ) {
+      setChatMessages(serverMessages)
+    }
   }, [
     chatStatus,
+    initialSignature,
     initialSessionMessages,
     localMessagesSignature,
     serverMessages,
     serverMessagesSignature,
+    sessionId,
     setChatMessages,
   ])
 

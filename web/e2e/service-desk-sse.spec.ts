@@ -31,6 +31,14 @@ test.describe("Feature: 服务台聊天流式输出", () => {
       await test.step("And 草稿表单出现时 suppress 文本并渲染表单", () =>
         serviceDesk.thenDraftSurfaceSuppressesAssistantTextAndShowsForm(),
       )
+
+      await test.step("And 流协议没有触发 AI SDK 校验错误", () =>
+        serviceDesk.thenNoAIStreamValidationErrorAppears(),
+      )
+
+      await test.step("And 完成后不会出现重复消息或回滚", () =>
+        serviceDesk.thenConversationDoesNotDuplicateOrRollback(),
+      )
     } finally {
       await serviceDesk.cleanup()
     }

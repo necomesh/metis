@@ -187,6 +187,77 @@ func TestSessionHandler_ChatStoresMessageAndStreams(t *testing.T) {
 	}
 }
 
+func TestSessionHandler_ChatRegenerateDoesNotDuplicateUserMessage(t *testing.T) {
+	db := setupTestDB(t)
+	agentSvc := newAgentServiceForTest(t, db)
+	sessionSvc := newSessionServiceForTest(t, db)
+	mockLLM := newMockLLMClient([]llm.StreamEvent{
+		{Type: "content_delta", Content: "重新生成"},
+		{Type: "done", Usage: &llm.Usage{InputTokens: 4, OutputTokens: 2}},
+	}, nil)
+	modelID := uint(1)
+	agent := &Agent{Name: "agent", Type: AgentTypeAssistant, ModelID: &modelID, Strategy: AgentStrategyReact, Visibility: AgentVisibilityTeam, CreatedBy: 1}
+	if err := agentSvc.Create(agent); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	session, err := sessionSvc.Create(agent.ID, 1)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if _, err := sessionSvc.StoreMessage(session.ID, MessageRoleUser, "我想申请 VPN", nil, 0); err != nil {
+		t.Fatalf("store original user message: %v", err)
+	}
+
+	r := setupAIHandlerTestRouter(
+		&AgentHandler{svc: agentSvc, repo: agentSvc.repo},
+		&SessionHandler{svc: sessionSvc, gateway: newGatewayForTest(t, db, mockLLM)},
+		&MemoryHandler{svc: &MemoryService{repo: &MemoryRepo{db: agentSvc.repo.db}}},
+	)
+
+	body := []byte(`{"id":"service-desk","messages":[{"id":"u1","role":"user","parts":[{"type":"text","text":"我想申请 VPN"}]}],"trigger":"regenerate-message"}`)
+	server := httptest.NewServer(r)
+	defer server.Close()
+
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/ai/sessions/"+strconv.FormatUint(uint64(session.ID), 10)+"/chat", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatalf("send chat request: %v", err)
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read stream body: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(respBody))
+	}
+	if !strings.Contains(string(respBody), `"delta":"重新生成"`) {
+		t.Fatalf("expected regenerated stream content, got %s", string(respBody))
+	}
+
+	messages, err := sessionSvc.GetMessages(session.ID)
+	if err != nil {
+		t.Fatalf("get messages: %v", err)
+	}
+	userCount := 0
+	for _, message := range messages {
+		if message.Role == MessageRoleUser {
+			userCount++
+		}
+	}
+	if userCount != 1 {
+		t.Fatalf("expected one persisted user message after regenerate, got %d: %+v", userCount, messages)
+	}
+	if messages[len(messages)-1].Role != MessageRoleAssistant || messages[len(messages)-1].Content != "重新生成" {
+		t.Fatalf("unexpected regenerated assistant message: %+v", messages[len(messages)-1])
+	}
+}
+
 func TestMemoryHandler_CrossUserDeleteReturnsNotFound(t *testing.T) {
 	db := setupTestDB(t)
 	agentSvc := newAgentServiceForTest(t, db)
