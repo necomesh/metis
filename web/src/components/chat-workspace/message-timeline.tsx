@@ -264,6 +264,8 @@ function ToolActivityRow({ activity }: { activity: ToolActivity }) {
     <div className="py-1.5">
       <button
         type="button"
+        data-testid="chat-tool-activity"
+        data-status={activity.status}
         className={cn(
           "group flex min-h-8 w-full items-center gap-2 rounded-lg border border-border/55 bg-background/55 px-2.5 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:border-border/80 hover:bg-accent/20 hover:text-foreground",
           activity.status === "error" && "border-destructive/30 bg-destructive/5 text-destructive",

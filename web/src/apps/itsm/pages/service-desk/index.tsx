@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router"
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { AssistantRuntimeProvider } from "@assistant-ui/react"
 import type { UIMessage } from "ai"
 import {
   AlertTriangle,
@@ -20,12 +21,7 @@ import {
   ChatHeader,
   ChatStatusDot,
   ChatWorkspace,
-  createOptimisticUserMessage,
-  hasUnmatchedPendingUserMessages,
-  mergeTimelineMessages,
-  sessionMessagesToUIMessages,
   SessionSidebar,
-  useAiChat,
   type ChatComposerImage,
   type ChatWorkspaceSurfaceRenderer,
 } from "@/components/chat-workspace"
@@ -39,6 +35,7 @@ import {
   type ITSMDraftFormSurface,
   type ITSMDraftFormSurfacePayload,
 } from "../../api"
+import { useServiceDeskChat } from "./use-service-desk-chat"
 
 const SUGGESTED_PROMPTS = [
   "我想申请 VPN，线上支持用",
@@ -55,6 +52,14 @@ function addImagePreviews(files: File[], onAdd: (image: ChatComposerImage) => vo
     }
     reader.readAsDataURL(file)
   }
+}
+
+function toImageFileParts(urls: string[]) {
+  return urls.map((url) => ({
+    type: "file" as const,
+    mediaType: "image/*",
+    url,
+  }))
 }
 
 function formatSessionTime(value: string) {
@@ -251,7 +256,7 @@ function ITSMDraftFormSurfaceCard({
 
   if (currentPayload.status === "loading") {
     return (
-      <div className="mb-5 max-w-[720px] rounded-2xl border border-border/65 bg-background/82 p-4 shadow-[0_18px_52px_-44px_hsl(var(--foreground))]">
+      <div data-testid="itsm-draft-form-surface" className="mb-5 max-w-[720px] rounded-2xl border border-border/65 bg-background/82 p-4 shadow-[0_18px_52px_-44px_hsl(var(--foreground))]">
         <div className="flex items-center gap-3">
           <div className="flex size-9 items-center justify-center rounded-full border border-primary/20 bg-primary/8 text-primary">
             <Loader2 className="size-4 animate-spin" />
@@ -272,7 +277,7 @@ function ITSMDraftFormSurfaceCard({
 
   if (currentPayload.status === "submitted") {
     return (
-      <div className="mb-5 max-w-[720px] rounded-2xl border border-emerald-500/25 bg-emerald-500/6 p-4">
+      <div data-testid="itsm-draft-form-surface" className="mb-5 max-w-[720px] rounded-2xl border border-emerald-500/25 bg-emerald-500/6 p-4">
         <div className="flex items-start gap-3">
           <div className="flex size-9 shrink-0 items-center justify-center rounded-full border border-emerald-500/25 bg-background text-emerald-600 dark:text-emerald-300">
             <CheckCircle2 className="size-4" />
@@ -297,14 +302,14 @@ function ITSMDraftFormSurfaceCard({
 
   if (!isFormSchema(currentPayload.schema)) {
     return (
-      <div className="mb-5 max-w-[720px] rounded-2xl border border-destructive/25 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+      <div data-testid="itsm-draft-form-surface" className="mb-5 max-w-[720px] rounded-2xl border border-destructive/25 bg-destructive/5 px-4 py-3 text-sm text-destructive">
         表单定义不可用，请重新整理草稿。
       </div>
     )
   }
 
   return (
-    <div className="mb-5 max-w-[720px] rounded-2xl border border-border/65 bg-background/94 p-4 shadow-[0_18px_52px_-44px_hsl(var(--foreground))]">
+    <div data-testid="itsm-draft-form-surface" className="mb-5 max-w-[720px] rounded-2xl border border-border/65 bg-background/94 p-4 shadow-[0_18px_52px_-44px_hsl(var(--foreground))]">
       <div className="mb-4 flex items-start gap-3">
         <div className="flex size-9 shrink-0 items-center justify-center rounded-full border border-primary/20 bg-primary/8 text-primary">
           <FileCheck2 className="size-4" />
@@ -363,7 +368,6 @@ function ServiceDeskConversation({
   const queryClient = useQueryClient()
   const [input, setInput] = useState("")
   const [pendingImages, setPendingImages] = useState<ChatComposerImage[]>([])
-  const [pendingUserMessages, setPendingUserMessages] = useState<UIMessage[]>([])
   const scrollRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const initialPromptSentRef = useRef(false)
@@ -380,7 +384,7 @@ function ServiceDeskConversation({
     queryClient.invalidateQueries({ queryKey: ["ai-sessions"] })
   }, [queryClient, session.id])
 
-  const chat = useAiChat(session.id, sessionData?.messages, {
+  const { chat, runtime } = useServiceDeskChat(session.id, sessionData?.messages, {
     onFinish: invalidateWorkspace,
     onError: (err) => {
       toast.error(err.message)
@@ -389,45 +393,25 @@ function ServiceDeskConversation({
   })
 
   const chatBusy = chat.status === "streaming" || chat.status === "submitted"
-  const serverMessages = useMemo(
-    () => sessionMessagesToUIMessages(sessionData?.messages ?? []),
-    [sessionData?.messages],
-  )
-  const baseVisibleMessages = useMemo(
-    () => mergeTimelineMessages(serverMessages, chat.messages),
-    [chat.messages, serverMessages],
-  )
-  const hasPendingUserMessage = useMemo(
-    () => hasUnmatchedPendingUserMessages(baseVisibleMessages, pendingUserMessages),
-    [baseVisibleMessages, pendingUserMessages],
-  )
-  const visibleMessages = useMemo(
-    () => mergeTimelineMessages(serverMessages, chat.messages, pendingUserMessages),
-    [chat.messages, pendingUserMessages, serverMessages],
-  )
+  const visibleMessages = chat.messages
 
   useEffect(() => {
     if (!initialPrompt || initialPromptSentRef.current || isLoading) return
     initialPromptSentRef.current = true
     ;(async () => {
       try {
-        setPendingUserMessages([
-          createOptimisticUserMessage({
-            text: initialPrompt,
-            images: (initialImages ?? []).map((image) => image.preview),
-          }),
-        ])
         const imageUrls: string[] = []
         for (const image of initialImages ?? []) {
           const res = await sessionApi.uploadMessageImage(session.id, image.file)
           imageUrls.push(res.url)
         }
-        chat.setPendingImageUrls(imageUrls)
-        chat.sendMessage({ text: initialPrompt })
+        await chat.sendMessage({
+          text: initialPrompt,
+          files: toImageFileParts(imageUrls),
+        })
         onInitialPromptSent()
       } catch (err) {
         initialPromptSentRef.current = false
-        setPendingUserMessages([])
         toast.error(err instanceof Error ? err.message : "图片上传失败")
       }
     })()
@@ -437,7 +421,7 @@ function ServiceDeskConversation({
     const container = scrollRef.current
     if (!container) return
     container.scrollTo({ top: container.scrollHeight, behavior: chatBusy ? "instant" : "smooth" })
-  }, [visibleMessages.length, chatBusy])
+  }, [visibleMessages, chatBusy])
 
   const sendMutation = useMutation({
     mutationFn: async (text: string) => {
@@ -446,16 +430,20 @@ function ServiceDeskConversation({
         const res = await sessionApi.uploadMessageImage(session.id, image.file)
         imageUrls.push(res.url)
       }
-      chat.setPendingImageUrls(imageUrls)
-      return text
+      return { text, imageUrls }
     },
-    onSuccess: (text) => {
-      chat.sendMessage({ text })
+    onSuccess: ({ text, imageUrls }) => {
+      void chat.sendMessage({
+        text,
+        files: toImageFileParts(imageUrls),
+      }).catch((err: Error) => {
+        toast.error(err.message)
+        invalidateWorkspace()
+      })
       setInput("")
       setPendingImages([])
     },
     onError: (err) => {
-      setPendingUserMessages([])
       toast.error(err.message)
     },
   })
@@ -469,17 +457,11 @@ function ServiceDeskConversation({
     onError: (err) => toast.error(err.message),
   })
 
-  const isBusy = chatBusy || sendMutation.isPending || hasPendingUserMessage
+  const isBusy = chatBusy || sendMutation.isPending
 
   const handleSend = useCallback(() => {
     const text = input.trim()
     if ((!text && pendingImages.length === 0) || isBusy || sendMutation.isPending) return
-    setPendingUserMessages([
-      createOptimisticUserMessage({
-        text,
-        images: pendingImages.map((image) => image.preview),
-      }),
-    ])
     sendMutation.mutate(text)
   }, [input, isBusy, pendingImages, sendMutation])
 
@@ -494,6 +476,7 @@ function ServiceDeskConversation({
   const showEmpty = !isLoading && visibleMessages.length === 0 && !isBusy && !initialPrompt
 
   return (
+    <AssistantRuntimeProvider runtime={runtime}>
     <ChatWorkspace
       density="workbench"
       messageWidth="standard"
@@ -567,6 +550,7 @@ function ServiceDeskConversation({
       messagesEndRef={messagesEndRef}
       scrollRef={scrollRef}
     />
+    </AssistantRuntimeProvider>
   )
 }
 
