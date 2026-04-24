@@ -148,11 +148,11 @@ func TestBuiltInSmartSeedsAlignParticipantsAndInstallAdminIdentity(t *testing.T)
 			t.Fatalf("load smart services: %v", err)
 		}
 		wanted := map[string][]string{
-			"boss-serial-change-request":     {"headquarters", "serial_reviewer", "ops_admin"},
-			"db-backup-whitelist-action-e2e": {"db_admin"},
-			"prod-server-temporary-access":   {"ops_admin", "network_admin", "security_admin"},
-			"vpn-access-request":             {"network_admin", "security_admin"},
-			"copilot-account-request":        {"IT管理员"},
+			"boss-serial-change-request":      {"headquarters", "serial_reviewer", "ops_admin"},
+			"db-backup-whitelist-action-flow": {"db_admin"},
+			"prod-server-temporary-access":    {"ops_admin", "network_admin", "security_admin"},
+			"vpn-access-request":              {"network_admin", "security_admin"},
+			"copilot-account-request":         {"IT管理员"},
 		}
 		for _, svc := range services {
 			needles, ok := wanted[svc.Code]

@@ -80,7 +80,7 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	registerDraftRecoverySteps(sc, bc)
 	registerCountersignSteps(sc, bc)
 	registerRecoverySteps(sc, bc)
-	registerE2EDialogSteps(sc, bc)
+	registerServiceDeskDialogSteps(sc, bc)
 	registerSessionIsolationSteps(sc, bc)
 	registerKnowledgeRoutingSteps(sc, bc)
 	registerSLAAssuranceSteps(sc, bc)

@@ -100,7 +100,7 @@ type dialogTestState struct {
 	finalContent string
 	userMessage  string
 	mutateDraft  bool // flag: mutate form fields after draft_prepare
-	// E2E dialog fields
+	// Dialog fields shared by service desk validation scenarios.
 	currentUserID   uint
 	currentUsername string
 	messages        []dialogMessage

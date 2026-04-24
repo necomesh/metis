@@ -1,4 +1,4 @@
-@bdd @itsm @llm @dialog_coverage
+@bdd @itsm @dialog_coverage
 Feature: VPN 对话模式覆盖
   验证 6 种对话模式下的服务台行为
 
@@ -9,7 +9,7 @@ Feature: VPN 对话模式覆盖
       | 申请人     | vpn-requester | it       | staff      |
       | 网络管理   | net-admin     | it       | net_admin  |
     And 已定义 VPN 开通申请协作规范
-    And 已基于协作规范发布 VPN 服务（智能引擎）
+    And 已发布 VPN 对话测试服务
 
   Scenario Outline: 对话模式 - <模式名称>
     Given 服务台收到用户 "vpn-requester" 的对话

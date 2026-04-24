@@ -649,7 +649,7 @@ func seedServiceDefinitions(db *gorm.DB) error {
 		},
 		{
 			Name:              "生产数据库备份白名单临时放行申请",
-			Code:              "db-backup-whitelist-action-e2e",
+			Code:              "db-backup-whitelist-action-flow",
 			Description:       "用于验证请求节点预检动作、处理后自动放行动作与工单闭环。",
 			CatalogCode:       "application-platform:database",
 			SLACode:           "infra-change",
@@ -685,7 +685,7 @@ func seedServiceDefinitions(db *gorm.DB) error {
 			SLACode:           "standard",
 			IntakeFormSchema:  vpnAccessFormSchema,
 			WorkflowJSON:      vpnAccessWorkflowJSON,
-			CollaborationSpec: `用户在 IT 服务台提交 VPN 开通申请。参考路径必须包含名为“填写 VPN 开通申请”的申请填写节点，收集 VPN 账号、设备与用途说明、访问原因。申请填写节点的表单字段必须使用以下 key：VPN 账号字段 key 为 vpn_account，设备与用途说明字段 key 为 device_usage，访问原因字段 key 为 request_kind。访问原因字段必须是 select，选项必须使用这些 value：线上支持=online_support，故障排查=troubleshooting，生产应急=production_emergency，网络接入问题=network_access_issue，外部协作=external_collaboration，长期远程办公=long_term_remote_work，跨境访问=cross_border_access，安全合规事项=security_compliance。排他网关必须使用 form.request_kind 作为条件字段。如果访问原因属于 online_support、troubleshooting、production_emergency 或 network_access_issue，则进入名为“网络管理员处理”的处理节点，交给信息部网络管理员岗位处理，参与者类型必须使用 position_department，部门编码使用 it，岗位编码使用 network_admin。如果访问原因属于 external_collaboration、long_term_remote_work、cross_border_access 或 security_compliance，则进入名为“信息安全管理员处理”的处理节点，交给信息部信息安全管理员岗位处理，参与者类型必须使用 position_department，部门编码使用 it，岗位编码使用 security_admin。处理任务完成后直接结束流程。`,
+			CollaborationSpec: `用户在 IT 服务台申请开通 VPN。先让申请人填写一张名为“填写 VPN 开通申请”的表单，表单只需要三项信息：VPN 账号、设备与用途说明、访问原因。为了让后续流程能稳定读取表单数据，三个字段的内部 key 分别使用 vpn_account、device_usage、request_kind；其中访问原因是下拉选择，选项为线上支持(online_support)、故障排查(troubleshooting)、生产应急(production_emergency)、网络接入问题(network_access_issue)、外部协作(external_collaboration)、长期远程办公(long_term_remote_work)、跨境访问(cross_border_access)、安全合规事项(security_compliance)。申请提交后，流程通过 form.request_kind 进入排他网关：线上支持、故障排查、生产应急、网络接入问题进入“网络管理员处理”，由信息部网络管理员岗位处理，参与者类型使用 position_department，部门编码 it，岗位编码 network_admin；外部协作、长期远程办公、跨境访问、安全合规事项进入“信息安全管理员处理”，由信息部信息安全管理员岗位处理，参与者类型使用 position_department，部门编码 it，岗位编码 security_admin。处理任务完成后直接结束流程。`,
 		},
 	}
 
