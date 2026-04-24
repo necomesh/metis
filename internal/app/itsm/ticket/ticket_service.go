@@ -265,16 +265,22 @@ func (s *TicketService) createAgentTicket(ctx context.Context, input CreateTicke
 		return ticket, err
 	}
 
+	ticket, svc, err := s.prepareTicket(input, req.UserID)
+	if err != nil {
+		return nil, err
+	}
+
 	var created *Ticket
-	err := s.ticketRepo.DB().Transaction(func(tx *gorm.DB) error {
+	err = s.ticketRepo.DB().Transaction(func(tx *gorm.DB) error {
 		var existing ServiceDeskSubmission
-		err := tx.Where("session_id = ? AND draft_version = ? AND fields_hash = ?", req.SessionID, req.DraftVersion, req.FieldsHash).
-			First(&existing).Error
-		if err == nil {
-			return errSubmissionAlreadyExists
+		result := tx.Where("session_id = ? AND draft_version = ? AND fields_hash = ?", req.SessionID, req.DraftVersion, req.FieldsHash).
+			Limit(1).
+			Find(&existing)
+		if result.Error != nil {
+			return result.Error
 		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
+		if result.RowsAffected > 0 {
+			return errSubmissionAlreadyExists
 		}
 
 		submission := &ServiceDeskSubmission{
@@ -293,10 +299,6 @@ func (s *TicketService) createAgentTicket(ctx context.Context, input CreateTicke
 			return err
 		}
 
-		ticket, svc, err := s.prepareTicket(input, req.UserID)
-		if err != nil {
-			return err
-		}
 		if err := s.createTicketLifecycleInTx(ctx, tx, ticket, svc, req.UserID); err != nil {
 			return err
 		}
@@ -343,14 +345,15 @@ func (s *TicketService) createAgentTicket(ctx context.Context, input CreateTicke
 
 func (s *TicketService) findSubmittedDraftTicket(sessionID uint, draftVersion int, fieldsHash string) (*Ticket, bool, error) {
 	var submission ServiceDeskSubmission
-	err := s.ticketRepo.DB().
+	result := s.ticketRepo.DB().
 		Where("session_id = ? AND draft_version = ? AND fields_hash = ?", sessionID, draftVersion, fieldsHash).
-		First(&submission).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, false, nil
+		Limit(1).
+		Find(&submission)
+	if result.Error != nil {
+		return nil, false, result.Error
 	}
-	if err != nil {
-		return nil, false, err
+	if result.RowsAffected == 0 {
+		return nil, false, nil
 	}
 	if submission.TicketID == 0 || submission.Status != "submitted" {
 		return nil, false, nil
@@ -385,14 +388,18 @@ func (s *TicketService) Progress(ticketID uint, activityID uint, outcome string,
 	}
 
 	eng := s.engineFor(t.EngineType)
+	positionIDs, departmentIDs := s.operatorOrgScope(operatorID)
 	if err := s.ticketRepo.DB().Transaction(func(tx *gorm.DB) error {
 		return eng.Progress(context.Background(), tx, engine.ProgressParams{
-			TicketID:   ticketID,
-			ActivityID: activityID,
-			Outcome:    outcome,
-			Result:     result,
-			Opinion:    opinion,
-			OperatorID: operatorID,
+			TicketID:              ticketID,
+			ActivityID:            activityID,
+			Outcome:               outcome,
+			Result:                result,
+			Opinion:               opinion,
+			OperatorID:            operatorID,
+			OperatorPositionIDs:   positionIDs,
+			OperatorDepartmentIDs: departmentIDs,
+			OperatorOrgScopeReady: true,
 		})
 	}); err != nil {
 		return nil, err
@@ -426,19 +433,32 @@ func (s *TicketService) Signal(ticketID uint, activityID uint, outcome string, d
 		return nil, engine.ErrActivityNotActive
 	}
 
+	positionIDs, departmentIDs := s.operatorOrgScope(operatorID)
 	if err := s.ticketRepo.DB().Transaction(func(tx *gorm.DB) error {
 		return s.engineFor(t.EngineType).Progress(context.Background(), tx, engine.ProgressParams{
-			TicketID:   ticketID,
-			ActivityID: activityID,
-			Outcome:    outcome,
-			Result:     data,
-			OperatorID: operatorID,
+			TicketID:              ticketID,
+			ActivityID:            activityID,
+			Outcome:               outcome,
+			Result:                data,
+			OperatorID:            operatorID,
+			OperatorPositionIDs:   positionIDs,
+			OperatorDepartmentIDs: departmentIDs,
+			OperatorOrgScopeReady: true,
 		})
 	}); err != nil {
 		return nil, err
 	}
 
 	return s.ticketRepo.FindByID(ticketID)
+}
+
+func (s *TicketService) operatorOrgScope(operatorID uint) ([]uint, []uint) {
+	if s.orgResolver == nil || operatorID == 0 {
+		return nil, nil
+	}
+	positionIDs, _ := s.orgResolver.GetUserPositionIDs(operatorID)
+	departmentIDs, _ := s.orgResolver.GetUserDepartmentIDs(operatorID)
+	return positionIDs, departmentIDs
 }
 
 // GetActivities returns all activities for a ticket.

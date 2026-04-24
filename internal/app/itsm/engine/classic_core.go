@@ -146,7 +146,7 @@ func (e *ClassicEngine) Progress(ctx context.Context, tx *gorm.DB, params Progre
 	}
 
 	now := time.Now()
-	if completedAssignment, completed, err := completePendingAssignment(tx, e.resolver, activity.ID, params.OperatorID, now); err != nil {
+	if completedAssignment, completed, err := completePendingAssignment(tx, e.resolver, activity.ID, params.OperatorID, now, params.OperatorPositionIDs, params.OperatorDepartmentIDs, params.OperatorOrgScopeReady); err != nil {
 		return err
 	} else if completed && completedAssignment != nil {
 		if completedAssignment.DelegatedFrom != nil {

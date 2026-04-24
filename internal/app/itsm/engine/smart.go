@@ -198,7 +198,7 @@ func (e *SmartEngine) Progress(ctx context.Context, tx *gorm.DB, params Progress
 	}
 
 	now := time.Now()
-	if _, _, err := completePendingAssignment(tx, e.resolver, activity.ID, params.OperatorID, now); err != nil {
+	if _, _, err := completePendingAssignment(tx, e.resolver, activity.ID, params.OperatorID, now, params.OperatorPositionIDs, params.OperatorDepartmentIDs, params.OperatorOrgScopeReady); err != nil {
 		return err
 	}
 

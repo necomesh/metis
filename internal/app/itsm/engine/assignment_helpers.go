@@ -71,12 +71,14 @@ func assignmentOperatorCondition(db *gorm.DB, alias string, userID uint, positio
 	return cond
 }
 
-func completePendingAssignment(tx *gorm.DB, resolver *ParticipantResolver, activityID uint, operatorID uint, now time.Time) (*assignmentModel, bool, error) {
+func completePendingAssignment(tx *gorm.DB, resolver *ParticipantResolver, activityID uint, operatorID uint, now time.Time, positionIDs []uint, departmentIDs []uint, orgScopeReady bool) (*assignmentModel, bool, error) {
 	if operatorID == 0 {
 		return nil, false, nil
 	}
 
-	positionIDs, departmentIDs := resolver.userOrgIDs(operatorID)
+	if !orgScopeReady {
+		positionIDs, departmentIDs = resolver.userOrgIDs(operatorID)
+	}
 	query := tx.Model(&assignmentModel{}).
 		Where("activity_id = ? AND status = ?", activityID, "pending").
 		Where(assignmentOperatorCondition(tx, "itsm_ticket_assignments", operatorID, positionIDs, departmentIDs))

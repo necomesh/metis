@@ -33,12 +33,15 @@ type StartParams struct {
 }
 
 type ProgressParams struct {
-	TicketID   uint
-	ActivityID uint
-	Outcome    string
-	Result     json.RawMessage // form data or processing result
-	Opinion    string          // human approval / rejection opinion
-	OperatorID uint
+	TicketID              uint
+	ActivityID            uint
+	Outcome               string
+	Result                json.RawMessage // form data or processing result
+	Opinion               string          // human approval / rejection opinion
+	OperatorID            uint
+	OperatorPositionIDs   []uint
+	OperatorDepartmentIDs []uint
+	OperatorOrgScopeReady bool
 }
 
 type CancelParams struct {
