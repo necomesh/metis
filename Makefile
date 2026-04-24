@@ -170,7 +170,7 @@ test-fuzz:
 
 test-llm:
 	@test -f .env.test || (echo "Missing .env.test — copy .env.test.example and fill in values" && exit 1)
-	@export $$(cat .env.test | xargs) && \
+	@set -a; . ./.env.test; set +a; \
 	go test ./internal/app/itsm/ -run TestLLM -v -timeout 120s
 
 test-pretty:
@@ -200,10 +200,10 @@ endif
 test-llm-report:
 	@test -f .env.test || (echo "Missing .env.test — copy .env.test.example and fill in values" && exit 1)
 ifdef GOTESTSUM
-	@export $$(cat .env.test | xargs) && \
+	@set -a; . ./.env.test; set +a; \
 	gotestsum --format testdox --junitfile test-llm-report.xml -- ./internal/app/itsm/ -run TestLLM -v -timeout 120s
 else
-	@export $$(cat .env.test | xargs) && \
+	@set -a; . ./.env.test; set +a; \
 	go test ./internal/app/itsm/ -run TestLLM -v -timeout 120s
 endif
 

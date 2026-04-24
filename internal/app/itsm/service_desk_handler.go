@@ -1,10 +1,13 @@
 package itsm
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/samber/do/v2"
@@ -16,12 +19,18 @@ import (
 	"metis/internal/handler"
 )
 
+const serviceDeskSurfacePersistTimeout = 2 * time.Second
+
+type serviceDeskMessageStore interface {
+	StoreMessageContext(ctx context.Context, sessionID uint, role, content string, metadata []byte, tokenCount int) (*ai.SessionMessage, error)
+}
+
 type ServiceDeskHandler struct {
 	db             *gorm.DB
 	configProvider *EngineConfigService
 	stateStore     *tools.SessionStateStore
 	operator       *tools.Operator
-	sessionSvc     *ai.SessionService
+	sessionSvc     serviceDeskMessageStore
 }
 
 func NewServiceDeskHandler(i do.Injector) (*ServiceDeskHandler, error) {
@@ -97,10 +106,26 @@ func (h *ServiceDeskHandler) SubmitDraft(c *gin.Context) {
 		handler.Fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	var submittedSurfaceMeta []byte
 	if result.Surface != nil {
-		meta, _ := json.Marshal(map[string]any{"ui_surface": result.Surface})
-		_, _ = h.sessionSvc.StoreMessage(sid, ai.MessageRoleAssistant, "", meta, 0)
+		submittedSurfaceMeta, _ = json.Marshal(map[string]any{"ui_surface": result.Surface})
 	}
 
 	handler.OK(c, result)
+	h.persistSubmittedSurface(sid, submittedSurfaceMeta)
+}
+
+func (h *ServiceDeskHandler) persistSubmittedSurface(sessionID uint, metadata []byte) {
+	store := h.sessionSvc
+	if store == nil || len(metadata) == 0 {
+		return
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), serviceDeskSurfacePersistTimeout)
+		defer cancel()
+		if _, err := store.StoreMessageContext(ctx, sessionID, ai.MessageRoleAssistant, "", metadata, 0); err != nil {
+			slog.Warn("persist service desk submitted surface failed", "sessionID", sessionID, "error", err)
+		}
+	}()
 }

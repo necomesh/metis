@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"context"
 	"errors"
 
 	"github.com/samber/do/v2"
@@ -78,7 +79,11 @@ func (s *SessionService) GetMessages(sessionID uint) ([]SessionMessage, error) {
 }
 
 func (s *SessionService) StoreMessage(sessionID uint, role, content string, metadata []byte, tokenCount int) (*SessionMessage, error) {
-	seq, err := s.repo.NextSequence(sessionID)
+	return s.StoreMessageContext(context.Background(), sessionID, role, content, metadata, tokenCount)
+}
+
+func (s *SessionService) StoreMessageContext(ctx context.Context, sessionID uint, role, content string, metadata []byte, tokenCount int) (*SessionMessage, error) {
+	seq, err := s.nextSequenceContext(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +96,7 @@ func (s *SessionService) StoreMessage(sessionID uint, role, content string, meta
 		TokenCount: tokenCount,
 		Sequence:   seq,
 	}
-	if err := s.repo.CreateMessage(msg); err != nil {
+	if err := s.repo.db.WithContext(ctx).Create(msg).Error; err != nil {
 		return nil, err
 	}
 
@@ -101,10 +106,24 @@ func (s *SessionService) StoreMessage(sessionID uint, role, content string, meta
 		if len(title) > 100 {
 			title = title[:100] + "..."
 		}
-		_ = s.repo.UpdateTitle(sessionID, title)
+		_ = s.repo.db.WithContext(ctx).Model(&AgentSession{}).Where("id = ?", sessionID).Update("title", title).Error
 	}
 
 	return msg, nil
+}
+
+func (s *SessionService) nextSequenceContext(ctx context.Context, sessionID uint) (int, error) {
+	var maxSeq *int
+	if err := s.repo.db.WithContext(ctx).Model(&SessionMessage{}).
+		Where("session_id = ?", sessionID).
+		Select("MAX(sequence)").
+		Scan(&maxSeq).Error; err != nil {
+		return 1, err
+	}
+	if maxSeq == nil {
+		return 1, nil
+	}
+	return *maxSeq + 1, nil
 }
 
 func (s *SessionService) UpdateStatus(id uint, status string) error {

@@ -2,10 +2,13 @@ package itsm
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/samber/do/v2"
@@ -17,6 +20,21 @@ import (
 	"metis/internal/model"
 	"metis/internal/repository"
 )
+
+type blockingServiceDeskMessageStore struct {
+	called  chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingServiceDeskMessageStore) StoreMessageContext(ctx context.Context, sessionID uint, role, content string, metadata []byte, tokenCount int) (*ai.SessionMessage, error) {
+	close(s.called)
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-s.release:
+		return &ai.SessionMessage{}, nil
+	}
+}
 
 func newEngineConfigServiceOnly(t *testing.T, db *gorm.DB) *EngineConfigService {
 	t.Helper()
@@ -115,6 +133,99 @@ func TestServiceDeskSessionVerificationRequiresConfiguredIntakeAgent(t *testing.
 	handler.State(c)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected missing intake config to return 400, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestServiceDeskSubmitDraftReturnsBeforeSubmittedSurfacePersistence(t *testing.T) {
+	db := newTestDB(t)
+	userID := uint(7)
+	intake := ai.Agent{Name: "自定义服务受理岗", Type: ai.AgentTypeAssistant, IsActive: true, Visibility: "private", CreatedBy: 1}
+	if err := db.Create(&intake).Error; err != nil {
+		t.Fatalf("create intake agent: %v", err)
+	}
+	configureIntakeAgent(t, db, intake.ID)
+	session := ai.AgentSession{AgentID: intake.ID, UserID: userID, Status: "running"}
+	if err := db.Create(&session).Error; err != nil {
+		t.Fatalf("create intake session: %v", err)
+	}
+
+	service := seedSmartSubmissionService(t, db)
+	ticketSvc := newSubmissionTicketService(t, db)
+	operator := tools.NewOperator(db, nil, nil, nil, ticketSvc, nil)
+	detail, err := operator.LoadService(service.ID)
+	if err != nil {
+		t.Fatalf("load service detail: %v", err)
+	}
+	stateStore := tools.NewSessionStateStore(db)
+	if err := stateStore.SaveState(session.ID, &tools.ServiceDeskState{
+		Stage:           "awaiting_confirmation",
+		LoadedServiceID: service.ID,
+		DraftSummary:    "VPN 开通申请",
+		DraftFormData: map[string]any{
+			"vpn_account":  "admin@dev.com",
+			"device_usage": "线上支持用",
+			"request_kind": "online_support",
+		},
+		DraftVersion: 1,
+		FieldsHash:   detail.FieldsHash,
+	}); err != nil {
+		t.Fatalf("save draft state: %v", err)
+	}
+
+	messageStore := &blockingServiceDeskMessageStore{
+		called:  make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	defer close(messageStore.release)
+	handler := &ServiceDeskHandler{
+		db:             db,
+		configProvider: newEngineConfigServiceOnly(t, db),
+		stateStore:     stateStore,
+		operator:       operator,
+		sessionSvc:     messageStore,
+	}
+
+	body := `{"draftVersion":1,"summary":"VPN 开通申请","formData":{"vpn_account":"admin@dev.com","device_usage":"线上支持用","request_kind":"online_support"}}`
+	c, rec := newGinContext(http.MethodPost, "/draft/submit")
+	c.Params = gin.Params{{Key: "sid", Value: strconv.FormatUint(uint64(session.ID), 10)}}
+	c.Set("userId", userID)
+	c.Request.Body = io.NopCloser(strings.NewReader(body))
+	c.Request.ContentLength = int64(len(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	done := make(chan struct{})
+	go func() {
+		handler.SubmitDraft(c)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("submit draft response was blocked by submitted surface persistence")
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected submit draft to return 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Code int                     `json:"code"`
+		Data tools.DraftSubmitResult `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Code != 0 || !resp.Data.OK || resp.Data.TicketCode == "" {
+		t.Fatalf("expected successful draft submit with ticket code, got %+v body=%s", resp, rec.Body.String())
+	}
+	select {
+	case <-messageStore.called:
+	case <-time.After(time.Second):
+		t.Fatal("expected submitted surface persistence to run in background")
+	}
+
+	var task model.TaskExecution
+	if err := db.Where("task_name = ?", "itsm-smart-progress").First(&task).Error; err != nil {
+		t.Fatalf("expected smart progress task to be queued without blocking submit response: %v", err)
 	}
 }
 
