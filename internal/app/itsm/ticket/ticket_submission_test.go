@@ -176,97 +176,108 @@ func TestAgentDraftSubmission_SingleSQLiteConnectionDoesNotBlock(t *testing.T) {
 }
 
 func TestTicketProgress_SingleSQLiteConnectionWithOrgScopeDoesNotBlock(t *testing.T) {
-	db := newTestDB(t)
-	sqlDB, err := db.DB()
-	if err != nil {
-		t.Fatalf("get sql db: %v", err)
-	}
-	sqlDB.SetMaxOpenConns(1)
-	sqlDB.SetMaxIdleConns(1)
-	if err := db.Exec("CREATE TABLE operator_positions (user_id INTEGER NOT NULL, position_id INTEGER NOT NULL)").Error; err != nil {
-		t.Fatalf("create operator_positions: %v", err)
-	}
-	if err := db.Exec("CREATE TABLE operator_departments (user_id INTEGER NOT NULL, department_id INTEGER NOT NULL)").Error; err != nil {
-		t.Fatalf("create operator_departments: %v", err)
-	}
-	if err := db.Exec("INSERT INTO operator_positions (user_id, position_id) VALUES (?, ?)", 7, 77).Error; err != nil {
-		t.Fatalf("seed operator position: %v", err)
-	}
+	for _, tc := range []struct {
+		name    string
+		outcome string
+		opinion string
+	}{
+		{name: "approve", outcome: "approved", opinion: "同意开通"},
+		{name: "reject", outcome: "rejected", opinion: "不符合申请要求"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := newTestDB(t)
+			sqlDB, err := db.DB()
+			if err != nil {
+				t.Fatalf("get sql db: %v", err)
+			}
+			sqlDB.SetMaxOpenConns(1)
+			sqlDB.SetMaxIdleConns(1)
+			if err := db.Exec("CREATE TABLE operator_positions (user_id INTEGER NOT NULL, position_id INTEGER NOT NULL)").Error; err != nil {
+				t.Fatalf("create operator_positions: %v", err)
+			}
+			if err := db.Exec("CREATE TABLE operator_departments (user_id INTEGER NOT NULL, department_id INTEGER NOT NULL)").Error; err != nil {
+				t.Fatalf("create operator_departments: %v", err)
+			}
+			if err := db.Exec("INSERT INTO operator_positions (user_id, position_id) VALUES (?, ?)", 7, 77).Error; err != nil {
+				t.Fatalf("seed operator position: %v", err)
+			}
 
-	ticketSvc := newSubmissionTicketServiceWithOrgResolver(t, db, &rootDBOrgResolver{db: db})
-	service := testutil.SeedSmartSubmissionService(t, db)
-	ticket := Ticket{
-		Code:        "TICK-ORG-SCOPE",
-		Title:       "VPN 开通申请",
-		ServiceID:   service.ID,
-		EngineType:  "smart",
-		Status:      TicketStatusInProgress,
-		PriorityID:  1,
-		RequesterID: 1,
-	}
-	if err := db.Create(&ticket).Error; err != nil {
-		t.Fatalf("create ticket: %v", err)
-	}
-	activity := TicketActivity{
-		TicketID:     ticket.ID,
-		Name:         "审批",
-		ActivityType: engine.NodeApprove,
-		Status:       engine.ActivityPending,
-		NodeID:       "approve",
-	}
-	if err := db.Create(&activity).Error; err != nil {
-		t.Fatalf("create activity: %v", err)
-	}
-	positionID := uint(77)
-	assignment := TicketAssignment{
-		TicketID:        ticket.ID,
-		ActivityID:      activity.ID,
-		ParticipantType: "position",
-		PositionID:      &positionID,
-		Status:          "pending",
-		IsCurrent:       true,
-	}
-	if err := db.Create(&assignment).Error; err != nil {
-		t.Fatalf("create assignment: %v", err)
-	}
+			ticketSvc := newSubmissionTicketServiceWithOrgResolver(t, db, &rootDBOrgResolver{db: db})
+			service := testutil.SeedSmartSubmissionService(t, db)
+			ticket := Ticket{
+				Code:        "TICK-ORG-SCOPE-" + tc.name,
+				Title:       "VPN 开通申请",
+				ServiceID:   service.ID,
+				EngineType:  "smart",
+				Status:      TicketStatusInProgress,
+				PriorityID:  1,
+				RequesterID: 1,
+			}
+			if err := db.Create(&ticket).Error; err != nil {
+				t.Fatalf("create ticket: %v", err)
+			}
+			activity := TicketActivity{
+				TicketID:     ticket.ID,
+				Name:         "审批",
+				ActivityType: engine.NodeApprove,
+				Status:       engine.ActivityPending,
+				NodeID:       "approve",
+			}
+			if err := db.Create(&activity).Error; err != nil {
+				t.Fatalf("create activity: %v", err)
+			}
+			positionID := uint(77)
+			assignment := TicketAssignment{
+				TicketID:        ticket.ID,
+				ActivityID:      activity.ID,
+				ParticipantType: "position",
+				PositionID:      &positionID,
+				Status:          "pending",
+				IsCurrent:       true,
+			}
+			if err := db.Create(&assignment).Error; err != nil {
+				t.Fatalf("create assignment: %v", err)
+			}
 
-	type progressResult struct {
-		ticket *Ticket
-		err    error
-	}
-	done := make(chan progressResult, 1)
-	go func() {
-		ticket, err := ticketSvc.Progress(ticket.ID, activity.ID, "rejected", "不符合申请要求", nil, 7)
-		done <- progressResult{ticket: ticket, err: err}
-	}()
+			type progressResult struct {
+				ticket *Ticket
+				err    error
+			}
+			done := make(chan progressResult, 1)
+			go func() {
+				ticket, err := ticketSvc.Progress(ticket.ID, activity.ID, tc.outcome, tc.opinion, nil, 7)
+				done <- progressResult{ticket: ticket, err: err}
+			}()
 
-	var result progressResult
-	select {
-	case result = <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("ticket rejection blocked with a single SQLite connection and org scope resolver")
-	}
-	if result.err != nil {
-		t.Fatalf("reject ticket activity: %v", result.err)
-	}
-	if result.ticket == nil || result.ticket.ID != ticket.ID {
-		t.Fatalf("unexpected progress result: %+v", result.ticket)
-	}
+			var result progressResult
+			select {
+			case result = <-done:
+			case <-time.After(2 * time.Second):
+				t.Fatalf("ticket progress outcome %s blocked with a single SQLite connection and org scope resolver", tc.outcome)
+			}
+			if result.err != nil {
+				t.Fatalf("progress ticket activity with outcome %s: %v", tc.outcome, result.err)
+			}
+			if result.ticket == nil || result.ticket.ID != ticket.ID {
+				t.Fatalf("unexpected progress result: %+v", result.ticket)
+			}
 
-	var updatedAssignment TicketAssignment
-	if err := db.First(&updatedAssignment, assignment.ID).Error; err != nil {
-		t.Fatalf("load assignment: %v", err)
-	}
-	if updatedAssignment.Status != "completed" || updatedAssignment.AssigneeID == nil || *updatedAssignment.AssigneeID != 7 {
-		t.Fatalf("expected position assignment completed by operator, got %+v", updatedAssignment)
-	}
+			var updatedAssignment TicketAssignment
+			if err := db.First(&updatedAssignment, assignment.ID).Error; err != nil {
+				t.Fatalf("load assignment: %v", err)
+			}
+			if updatedAssignment.Status != "completed" || updatedAssignment.AssigneeID == nil || *updatedAssignment.AssigneeID != 7 {
+				t.Fatalf("expected position assignment completed by operator, got %+v", updatedAssignment)
+			}
 
-	var updatedActivity TicketActivity
-	if err := db.First(&updatedActivity, activity.ID).Error; err != nil {
-		t.Fatalf("load activity: %v", err)
-	}
-	if updatedActivity.Status != engine.ActivityCompleted || updatedActivity.TransitionOutcome != "rejected" {
-		t.Fatalf("unexpected activity state: %+v", updatedActivity)
+			var updatedActivity TicketActivity
+			if err := db.First(&updatedActivity, activity.ID).Error; err != nil {
+				t.Fatalf("load activity: %v", err)
+			}
+			if updatedActivity.Status != engine.ActivityCompleted || updatedActivity.TransitionOutcome != tc.outcome {
+				t.Fatalf("unexpected activity state: %+v", updatedActivity)
+			}
+		})
 	}
 }
 
