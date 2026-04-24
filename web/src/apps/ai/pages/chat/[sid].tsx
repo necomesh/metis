@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useParams, useNavigate } from "react-router"
 import { useTranslation } from "react-i18next"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import type { UIMessage } from "ai"
 import { Brain, PanelLeft, PanelLeftClose, Trash2 } from "lucide-react"
 import { sessionApi } from "@/lib/api"
 import { toast } from "sonner"
@@ -13,7 +14,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
-import { ChatWorkspace, getStreamingExtras, groupUIMessagesIntoPairs, SessionSidebar, useAiChat } from "@/components/chat-workspace"
+import { ChatWorkspace, createOptimisticUserMessage, mergePendingUserMessages, SessionSidebar, sessionMessagesToUIMessages, useAiChat } from "@/components/chat-workspace"
 import { WelcomeScreen } from "./components/welcome-screen"
 import { MemoryPanel } from "./components/memory-panel"
 
@@ -38,6 +39,7 @@ export function Component() {
     return saved ? saved === "true" : false
   })
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
+  const [pendingUserMessages, setPendingUserMessages] = useState<UIMessage[]>([])
   const [isAtBottom, setIsAtBottom] = useState(true)
   const scrollRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -62,10 +64,23 @@ export function Component() {
     onError: handleChatError,
   })
 
-  const qaPairs = useMemo(() => {
-    return groupUIMessagesIntoPairs(chat.messages)
-  }, [chat.messages])
-
+  const chatBusy = chat.status === "streaming" || chat.status === "submitted"
+  const serverMessages = useMemo(
+    () => sessionMessagesToUIMessages(sessionData?.messages ?? []),
+    [sessionData?.messages],
+  )
+  const baseVisibleMessages = useMemo(() => {
+    if (chatBusy) return chat.messages.length > 0 ? chat.messages : serverMessages
+    return serverMessages.length >= chat.messages.length ? serverMessages : chat.messages
+  }, [chat.messages, chatBusy, serverMessages])
+  const activePendingUserMessages = useMemo(
+    () => pendingUserMessages.filter((message) => mergePendingUserMessages(baseVisibleMessages, [message]).length > baseVisibleMessages.length),
+    [baseVisibleMessages, pendingUserMessages],
+  )
+  const visibleMessages = useMemo(
+    () => mergePendingUserMessages(baseVisibleMessages, activePendingUserMessages),
+    [activePendingUserMessages, baseVisibleMessages],
+  )
   const scrollToBottom = useCallback((instant?: boolean) => {
     messagesEndRef.current?.scrollIntoView({ behavior: instant ? "instant" : "smooth" })
   }, [])
@@ -78,7 +93,10 @@ export function Component() {
 
   const uploadImageMutation = useMutation({
     mutationFn: (file: File) => sessionApi.uploadMessageImage(sessionId, file),
-    onError: (err) => toast.error(err.message),
+    onError: (err) => {
+      setPendingUserMessages([])
+      toast.error(err.message)
+    },
   })
 
   const sendMutation = useMutation({
@@ -176,13 +194,19 @@ export function Component() {
     if (!isAtBottom && chat.status !== "submitted") return
     const instant = chat.status === "streaming" || chat.status === "submitted"
     scrollToBottom(instant)
-  }, [chat.messages, chat.status, isAtBottom, scrollToBottom])
+  }, [chat.messages, chat.status, isAtBottom, scrollToBottom, visibleMessages])
 
-  const isBusy = chat.status === "streaming" || chat.status === "submitted"
+  const isBusy = chatBusy || sendMutation.isPending || activePendingUserMessages.length > 0
 
   function handleSend(content?: string) {
     const text = (content ?? input).trim()
     if ((!text && pendingImages.length === 0) || isBusy || sendMutation.isPending) return
+    setPendingUserMessages([
+      createOptimisticUserMessage({
+        text,
+        images: pendingImages.map((image) => image.preview),
+      }),
+    ])
     sendMutation.mutate(text)
   }
 
@@ -225,13 +249,17 @@ export function Component() {
   const session = sessionData?.session
   const agentId = session?.agentId
   const agentName = (session as unknown as Record<string, unknown>)?.agentName as string | undefined
-  const hasMessages = chat.messages.length > 0
+  const hasMessages = visibleMessages.length > 0
   const showWelcome = !hasMessages && !isBusy
   const showJumpToBottom = !showWelcome && !isAtBottom
 
   return (
     <>
       <ChatWorkspace
+        density="comfortable"
+        messageWidth="standard"
+        composerPlacement="docked"
+        emptyStateTone="ai"
         sidebar={<SessionSidebar agentId={agentId} currentSessionId={sessionId} collapsed={sidebarCollapsed} />}
         leading={
           <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={toggleSidebar}>
@@ -285,7 +313,7 @@ export function Component() {
             />
           ) : null
         }
-        pairs={qaPairs}
+        messages={visibleMessages}
         agentName={agentName}
         isBusy={isBusy}
         status={chat.status}
@@ -312,7 +340,10 @@ export function Component() {
           pending: sendMutation.isPending,
           isBusy,
           allowImages: true,
-          compact: true,
+          variant: "compact",
+          maxWidth: "standard",
+          showToolbarHint: true,
+          attachmentTone: "chat",
         }}
         messagesEndRef={messagesEndRef}
         scrollRef={scrollRef}
@@ -322,7 +353,6 @@ export function Component() {
           setIsAtBottom(true)
           scrollToBottom()
         }}
-        renderStreamingExtras={(pair) => getStreamingExtras(pair, true, agentName)}
         getDoneMetrics={() => ({
           inputTokens: chat.lastUsage.promptTokens,
           outputTokens: chat.lastUsage.completionTokens,

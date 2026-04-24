@@ -29,6 +29,7 @@ interface SessionSidebarProps {
   onSelect?: (sessionId: number) => void
   showDateGroups?: boolean
   showItemActions?: boolean
+  variant?: "ai" | "service-desk"
 }
 
 type DateGroup = "today" | "yesterday" | "last7Days" | "last30Days" | "older"
@@ -124,6 +125,7 @@ export function SessionSidebar({
   onSelect,
   showDateGroups = true,
   showItemActions = true,
+  variant = "ai",
 }: SessionSidebarProps) {
   const { t } = useTranslation(["ai", "common"])
   const navigate = useNavigate()
@@ -140,6 +142,7 @@ export function SessionSidebar({
   const isSidebarLoading = loading ?? isLoading
 
   const grouped = useMemo(() => groupSessionsByDate(sessions), [sessions])
+  const isServiceDesk = variant === "service-desk"
 
   const createMutation = useMutation({
     mutationFn: () => sessionApi.create(agentId!),
@@ -245,12 +248,15 @@ export function SessionSidebar({
 
   // Expanded mode
   return (
-    <div className="w-64 border-r flex flex-col shrink-0 transition-all duration-200 hidden md:flex">
-      <div className="p-3 border-b">
+    <div className={cn(
+      "hidden w-64 shrink-0 flex-col border-r transition-all duration-200 md:flex",
+      isServiceDesk ? "border-border/65 bg-muted/12" : "bg-background",
+    )}>
+      <div className={cn("border-b p-3", isServiceDesk && "border-border/60")}>
         <Button
           variant="outline"
           size="sm"
-          className="w-full"
+          className={cn("w-full", isServiceDesk && "bg-background/80 shadow-none")}
           disabled={(!agentId && !onNew) || createMutation.isPending}
           onClick={handleNew}
         >
@@ -260,11 +266,18 @@ export function SessionSidebar({
       </div>
       <ScrollArea className="flex-1">
         <div className="p-2">
-          {title && <div className="px-2.5 pb-2 pt-1 text-xs font-medium text-muted-foreground">{title}</div>}
+          {title && (
+            <div className={cn(
+              "px-2.5 pb-2 pt-1 text-xs font-medium text-muted-foreground",
+              isServiceDesk && "tracking-normal",
+            )}>
+              {title}
+            </div>
+          )}
           {isSidebarLoading ? (
-            <p className="py-4 text-center text-xs text-muted-foreground">{t("common:loading")}</p>
+            <p className="rounded-lg border border-dashed border-border/60 bg-background/45 py-4 text-center text-xs text-muted-foreground">{t("common:loading")}</p>
           ) : sessions.length === 0 ? (
-            <p className="text-xs text-muted-foreground text-center py-4">{emptyText ?? t("ai:chat.noSessions")}</p>
+            <p className="rounded-lg border border-dashed border-border/60 bg-background/45 px-3 py-4 text-center text-xs leading-5 text-muted-foreground">{emptyText ?? t("ai:chat.noSessions")}</p>
           ) : showDateGroups ? (
             Array.from(grouped.entries()).map(([groupKey, groupSessions]) => (
               <div key={groupKey} className="mb-3">
@@ -276,7 +289,7 @@ export function SessionSidebar({
                     <div
                       key={s.id}
                       className={cn(
-                        "group flex items-center gap-2 rounded-md px-2.5 py-2 cursor-pointer hover:bg-accent text-sm",
+                        "group flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm hover:bg-accent/55",
                         s.id === currentSessionId && "bg-accent",
                       )}
                       onClick={() => handleSelect(s.id)}
@@ -333,8 +346,10 @@ export function SessionSidebar({
                   key={s.id}
                   type="button"
                   className={cn(
-                    "group flex w-full flex-col rounded-md border border-transparent px-2.5 py-2 text-left text-sm hover:bg-accent",
-                    s.id === currentSessionId && "border-primary/18 bg-primary/8 text-foreground",
+                    "group flex w-full flex-col rounded-lg border border-transparent px-2.5 py-2 text-left text-sm transition-colors hover:bg-accent/45",
+                    isServiceDesk
+                      ? s.id === currentSessionId && "border-primary/15 bg-primary/8 text-foreground"
+                      : s.id === currentSessionId && "border-primary/18 bg-primary/8 text-foreground",
                   )}
                   onClick={() => handleSelect(s.id)}
                 >

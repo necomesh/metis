@@ -34,6 +34,63 @@ export function sessionMessagesToUIMessages(messages: SessionMessage[]): UIMessa
   })
 }
 
+export function createOptimisticUserMessage({
+  text,
+  images = [],
+}: {
+  text: string
+  images?: string[]
+}): UIMessage {
+  return {
+    id: `optimistic-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    role: "user",
+    metadata: images.length > 0 ? { images } : undefined,
+    parts: [
+      { type: "text", text },
+      ...images.map((url) => ({ type: "file" as const, url, mediaType: "image/*" })),
+    ],
+  }
+}
+
+function userMessageSignature(message: UIMessage) {
+  if (message.role !== "user") return ""
+  const text = message.parts
+    ?.filter((part): part is { type: "text"; text: string } => part.type === "text")
+    .map((part) => part.text)
+    .join("") || ""
+  const images = (message.metadata as { images?: string[] } | undefined)?.images ?? []
+  return `${text}::${images.length}`
+}
+
+export function mergePendingUserMessages(messages: UIMessage[], pendingMessages: UIMessage[]) {
+  if (pendingMessages.length === 0) return messages
+  const existingSignatures = new Set(messages.map(userMessageSignature).filter(Boolean))
+  const remainingPending = pendingMessages.filter((message) => !existingSignatures.has(userMessageSignature(message)))
+  return remainingPending.length > 0 ? [...messages, ...remainingPending] : messages
+}
+
+function sessionMessagesSignature(messages: SessionMessage[] | undefined) {
+  if (!messages) return ""
+  return messages
+    .map((message) => {
+      const metadata = message.metadata ? JSON.stringify(message.metadata) : ""
+      return `${message.id}:${message.sequence}:${message.role}:${message.content}:${metadata}`
+    })
+    .join("|")
+}
+
+function uiMessagesSignature(messages: UIMessage[]) {
+  return messages
+    .map((message, index) => {
+      const meta = message.metadata as { originalRole?: string } | undefined
+      const textLength = message.parts
+        .filter((part): part is { type: "text"; text: string } => part.type === "text")
+        .reduce((total, part) => total + part.text.length, 0)
+      return `${message.id}:${index}:${meta?.originalRole ?? message.role}:${textLength}`
+    })
+    .join("|")
+}
+
 function createStreamFromSSE(
   response: Response,
   onUsage?: (usage: { promptTokens: number; completionTokens: number }) => void,
@@ -217,13 +274,33 @@ export function useAiChat(
     chat: chatInstance,
   })
 
-  // Sync server-loaded messages when useChat doesn't pick them up on mount
-  const { messages: chatMessages, setMessages: chatSetMessages } = chat
+  // Sync server-loaded messages as the idle authoritative history.
+  // During submitted/streaming states, the local optimistic and streamed messages own the screen.
+  const { messages: chatMessages, setMessages: chatSetMessages, status: chatStatus } = chat
+  const serverMessagesSignature = useMemo(
+    () => sessionMessagesSignature(initialSessionMessages),
+    [initialSessionMessages],
+  )
+  const localMessagesSignature = useMemo(
+    () => uiMessagesSignature(chatMessages),
+    [chatMessages],
+  )
   useEffect(() => {
-    if (initialSessionMessages && chatMessages.length === 0) {
-      chatSetMessages(sessionMessagesToUIMessages(initialSessionMessages))
+    if (!initialSessionMessages) return
+    if (chatStatus === "submitted" || chatStatus === "streaming") return
+
+    const nextMessages = sessionMessagesToUIMessages(initialSessionMessages)
+    const nextSignature = uiMessagesSignature(nextMessages)
+    if (nextSignature !== localMessagesSignature) {
+      chatSetMessages(nextMessages)
     }
-  }, [initialSessionMessages, chatMessages.length, chatSetMessages])
+  }, [
+    initialSessionMessages,
+    serverMessagesSignature,
+    localMessagesSignature,
+    chatSetMessages,
+    chatStatus,
+  ])
 
   return {
     ...chat,

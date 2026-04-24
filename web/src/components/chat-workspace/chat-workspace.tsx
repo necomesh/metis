@@ -1,13 +1,14 @@
 "use client"
 
 import { ArrowDown, AlertTriangle, Loader2, RotateCw } from "lucide-react"
+import type { UIMessage } from "ai"
 import type { ReactNode, RefObject } from "react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { ChatComposer, type ChatComposerProps } from "./composer"
 import { ChatHeader } from "./chat-header"
-import { QAPair } from "./message-pair"
-import type { ChatMessagePair, ChatWorkspaceActions, ChatWorkspaceIdentity, ChatWorkspaceSurfaceRenderer } from "./types"
+import { MessageTimeline } from "./message-timeline"
+import type { ChatWorkspaceActions, ChatWorkspaceIdentity, ChatWorkspaceSurfaceRenderer } from "./types"
 import { createSurfacePartRenderer } from "./surface-registry"
 import type { AgentSession } from "@/lib/api"
 
@@ -18,7 +19,7 @@ export interface ChatWorkspaceProps {
   actions?: ReactNode
   loading?: boolean
   emptyState?: ReactNode
-  pairs: ChatMessagePair[]
+  messages: UIMessage[]
   agentName?: string
   isBusy?: boolean
   status?: string
@@ -33,11 +34,34 @@ export interface ChatWorkspaceProps {
   onScroll?: () => void
   showJumpToBottom?: boolean
   onJumpToBottom?: () => void
-  renderStreamingExtras?: (pair: ChatMessagePair, isStreaming: boolean) => ReactNode
-  getDoneMetrics?: (pair: ChatMessagePair, index: number) => { durationMs?: number; inputTokens?: number; outputTokens?: number } | undefined
+  getDoneMetrics?: () => { durationMs?: number; inputTokens?: number; outputTokens?: number } | undefined
   errorActions?: ReactNode
+  density?: "comfortable" | "workbench"
+  messageWidth?: "standard" | "wide"
+  composerPlacement?: "floating" | "docked"
+  emptyStateTone?: "ai" | "service-desk"
   className?: string
 }
+
+const messageWidthClass = {
+  standard: "max-w-3xl",
+  wide: "max-w-4xl",
+} as const
+
+const composerPlacementClass = {
+  docked: "shrink-0 border-t border-border/55 bg-background/98 px-4 pb-3 pt-2",
+  floating: "shrink-0 bg-gradient-to-t from-background via-background/96 to-background/70 px-4 pb-5 pt-2",
+} as const
+
+const workspaceDensityClass = {
+  comfortable: "bg-background",
+  workbench: "bg-[linear-gradient(180deg,hsl(var(--background)),hsl(var(--muted)/0.12))]",
+} as const
+
+const emptyStateClass = {
+  ai: "h-full",
+  "service-desk": "h-full bg-[radial-gradient(circle_at_50%_35%,hsl(var(--primary)/0.05),transparent_34%)]",
+} as const
 
 export function ChatWorkspace({
   identity,
@@ -46,7 +70,7 @@ export function ChatWorkspace({
   actions,
   loading,
   emptyState,
-  pairs,
+  messages,
   agentName,
   isBusy,
   status,
@@ -61,18 +85,21 @@ export function ChatWorkspace({
   onScroll,
   showJumpToBottom,
   onJumpToBottom,
-  renderStreamingExtras,
   getDoneMetrics,
   errorActions,
+  density = "comfortable",
+  messageWidth = "standard",
+  composerPlacement = "docked",
+  emptyStateTone = "ai",
   className,
 }: ChatWorkspaceProps) {
-  const lastPairIndex = pairs.length - 1
   const surfaceRenderer = createSurfacePartRenderer({ renderers: surfaces, session, actions: workspaceActions })
+  const showEmptyState = messages.length === 0 && !isBusy
 
   return (
-    <div className={cn("flex h-full min-h-0 overflow-hidden bg-background", className)}>
+    <div className={cn("flex h-full min-h-0 overflow-hidden", workspaceDensityClass[density], className)}>
       {sidebar}
-      <main className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+      <main className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background/82">
         <ChatHeader identity={identity} leading={leading} actions={actions} />
 
         <div
@@ -85,35 +112,21 @@ export function ChatWorkspace({
               <Loader2 className="mr-2 size-4 animate-spin" />
               载入会话
             </div>
-          ) : pairs.length === 0 ? (
-            emptyState
+          ) : showEmptyState ? (
+            <div className={emptyStateClass[emptyStateTone]}>{emptyState}</div>
           ) : (
-            <div className="mx-auto max-w-3xl px-4 pb-4">
-              {pairs.map((pair, index) => {
-                const isLastPair = index === lastPairIndex
-                const isStreamingThisPair = Boolean(isLastPair && isBusy)
-                return (
-                  <QAPair
-                    key={pair.userMessage.id}
-                    userMessage={pair.userMessage}
-                    aiMessages={pair.aiMessages}
-                    agentName={agentName}
-                    isStreaming={isStreamingThisPair}
-                    onRegenerate={isLastPair ? workspaceActions.regenerate : undefined}
-                    onEditMessage={onEditMessage}
-                    renderDataPart={(part, message) => surfaceRenderer.render(part, message)}
-                    suppressTextWhenDataPart={pair.aiMessages.some((message) =>
-                      message.parts?.some((part) => surfaceRenderer.shouldSuppressText(part)),
-                    )}
-                    doneMetrics={
-                      isLastPair && status === "ready"
-                        ? getDoneMetrics?.(pair, index)
-                        : undefined
-                    }
-                    streamingExtras={isStreamingThisPair ? renderStreamingExtras?.(pair, true) : undefined}
-                  />
-                )
-              })}
+            <div className={cn("mx-auto px-4 pb-4", messageWidthClass[messageWidth])}>
+              <MessageTimeline
+                messages={messages}
+                agentName={agentName}
+                isBusy={isBusy}
+                status={status}
+                onRegenerate={workspaceActions.regenerate}
+                onEditMessage={onEditMessage}
+                renderDataPart={(part, message) => surfaceRenderer.render(part, message)}
+                shouldSuppressDataPart={(part) => surfaceRenderer.shouldSuppressText(part)}
+                doneMetrics={status === "ready" ? getDoneMetrics?.() : undefined}
+              />
 
               {error && !isBusy && (
                 <div className="py-6">
@@ -160,8 +173,8 @@ export function ChatWorkspace({
           )}
         </div>
 
-        <div className="shrink-0 bg-background px-4 pb-3 pt-1">
-          <div className="mx-auto max-w-3xl">
+        <div className={composerPlacementClass[composerPlacement]}>
+          <div className={cn("mx-auto w-full", messageWidthClass[messageWidth])}>
             <ChatComposer {...composer} />
           </div>
         </div>

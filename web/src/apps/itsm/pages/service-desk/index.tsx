@@ -8,6 +8,7 @@ import {
   AlertTriangle,
   Bot,
   CheckCircle2,
+  FileCheck2,
   Loader2,
   Plus,
   Sparkles,
@@ -19,7 +20,9 @@ import {
   ChatHeader,
   ChatStatusDot,
   ChatWorkspace,
-  groupUIMessagesIntoPairs,
+  createOptimisticUserMessage,
+  mergePendingUserMessages,
+  sessionMessagesToUIMessages,
   SessionSidebar,
   useAiChat,
   type ChatComposerImage,
@@ -81,7 +84,7 @@ function WelcomeStage({
   onRemoveImage: (index: number) => void
 }) {
   return (
-    <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-5 py-8">
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-start px-5 pb-8 pt-[10vh]">
       <div className="flex flex-col items-center text-center">
         <div className="flex size-16 items-center justify-center rounded-full border border-primary/20 bg-primary/8 text-primary shadow-[0_18px_44px_-34px_hsl(var(--primary))]">
           <Bot className="size-8" />
@@ -108,15 +111,19 @@ function WelcomeStage({
           pending={pending}
           allowImages
           placeholder="描述你的 IT 诉求..."
-          className="max-w-[720px]"
+          variant="stage"
+          maxWidth="standard"
+          minRows={3}
+          showToolbarHint
+          attachmentTone="service-desk"
         />
-        <div className="mt-4 flex max-w-3xl flex-wrap justify-center gap-2">
+        <div className="mt-3 flex max-w-3xl flex-wrap justify-center gap-2">
           {SUGGESTED_PROMPTS.map((prompt) => (
             <button
               key={prompt}
               type="button"
               onClick={() => onChange(prompt)}
-              className="rounded-full border border-border/80 bg-background/76 px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent/45 hover:text-foreground"
+              className="rounded-full border border-border/70 bg-background/76 px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:border-primary/25 hover:bg-primary/8 hover:text-foreground"
               disabled={disabled}
             >
               {prompt}
@@ -243,14 +250,20 @@ function ITSMDraftFormSurfaceCard({
 
   if (currentPayload.status === "loading") {
     return (
-      <div className="mb-6 max-w-[720px] rounded-md border border-border/60 bg-muted/18 px-4 py-3">
-        <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-          <Loader2 className="size-4 animate-spin text-primary" />
-          {currentPayload.title || "正在整理草稿"}
+      <div className="mb-5 max-w-[720px] rounded-2xl border border-border/65 bg-background/82 p-4 shadow-[0_18px_52px_-44px_hsl(var(--foreground))]">
+        <div className="flex items-center gap-3">
+          <div className="flex size-9 items-center justify-center rounded-full border border-primary/20 bg-primary/8 text-primary">
+            <Loader2 className="size-4 animate-spin" />
+          </div>
+          <div>
+            <div className="text-xs font-medium text-muted-foreground">服务申请草稿</div>
+            <div className="mt-0.5 text-sm font-semibold text-foreground">{currentPayload.title || "正在整理草稿"}</div>
+          </div>
         </div>
         <div className="mt-3 space-y-2">
-          <div className="h-2.5 w-2/3 animate-pulse rounded bg-muted" />
-          <div className="h-2.5 w-5/6 animate-pulse rounded bg-muted" />
+          <div className="h-2 w-2/3 animate-pulse rounded bg-muted" />
+          <div className="h-2 w-5/6 animate-pulse rounded bg-muted" />
+          <div className="h-2 w-1/2 animate-pulse rounded bg-muted" />
         </div>
       </div>
     )
@@ -258,14 +271,23 @@ function ITSMDraftFormSurfaceCard({
 
   if (currentPayload.status === "submitted") {
     return (
-      <div className="mb-6 max-w-[720px] rounded-md border border-emerald-500/25 bg-emerald-500/6 px-4 py-3">
-        <div className="flex items-center gap-2 text-sm font-semibold text-emerald-700 dark:text-emerald-300">
-          <CheckCircle2 className="size-4" />
-          {currentPayload.message || "工单已提交"}
+      <div className="mb-5 max-w-[720px] rounded-2xl border border-emerald-500/25 bg-emerald-500/6 p-4">
+        <div className="flex items-start gap-3">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-full border border-emerald-500/25 bg-background text-emerald-600 dark:text-emerald-300">
+            <CheckCircle2 className="size-4" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">
+              {currentPayload.message || "工单已提交"}
+            </div>
+            <div className="mt-1 text-xs leading-5 text-muted-foreground">
+              服务台已保存申请内容，后续可在我的工单中跟进处理进度。
+            </div>
+          </div>
         </div>
         {currentPayload.ticketCode && (
-          <div className="mt-2 text-sm text-foreground">
-            工单编号：<span className="font-medium">{currentPayload.ticketCode}</span>
+          <div className="mt-3 inline-flex items-center rounded-full border border-emerald-500/20 bg-background/70 px-3 py-1 text-sm text-foreground">
+            工单编号：<span className="ml-1 font-semibold">{currentPayload.ticketCode}</span>
           </div>
         )}
       </div>
@@ -274,20 +296,25 @@ function ITSMDraftFormSurfaceCard({
 
   if (!isFormSchema(currentPayload.schema)) {
     return (
-      <div className="mb-6 max-w-[720px] rounded-md border border-destructive/25 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+      <div className="mb-5 max-w-[720px] rounded-2xl border border-destructive/25 bg-destructive/5 px-4 py-3 text-sm text-destructive">
         表单定义不可用，请重新整理草稿。
       </div>
     )
   }
 
   return (
-    <div className="mb-6 max-w-[720px] rounded-md border border-border/65 bg-background px-4 py-4 shadow-sm">
-      <div className="mb-4">
-        <div className="text-xs font-medium text-muted-foreground">草稿确认</div>
-        <div className="mt-1 text-base font-semibold text-foreground">{currentPayload.title || "服务申请草稿"}</div>
-        {currentPayload.summary && (
-          <div className="mt-1 text-sm leading-6 text-muted-foreground">{currentPayload.summary}</div>
-        )}
+    <div className="mb-5 max-w-[720px] rounded-2xl border border-border/65 bg-background/94 p-4 shadow-[0_18px_52px_-44px_hsl(var(--foreground))]">
+      <div className="mb-4 flex items-start gap-3">
+        <div className="flex size-9 shrink-0 items-center justify-center rounded-full border border-primary/20 bg-primary/8 text-primary">
+          <FileCheck2 className="size-4" />
+        </div>
+        <div className="min-w-0">
+          <div className="text-xs font-medium text-muted-foreground">服务申请草稿</div>
+          <div className="mt-1 text-base font-semibold text-foreground">{currentPayload.title || "请确认服务申请"}</div>
+          {currentPayload.summary && (
+            <div className="mt-1 text-sm leading-6 text-muted-foreground">{currentPayload.summary}</div>
+          )}
+        </div>
       </div>
 
       <FormRenderer
@@ -299,7 +326,7 @@ function ITSMDraftFormSurfaceCard({
       />
 
       {inlineError && (
-        <div className="mt-4 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+        <div className="mt-4 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           {inlineError}
         </div>
       )}
@@ -335,6 +362,7 @@ function ServiceDeskConversation({
   const queryClient = useQueryClient()
   const [input, setInput] = useState("")
   const [pendingImages, setPendingImages] = useState<ChatComposerImage[]>([])
+  const [pendingUserMessages, setPendingUserMessages] = useState<UIMessage[]>([])
   const scrollRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const initialPromptSentRef = useRef(false)
@@ -359,14 +387,35 @@ function ServiceDeskConversation({
     },
   })
 
-  const isBusy = chat.status === "streaming" || chat.status === "submitted"
-  const qaPairs = useMemo(() => groupUIMessagesIntoPairs(chat.messages), [chat.messages])
+  const chatBusy = chat.status === "streaming" || chat.status === "submitted"
+  const serverMessages = useMemo(
+    () => sessionMessagesToUIMessages(sessionData?.messages ?? []),
+    [sessionData?.messages],
+  )
+  const baseVisibleMessages = useMemo(() => {
+    if (chatBusy) return chat.messages.length > 0 ? chat.messages : serverMessages
+    return serverMessages.length >= chat.messages.length ? serverMessages : chat.messages
+  }, [chat.messages, chatBusy, serverMessages])
+  const activePendingUserMessages = useMemo(
+    () => pendingUserMessages.filter((message) => mergePendingUserMessages(baseVisibleMessages, [message]).length > baseVisibleMessages.length),
+    [baseVisibleMessages, pendingUserMessages],
+  )
+  const visibleMessages = useMemo(
+    () => mergePendingUserMessages(baseVisibleMessages, activePendingUserMessages),
+    [activePendingUserMessages, baseVisibleMessages],
+  )
 
   useEffect(() => {
     if (!initialPrompt || initialPromptSentRef.current || isLoading) return
     initialPromptSentRef.current = true
     ;(async () => {
       try {
+        setPendingUserMessages([
+          createOptimisticUserMessage({
+            text: initialPrompt,
+            images: (initialImages ?? []).map((image) => image.preview),
+          }),
+        ])
         const imageUrls: string[] = []
         for (const image of initialImages ?? []) {
           const res = await sessionApi.uploadMessageImage(session.id, image.file)
@@ -377,6 +426,7 @@ function ServiceDeskConversation({
         onInitialPromptSent()
       } catch (err) {
         initialPromptSentRef.current = false
+        setPendingUserMessages([])
         toast.error(err instanceof Error ? err.message : "图片上传失败")
       }
     })()
@@ -385,8 +435,8 @@ function ServiceDeskConversation({
   useEffect(() => {
     const container = scrollRef.current
     if (!container) return
-    container.scrollTo({ top: container.scrollHeight, behavior: isBusy ? "instant" : "smooth" })
-  }, [chat.messages.length, isBusy])
+    container.scrollTo({ top: container.scrollHeight, behavior: chatBusy ? "instant" : "smooth" })
+  }, [visibleMessages.length, chatBusy])
 
   const sendMutation = useMutation({
     mutationFn: async (text: string) => {
@@ -403,7 +453,10 @@ function ServiceDeskConversation({
       setInput("")
       setPendingImages([])
     },
-    onError: (err) => toast.error(err.message),
+    onError: (err) => {
+      setPendingUserMessages([])
+      toast.error(err.message)
+    },
   })
 
   const cancelMutation = useMutation({
@@ -415,11 +468,19 @@ function ServiceDeskConversation({
     onError: (err) => toast.error(err.message),
   })
 
+  const isBusy = chatBusy || sendMutation.isPending || activePendingUserMessages.length > 0
+
   const handleSend = useCallback(() => {
     const text = input.trim()
     if ((!text && pendingImages.length === 0) || isBusy || sendMutation.isPending) return
+    setPendingUserMessages([
+      createOptimisticUserMessage({
+        text,
+        images: pendingImages.map((image) => image.preview),
+      }),
+    ])
     sendMutation.mutate(text)
-  }, [input, isBusy, pendingImages.length, sendMutation])
+  }, [input, isBusy, pendingImages, sendMutation])
 
   const addPendingImages = useCallback((files: File[]) => {
     addImagePreviews(files, (image) => setPendingImages((prev) => [...prev, image]))
@@ -429,10 +490,14 @@ function ServiceDeskConversation({
     setPendingImages((prev) => prev.filter((_, i) => i !== index))
   }, [])
 
-  const showEmpty = !isLoading && qaPairs.length === 0 && !initialPrompt
+  const showEmpty = !isLoading && visibleMessages.length === 0 && !isBusy && !initialPrompt
 
   return (
     <ChatWorkspace
+      density="workbench"
+      messageWidth="standard"
+      composerPlacement="docked"
+      emptyStateTone="service-desk"
       identity={{
         title: "IT 服务台",
         subtitle: `当前智能体：${agentName} · ${formatSessionTime(session.updatedAt)}`,
@@ -454,7 +519,7 @@ function ServiceDeskConversation({
             </div>
         ) : null
       }
-      pairs={qaPairs}
+      messages={visibleMessages}
       agentName={agentName}
       isBusy={isBusy}
       status={chat.status}
@@ -492,7 +557,10 @@ function ServiceDeskConversation({
         allowImages: true,
         placeholder: "描述你的 IT 诉求...",
         hint: "Enter 发送，Shift + Enter 换行",
-        compact: true,
+        variant: "compact",
+        maxWidth: "standard",
+        showToolbarHint: true,
+        attachmentTone: "service-desk",
       }}
       messagesEndRef={messagesEndRef}
       scrollRef={scrollRef}
@@ -578,6 +646,7 @@ export function Component() {
   return (
     <div className="grid h-full min-h-0 grid-cols-1 overflow-hidden bg-[linear-gradient(180deg,hsl(var(--background)),hsl(var(--muted)/0.18))] md:grid-cols-[240px_minmax(0,1fr)]">
       <SessionSidebar
+        variant="service-desk"
         sessions={sessions}
         currentSessionId={activeSession?.id ?? undefined}
         loading={sessionsQuery.isLoading}

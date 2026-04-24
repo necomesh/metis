@@ -1,11 +1,7 @@
 import type { ReactNode } from "react"
-import type { UIMessage } from "ai"
 import type { AgentSession } from "@/lib/api"
-
-export interface ChatMessagePair {
-  userMessage: UIMessage
-  aiMessages: UIMessage[]
-}
+import type { ChatComposerAttachmentTone, ChatComposerMaxWidth, ChatComposerVariant } from "./composer"
+import type { UIMessage } from "ai"
 
 export interface ChatWorkspaceIdentity {
   title: ReactNode
@@ -28,7 +24,11 @@ export interface ChatWorkspaceComposerConfig {
   pending?: boolean
   status?: "ready" | "submitted" | "streaming" | "error"
   allowImages?: boolean
-  compact?: boolean
+  variant?: ChatComposerVariant
+  maxWidth?: ChatComposerMaxWidth
+  minRows?: number
+  showToolbarHint?: boolean
+  attachmentTone?: ChatComposerAttachmentTone
 }
 
 export interface ChatWorkspaceActions {

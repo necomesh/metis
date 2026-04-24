@@ -2,10 +2,10 @@
 
 import { useCallback, useMemo, useState } from "react"
 import { useMutation, useQuery } from "@tanstack/react-query"
+import type { UIMessage } from "ai"
 import { toast } from "sonner"
 import { sessionApi, type AgentSession, type SessionMessage } from "@/lib/api"
-import { groupUIMessagesIntoPairs } from "./utils"
-import { useAiChat, type UseAiChatOptions } from "./use-ai-chat"
+import { createOptimisticUserMessage, mergePendingUserMessages, sessionMessagesToUIMessages, useAiChat, type UseAiChatOptions } from "./use-ai-chat"
 import type { ChatComposerImage } from "./composer"
 
 function previewImage(file: File) {
@@ -34,6 +34,7 @@ export function useChatWorkspace({
 }: UseChatWorkspaceOptions) {
   const [input, setInput] = useState("")
   const [pendingImages, setPendingImages] = useState<ChatComposerImage[]>([])
+  const [pendingUserMessages, setPendingUserMessages] = useState<UIMessage[]>([])
 
   const sessionQuery = useQuery({
     queryKey: ["ai-session", sessionId],
@@ -46,8 +47,24 @@ export function useChatWorkspace({
     onError,
   })
 
-  const isBusy = chat.status === "streaming" || chat.status === "submitted"
-  const qaPairs = useMemo(() => groupUIMessagesIntoPairs(chat.messages), [chat.messages])
+  const chatBusy = chat.status === "streaming" || chat.status === "submitted"
+  const loadedMessages = initialSessionMessages ?? sessionQuery.data?.messages
+  const serverMessages = useMemo(
+    () => sessionMessagesToUIMessages(loadedMessages ?? []),
+    [loadedMessages],
+  )
+  const baseVisibleMessages = useMemo(() => {
+    if (chatBusy) return chat.messages.length > 0 ? chat.messages : serverMessages
+    return serverMessages.length >= chat.messages.length ? serverMessages : chat.messages
+  }, [chat.messages, chatBusy, serverMessages])
+  const activePendingUserMessages = useMemo(
+    () => pendingUserMessages.filter((message) => mergePendingUserMessages(baseVisibleMessages, [message]).length > baseVisibleMessages.length),
+    [baseVisibleMessages, pendingUserMessages],
+  )
+  const visibleMessages = useMemo(
+    () => mergePendingUserMessages(baseVisibleMessages, activePendingUserMessages),
+    [activePendingUserMessages, baseVisibleMessages],
+  )
 
   const addImages = useCallback(async (files: File[]) => {
     const images = await Promise.all(files.map(async (file) => ({ file, preview: await previewImage(file) })))
@@ -60,7 +77,10 @@ export function useChatWorkspace({
 
   const uploadImageMutation = useMutation({
     mutationFn: (file: File) => sessionApi.uploadMessageImage(sessionId, file),
-    onError: (err) => toast.error(err.message),
+    onError: (err) => {
+      setPendingUserMessages([])
+      toast.error(err.message)
+    },
   })
 
   const sendMutation = useMutation({
@@ -99,11 +119,19 @@ export function useChatWorkspace({
     onError: (err) => toast.error(err.message),
   })
 
+  const isBusy = chatBusy || sendMutation.isPending || activePendingUserMessages.length > 0
+
   const send = useCallback((content?: string) => {
     const text = (content ?? input).trim()
     if ((!text && pendingImages.length === 0) || isBusy || sendMutation.isPending) return
+    setPendingUserMessages([
+      createOptimisticUserMessage({
+        text,
+        images: pendingImages.map((image) => image.preview),
+      }),
+    ])
     sendMutation.mutate(text)
-  }, [input, isBusy, pendingImages.length, sendMutation])
+  }, [input, isBusy, pendingImages, sendMutation])
 
   return {
     chat,
@@ -119,6 +147,6 @@ export function useChatWorkspace({
     cancelMutation,
     continueMutation,
     isBusy,
-    qaPairs,
+    visibleMessages,
   }
 }
