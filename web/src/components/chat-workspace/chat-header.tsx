@@ -1,8 +1,7 @@
 "use client"
 
-import { Bot, ChevronDown } from "lucide-react"
+import { Bot } from "lucide-react"
 import type { ReactNode } from "react"
-import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { ChatWorkspaceIdentity } from "./types"
 
@@ -15,12 +14,12 @@ export function ChatStatusDot({ className }: { className?: string }) {
   )
 }
 
-export function AgentSwitcher({
+export function AgentIdentity({
   identity,
 }: {
   identity: ChatWorkspaceIdentity
 }) {
-  const content = (
+  return (
     <div className="flex min-w-0 items-center gap-3">
       <div className="flex size-8 shrink-0 items-center justify-center rounded-full border border-primary/20 bg-primary/8 text-primary">
         {identity.icon ?? <Bot className="size-4" />}
@@ -35,21 +34,6 @@ export function AgentSwitcher({
         )}
       </div>
     </div>
-  )
-
-  if (!identity.onSwitchAgent) return content
-
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      className="h-auto min-w-0 justify-start gap-2 px-0 py-0 hover:bg-transparent"
-      onClick={identity.onSwitchAgent}
-    >
-      {content}
-      <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-      <span className="sr-only">{identity.switchLabel ?? "切换智能体"}</span>
-    </Button>
   )
 }
 
@@ -68,7 +52,7 @@ export function ChatHeader({
     <div className={cn("flex h-14 shrink-0 items-center justify-between border-b border-border/70 px-5", className)}>
       <div className="flex min-w-0 items-center gap-2">
         {leading}
-        <AgentSwitcher identity={identity} />
+        <AgentIdentity identity={identity} />
       </div>
       {actions && <div className="flex shrink-0 items-center gap-1">{actions}</div>}
     </div>

@@ -9,8 +9,6 @@ export interface ChatWorkspaceIdentity {
   agentName?: string
   status?: ReactNode
   icon?: ReactNode
-  onSwitchAgent?: () => void
-  switchLabel?: string
 }
 
 export interface ChatWorkspaceComposerConfig {

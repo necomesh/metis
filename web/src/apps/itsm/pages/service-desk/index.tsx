@@ -62,12 +62,6 @@ function toImageFileParts(urls: string[]) {
   }))
 }
 
-function formatSessionTime(value: string) {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ""
-  return date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
-}
-
 function WelcomeStage({
   agentName,
   value,
@@ -365,7 +359,6 @@ function ServiceDeskConversation({
   initialImages?: ChatComposerImage[]
   onInitialPromptSent: () => void
 }) {
-  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [input, setInput] = useState("")
   const [pendingImages, setPendingImages] = useState<ChatComposerImage[]>([])
@@ -488,10 +481,8 @@ function ServiceDeskConversation({
       headerClassName="pl-8 pr-5"
       identity={{
         title: "IT 服务台",
-        subtitle: `当前智能体：${agentName} · ${formatSessionTime(session.updatedAt)}`,
+        subtitle: `当前智能体：${agentName}`,
         icon: <Bot className="size-4" />,
-        switchLabel: "前往智能岗位",
-        onSwitchAgent: () => navigate("/itsm/smart-staffing"),
       }}
       loading={isLoading}
       emptyState={
