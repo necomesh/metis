@@ -904,7 +904,7 @@ func (e *SmartEngine) validateDecisionPlan(tx *gorm.DB, ticketID uint, plan *Dec
 		return fmt.Errorf("confidence %.2f 不在 [0, 1] 范围内", plan.Confidence)
 	}
 
-	if err := e.validateRejectedRecoveryDecision(tx, ticketID, completedActivityID, plan); err != nil {
+	if err := e.validateRejectedRecoveryDecision(tx, ticketID, completedActivityID, plan, svc); err != nil {
 		return err
 	}
 	if err := e.validateNoDuplicateCompletedHumanActivity(tx, ticketID, plan); err != nil {
@@ -962,7 +962,7 @@ func (e *SmartEngine) validateNoDuplicateCompletedHumanActivity(tx *gorm.DB, tic
 	return nil
 }
 
-func (e *SmartEngine) validateRejectedRecoveryDecision(tx *gorm.DB, ticketID uint, completedActivityID *uint, plan *DecisionPlan) error {
+func (e *SmartEngine) validateRejectedRecoveryDecision(tx *gorm.DB, ticketID uint, completedActivityID *uint, plan *DecisionPlan, svc *serviceModel) error {
 	if completedActivityID == nil || *completedActivityID == 0 || plan == nil || plan.NextStepType == "complete" {
 		return nil
 	}
@@ -973,6 +973,9 @@ func (e *SmartEngine) validateRejectedRecoveryDecision(tx *gorm.DB, ticketID uin
 	}
 	if !isHumanActivityType(completed.ActivityType) || isPositiveActivityOutcome(completed.TransitionOutcome) {
 		return nil
+	}
+	if rejectedRecoveryCreatesForm(plan) && !collaborationSpecAllowsRejectedFormRecovery(svc) {
+		return fmt.Errorf("rejected 后试图创建表单活动，但协作规范未显式定义补充信息或返工路径；不得把驳回默认解释为退回申请人补充")
 	}
 
 	assignments, err := NewDecisionDataStore(tx).GetActivityAssignments(completed.ID)
@@ -992,10 +995,45 @@ func (e *SmartEngine) validateRejectedRecoveryDecision(tx *gorm.DB, ticketID uin
 		if hasExplicitRecoveryIntent(da.Instructions) {
 			continue
 		}
-		return fmt.Errorf("activities[%d] 试图重复创建刚被驳回的人工活动：%s；请基于驳回原因和 workflow_json 选择退回、升级、结束失败或明确不同的下一步", i, completed.Name)
+		return fmt.Errorf("activities[%d] 试图重复创建刚被驳回的人工活动：%s；请基于驳回原因、协作规范和 workflow_json 选择规范明确允许的恢复路径、升级/转交、结束失败或明确不同的下一步", i, completed.Name)
 	}
 
 	return nil
+}
+
+func rejectedRecoveryCreatesForm(plan *DecisionPlan) bool {
+	if plan == nil {
+		return false
+	}
+	if plan.NextStepType == NodeForm {
+		return true
+	}
+	for _, da := range plan.Activities {
+		if da.Type == NodeForm {
+			return true
+		}
+	}
+	return false
+}
+
+func collaborationSpecAllowsRejectedFormRecovery(svc *serviceModel) bool {
+	if svc == nil {
+		return false
+	}
+	spec := strings.TrimSpace(svc.CollaborationSpec)
+	if spec == "" {
+		return false
+	}
+	hasRejectedCue := strings.Contains(spec, "驳回") ||
+		strings.Contains(spec, "拒绝") ||
+		strings.Contains(strings.ToLower(spec), "reject")
+	hasFormRecoveryCue := strings.Contains(spec, "补充") ||
+		strings.Contains(spec, "返工") ||
+		strings.Contains(spec, "退回申请人") ||
+		strings.Contains(spec, "重新填写") ||
+		strings.Contains(spec, "重填") ||
+		strings.Contains(spec, "修改后提交")
+	return hasRejectedCue && hasFormRecoveryCue
 }
 
 // --- Helpers ---
@@ -1527,9 +1565,11 @@ func (e *SmartEngine) buildInitialSeed(tx *gorm.DB, ticketID uint, svc *serviceM
 			"kind":    "ai_generated_workflow_blueprint",
 			"summary": extractWorkflowHints(svc.WorkflowJSON),
 			"policy": []string{
-				"workflow_json 是智能服务的协作蓝图和语义约束，不是可忽略的说明文字。",
+				"协作规范是核心事实源，workflow_json 是辅助理解协作规范的结构化背景。",
+				"当协作规范与 workflow_json 冲突时，必须以协作规范为准。",
 				"activity_completed 触发时，必须解释 completed_activity 与 workflow_json 中节点、边、条件的关系。",
 				"不得在没有新证据的情况下重复创建刚被驳回的同一人工处理任务。",
+				"协作规范未显式定义补充信息或返工路径时，不得把 rejected 解释为退回申请人补充。",
 			},
 		}
 	}
@@ -1556,7 +1596,8 @@ func (e *SmartEngine) buildInitialSeed(tx *gorm.DB, ticketID uint, svc *serviceM
 						rejTarget,
 					)
 				} else {
-					policy["allowed_recovery_paths"] = []string{"退回申请人补充", "升级/转交其他角色", "结束为失败或取消", "按协作规范继续到明确不同的下一步"}
+					policy["instruction"] = "未找到 workflow_json 的 rejected 出边时，必须回到协作规范判断恢复路径；协作规范未显式定义补充信息或返工路径时，不得创建申请人补充表单。"
+					policy["allowed_recovery_paths"] = []string{"按协作规范定义的恢复路径处理", "升级/转交其他角色", "结束为失败或取消"}
 				}
 				seed["rejected_activity_policy"] = policy
 			} else if isPositiveActivityOutcome(completed.TransitionOutcome) && completed.NodeID != "" {
@@ -1619,7 +1660,7 @@ func buildAgenticSystemPrompt(collaborationSpec, decisionMode, workflowJSON stri
 	default: // "direct_first" or empty
 		hints := extractWorkflowHints(workflowJSON)
 		if hints != "" {
-			prompt += "## 决策策略\n\n优先遵守 AI 生成 workflow_json 表达的协作路径和语义。workflow_json 是当前服务的协作蓝图，不是可忽略的参考说明；无法直接映射时，再结合协作规范和工具上下文进行 AI 推理。\n\n"
+			prompt += "## 决策策略\n\n协作规范是核心事实源，workflow_json 是辅助理解协作规范的结构化背景。优先遵守协作规范；workflow_json 可用于理解节点、边和条件，但不能发明协作规范没有的业务动作。两者冲突时，以协作规范为准；无法确定时保守降级为人工处置。\n\n"
 			prompt += "## 工作流参考路径\n\n" + hints + "\n\n---\n\n"
 		} else {
 			slog.Warn("direct_first mode but no workflow hints available, degrading to ai_only")
@@ -1650,7 +1691,7 @@ const agenticToolGuidance = `## 工具使用指引
 1. 必须先用 decision.ticket_context 了解完整上下文，尤其是 current_activities、activity_history、action_progress、parallel_groups 和 is_terminal。
 2. 如果 is_terminal=true，直接输出 complete 或保持终态判断，不要创建新活动。
 3. 当 trigger_reason=activity_completed 时，必须先读取 completed_activity、completed_requirements 和 workflow_context；刚完成的人工活动如果已经满足当前服务规范，不得再次创建同一处理/表单，必须进入下一条件或 complete。
-4. 当 completed_activity.outcome=rejected 或 completed_activity.satisfied=false 时，必须先解释驳回原因以及 workflow_json 允许的恢复路径，再决定退回申请人、升级/转交、结束为失败或按规范继续；没有新证据时不得重复创建刚被驳回的同一人工处理任务。
+4. 当 completed_activity.outcome=rejected 或 completed_activity.satisfied=false 时，必须先解释驳回原因、协作规范定义的恢复路径，以及 workflow_json 与该路径的关系。协作规范未显式定义补充信息或返工路径时，不得把 rejected 解释为退回申请人补充；没有新证据时不得重复创建刚被驳回的同一人工处理任务。
 5. 用 decision.list_actions 查看是否有可用自动化动作；协作规范要求预检、放行等同步动作时，优先 decision.execute_action，而不是输出 action 活动。
 6. 如需查阅处理规范或知识库，使用 decision.knowledge_search。知识不可用或无命中时可以降级，但要在 reasoning 说明。
 7. 需要人工处理/表单时，必须先用 decision.resolve_participant 解析参与人；count=0 时不得高置信输出该人工活动。

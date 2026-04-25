@@ -20,9 +20,10 @@ func buildWorkflowContext(workflowJSON string, completed *activityModel) map[str
 		"kind":    "ai_generated_workflow_blueprint",
 		"summary": extractWorkflowHints(workflowJSON),
 		"policy": []string{
-			"workflow_json 是智能服务的协作蓝图和语义约束，不是可忽略的说明文字。",
+			"协作规范是核心事实源，workflow_json 是辅助理解协作规范的结构化背景。",
+			"当协作规范与 workflow_json 冲突时，必须以协作规范为准。",
 			"本轮决策必须解释刚完成活动与 workflow_json 中节点、边、条件的关系。",
-			"人工节点被 rejected 后，必须选择退回、升级、结束失败、重新分配其他角色或按规范继续；没有新证据时不得重复创建刚被驳回的同一处理任务。",
+			"人工节点被 rejected 后，必须按协作规范定义的恢复路径处理；协作规范未显式定义补充信息或返工路径时，不得退回申请人补充；没有新证据时不得重复创建刚被驳回的同一处理任务。",
 		},
 	}
 
