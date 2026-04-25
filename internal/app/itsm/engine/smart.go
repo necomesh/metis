@@ -1360,12 +1360,22 @@ func (e *SmartEngine) buildInitialSeed(tx *gorm.DB, ticketID uint, svc *serviceM
 			assignments, _ := data.GetActivityAssignments(completed.ID)
 			seed["completed_activity"] = activityFactMap(completed, assignments)
 			if isHumanActivityType(completed.ActivityType) && !isPositiveActivityOutcome(completed.TransitionOutcome) {
-				seed["rejected_activity_policy"] = map[string]any{
+				policy := map[string]any{
 					"must_explain_rejection": true,
 					"operator_opinion":       completed.DecisionReasoning,
-					"allowed_recovery_paths": []string{"退回申请人补充", "升级/转交其他角色", "结束为失败或取消", "按协作规范继续到明确不同的下一步"},
 					"forbidden_path":         "没有新证据时重复创建与刚被驳回活动相同的处理任务",
 				}
+				// Derive recovery path from workflow graph
+				if rejTarget := findRejectedEdgeTarget(svc.WorkflowJSON, completed.NodeID); rejTarget != "" {
+					policy["workflow_rejected_target"] = rejTarget
+					policy["instruction"] = fmt.Sprintf(
+						"workflow_json 的 rejected 出边指向 %s，必须遵循此路径。如果目标是 end 节点，直接输出 complete 结束流程。",
+						rejTarget,
+					)
+				} else {
+					policy["allowed_recovery_paths"] = []string{"退回申请人补充", "升级/转交其他角色", "结束为失败或取消", "按协作规范继续到明确不同的下一步"}
+				}
+				seed["rejected_activity_policy"] = policy
 			}
 		}
 	}
@@ -1496,6 +1506,36 @@ const agenticOutputFormat = "## 输出要求\n\n" +
 
 // extractWorkflowHints extracts a structured step summary from WorkflowJSON
 // for injection into the system prompt in direct_first mode.
+// findRejectedEdgeTarget looks up the rejected edge's target for a given workflow node.
+// Returns a description like "end（结束）" or "node_3（填写补充信息）", or "" if not found.
+func findRejectedEdgeTarget(workflowJSON string, nodeID string) string {
+	if workflowJSON == "" || nodeID == "" {
+		return ""
+	}
+	def, err := ParseWorkflowDef(json.RawMessage(workflowJSON))
+	if err != nil {
+		return ""
+	}
+	nodeMap := make(map[string]*WFNode, len(def.Nodes))
+	for i := range def.Nodes {
+		nodeMap[def.Nodes[i].ID] = &def.Nodes[i]
+	}
+	for _, e := range def.Edges {
+		if e.Source == nodeID && e.Data.Outcome == "rejected" {
+			if target, ok := nodeMap[e.Target]; ok {
+				nd, _ := ParseNodeData(target.Data)
+				label := nd.Label
+				if label == "" {
+					label = target.Type
+				}
+				return fmt.Sprintf("%s（%s，类型: %s）", target.ID, label, target.Type)
+			}
+			return e.Target
+		}
+	}
+	return ""
+}
+
 func extractWorkflowHints(workflowJSON string) string {
 	if workflowJSON == "" {
 		return ""
@@ -1643,7 +1683,19 @@ func extractWorkflowHints(workflowJSON string) string {
 			participant := describeParticipants(node.Data.Participants)
 			desc = fmt.Sprintf("%d. **处理** [%s] — %s", step, label, participant)
 			for _, ei := range outEdges[nodeID] {
-				queue = append(queue, wf.Edges[ei].Target)
+				edge := wf.Edges[ei]
+				if edge.Data.Outcome != "" {
+					targetLabel := edge.Target
+					if ti, ok := nodeMap[edge.Target]; ok {
+						tl := wf.Nodes[ti].Data.Label
+						if tl == "" {
+							tl = wf.Nodes[ti].Type
+						}
+						targetLabel = tl
+					}
+					desc += fmt.Sprintf("\n   - %s → %s", edge.Data.Outcome, targetLabel)
+				}
+				queue = append(queue, edge.Target)
 			}
 		case "action":
 			desc = fmt.Sprintf("%d. **自动动作** [%s]", step, label)

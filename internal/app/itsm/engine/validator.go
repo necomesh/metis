@@ -166,20 +166,36 @@ func ValidateWorkflow(workflowJSON json.RawMessage) []ValidationError {
 			continue
 		}
 		hasApproved, hasRejected := false, false
+		var approvedTarget, rejectedTarget string
 		for _, e := range edges {
 			switch e.Data.Outcome {
 			case "approved":
 				hasApproved = true
+				approvedTarget = e.Target
 			case "rejected":
 				hasRejected = true
+				rejectedTarget = e.Target
 			}
 		}
-		// Only enforce if the node uses outcome-based routing (at least one edge has outcome set)
-		if hasApproved && !hasRejected {
+		if !hasApproved {
 			errs = append(errs, ValidationError{
 				NodeID:  n.ID,
 				Level:   "error",
-				Message: fmt.Sprintf("process 节点 %s 有 approved 出边但缺少 outcome=\"rejected\" 的出边；协作规范未定义驳回路径时 rejected 应指向 end 节点", n.ID),
+				Message: fmt.Sprintf("process 节点 %s 缺少 outcome=\"approved\" 的出边；每个 process 节点必须有 approved 和 rejected 两条出边", n.ID),
+			})
+		}
+		if !hasRejected {
+			errs = append(errs, ValidationError{
+				NodeID:  n.ID,
+				Level:   "error",
+				Message: fmt.Sprintf("process 节点 %s 缺少 outcome=\"rejected\" 的出边；协作规范未定义驳回路径时 rejected 应指向一个独立的 end 节点", n.ID),
+			})
+		}
+		if hasApproved && hasRejected && approvedTarget != "" && approvedTarget == rejectedTarget {
+			errs = append(errs, ValidationError{
+				NodeID:  n.ID,
+				Level:   "error",
+				Message: fmt.Sprintf("process 节点 %s 的 approved 和 rejected 出边指向同一个目标节点 %s；两条出边必须指向不同的目标节点以形成清晰的审批分支", n.ID, approvedTarget),
 			})
 		}
 	}
