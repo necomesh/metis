@@ -335,6 +335,61 @@ func TestSmartDecisionPositionAssignmentSingleSQLiteConnectionDoesNotBlock(t *te
 	}
 }
 
+func TestSmartProgressFailureRecordsDiagnosticStateWithoutBlockingSQLite(t *testing.T) {
+	db := newSmartContinuationDB(t)
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get sql db: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+
+	service := serviceModel{Name: "智能服务", EngineType: "smart"}
+	if err := db.Create(&service).Error; err != nil {
+		t.Fatalf("create service: %v", err)
+	}
+	ticket := ticketModel{
+		ServiceID:  service.ID,
+		Status:     "in_progress",
+		EngineType: "smart",
+	}
+	if err := db.Create(&ticket).Error; err != nil {
+		t.Fatalf("create ticket: %v", err)
+	}
+
+	payload, _ := json.Marshal(SmartProgressPayload{TicketID: ticket.ID, TriggerReason: "manual_retry"})
+	handler := HandleSmartProgress(db, NewSmartEngine(nil, nil, nil, nil, nil, nil))
+	done := make(chan error, 1)
+	go func() {
+		done <- handler(context.Background(), payload)
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("handled smart progress failure should not propagate: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("smart-progress failure handling blocked with a single SQLite connection")
+	}
+
+	var reloaded ticketModel
+	if err := db.First(&reloaded, ticket.ID).Error; err != nil {
+		t.Fatalf("reload ticket: %v", err)
+	}
+	if reloaded.AIFailureCount != 1 {
+		t.Fatalf("expected ai_failure_count 1, got %d", reloaded.AIFailureCount)
+	}
+
+	var timeline timelineModel
+	if err := db.Where("ticket_id = ? AND event_type = ?", ticket.ID, "ai_decision_failed").First(&timeline).Error; err != nil {
+		t.Fatalf("load diagnostic timeline: %v", err)
+	}
+	if timeline.Message == "" {
+		t.Fatal("expected diagnostic timeline message")
+	}
+}
+
 func newSmartContinuationDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
@@ -419,14 +474,33 @@ func (r *rootDBPositionResolver) FindUsersByPositionAndDepartment(posCode, deptC
 	return userIDs, err
 }
 
-func (r *rootDBPositionResolver) FindUsersByPositionID(uint) ([]uint, error) {
-	return nil, nil
+func (r *rootDBPositionResolver) FindUsersByPositionID(positionID uint) ([]uint, error) {
+	var userIDs []uint
+	err := r.db.Table("user_positions").
+		Joins("JOIN users ON users.id = user_positions.user_id").
+		Where("user_positions.position_id = ? AND users.is_active = ?", positionID, true).
+		Pluck("DISTINCT users.id", &userIDs).Error
+	return userIDs, err
 }
 
-func (r *rootDBPositionResolver) FindUsersByDepartmentID(uint) ([]uint, error) {
-	return nil, nil
+func (r *rootDBPositionResolver) FindUsersByDepartmentID(departmentID uint) ([]uint, error) {
+	var userIDs []uint
+	err := r.db.Table("user_positions").
+		Joins("JOIN users ON users.id = user_positions.user_id").
+		Where("user_positions.department_id = ? AND users.is_active = ?", departmentID, true).
+		Pluck("DISTINCT users.id", &userIDs).Error
+	return userIDs, err
 }
 
-func (r *rootDBPositionResolver) FindManagerByUserID(uint) (uint, error) {
-	return 0, nil
+func (r *rootDBPositionResolver) FindManagerByUserID(userID uint) (uint, error) {
+	var user struct {
+		ManagerID *uint
+	}
+	if err := r.db.Table("users").Where("id = ?", userID).Select("manager_id").First(&user).Error; err != nil {
+		return 0, err
+	}
+	if user.ManagerID == nil {
+		return 0, nil
+	}
+	return *user.ManagerID, nil
 }

@@ -1199,12 +1199,11 @@ func (s *TicketService) RetryAI(ticketID uint, reason string, operatorID uint) (
 			return err
 		}
 
-		// Trigger new decision cycle via async task
-		payload, _ := json.Marshal(map[string]any{
-			"ticket_id":             ticketID,
-			"completed_activity_id": nil,
+		payload, _ := json.Marshal(engine.SmartProgressPayload{
+			TicketID:      ticketID,
+			TriggerReason: "manual_retry",
 		})
-		return s.smartEngine.SubmitProgressTask(payload)
+		return s.smartEngine.SubmitProgressTaskTx(tx, payload)
 	}); err != nil {
 		return nil, err
 	}

@@ -281,6 +281,80 @@ func TestTicketProgress_SingleSQLiteConnectionWithOrgScopeDoesNotBlock(t *testin
 	}
 }
 
+func TestRetryAI_SingleSQLiteConnectionSubmitsSmartProgressInTransaction(t *testing.T) {
+	db := newTestDB(t)
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get sql db: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+
+	ticketSvc := newSubmissionTicketService(t, db)
+	service := testutil.SeedSmartSubmissionService(t, db)
+	ticket := Ticket{
+		Code:           "TICK-RETRY-AI-SQLITE",
+		Title:          "智能审批重试",
+		ServiceID:      service.ID,
+		EngineType:     "smart",
+		Status:         TicketStatusInProgress,
+		PriorityID:     1,
+		RequesterID:    1,
+		AIFailureCount: 3,
+	}
+	if err := db.Create(&ticket).Error; err != nil {
+		t.Fatalf("create ticket: %v", err)
+	}
+
+	type retryResult struct {
+		ticket *Ticket
+		err    error
+	}
+	done := make(chan retryResult, 1)
+	go func() {
+		retried, err := ticketSvc.RetryAI(ticket.ID, "重新跑智能引擎", 7)
+		done <- retryResult{ticket: retried, err: err}
+	}()
+
+	var result retryResult
+	select {
+	case result = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("retry AI blocked while submitting smart-progress with a single SQLite connection")
+	}
+	if result.err != nil {
+		t.Fatalf("retry ai: %v", result.err)
+	}
+	if result.ticket == nil || result.ticket.AIFailureCount != 0 {
+		t.Fatalf("expected retry result with ai_failure_count reset, got %+v", result.ticket)
+	}
+
+	var reloaded Ticket
+	if err := db.First(&reloaded, ticket.ID).Error; err != nil {
+		t.Fatalf("reload ticket: %v", err)
+	}
+	if reloaded.AIFailureCount != 0 {
+		t.Fatalf("expected ai_failure_count reset to 0, got %d", reloaded.AIFailureCount)
+	}
+
+	var timeline TicketTimeline
+	if err := db.Where("ticket_id = ? AND event_type = ?", ticket.ID, "ai_retry").First(&timeline).Error; err != nil {
+		t.Fatalf("load retry timeline: %v", err)
+	}
+
+	var task model.TaskExecution
+	if err := db.Where("task_name = ?", "itsm-smart-progress").First(&task).Error; err != nil {
+		t.Fatalf("load smart progress task: %v", err)
+	}
+	var payload engine.SmartProgressPayload
+	if err := json.Unmarshal([]byte(task.Payload), &payload); err != nil {
+		t.Fatalf("decode task payload: %v", err)
+	}
+	if payload.TicketID != ticket.ID || payload.TriggerReason != "manual_retry" || payload.CompletedActivityID != nil {
+		t.Fatalf("unexpected smart progress payload: %+v", payload)
+	}
+}
+
 func newSubmissionTicketService(t *testing.T, db *gorm.DB) *TicketService {
 	return newSubmissionTicketServiceWithOrgResolver(t, db, nil)
 }
