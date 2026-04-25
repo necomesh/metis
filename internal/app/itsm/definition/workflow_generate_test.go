@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	. "metis/internal/app/itsm/config"
 	. "metis/internal/app/itsm/domain"
@@ -76,6 +77,20 @@ func newWorkflowGenerateServiceForRetryTest(client *fakeWorkflowLLMClient, maxRe
 
 func validWorkflowJSONForGenerateTest() string {
 	return `{"nodes":[{"id":"start","type":"start","data":{"label":"开始"}},{"id":"end","type":"end","data":{"label":"结束"}}],"edges":[{"id":"e1","source":"start","target":"end","data":{}}]}`
+}
+
+func workflowWithBlockingIssueForGenerateTest(userID uint) string {
+	return fmt.Sprintf(`{
+		"nodes": [
+			{"id":"start","type":"start","data":{"label":"开始"}},
+			{"id":"process","type":"process","data":{"label":"处理","participants":[{"type":"user","value":"%d"}]}},
+			{"id":"end","type":"end","data":{"label":"结束"}}
+		],
+		"edges": [
+			{"id":"e1","source":"start","target":"process","data":{}},
+			{"id":"e2","source":"process","target":"end","data":{"outcome":"approved"}}
+		]
+	}`, userID)
 }
 
 // ---------------------------------------------------------------------------
@@ -288,6 +303,32 @@ func TestWorkflowGenerateHandlerReturnsBadGatewayForLLMUpstreamError(t *testing.
 	}
 }
 
+func TestGenerateRejectsEmptyCollaborationSpec(t *testing.T) {
+	client := &fakeWorkflowLLMClient{}
+	svc := newWorkflowGenerateServiceForRetryTest(client, 1)
+
+	_, err := svc.Generate(context.Background(), &GenerateRequest{CollaborationSpec: "   "})
+	if !errors.Is(err, ErrCollaborationSpecEmpty) {
+		t.Fatalf("expected ErrCollaborationSpecEmpty, got %v", err)
+	}
+	if client.calls != 0 {
+		t.Fatalf("expected LLM not to be called, got %d calls", client.calls)
+	}
+}
+
+func TestGenerateFailsWhenPathEngineConfigMissing(t *testing.T) {
+	svc := &WorkflowGenerateService{
+		engineConfigSvc: fakePathEngineConfigProvider{err: errors.New("model missing")},
+	}
+
+	_, err := svc.Generate(context.Background(), &GenerateRequest{
+		CollaborationSpec: "用户提交 VPN 申请后经理审批",
+	})
+	if !errors.Is(err, ErrPathEngineNotConfigured) {
+		t.Fatalf("expected ErrPathEngineNotConfigured, got %v", err)
+	}
+}
+
 func TestGenerate_RetriesJSONExtractionFailure(t *testing.T) {
 	client := &fakeWorkflowLLMClient{
 		responses: []llm.ChatResponse{
@@ -311,6 +352,23 @@ func TestGenerate_RetriesJSONExtractionFailure(t *testing.T) {
 	}
 }
 
+func TestGenerate_ReturnsErrorWhenJSONExtractionNeverSucceeds(t *testing.T) {
+	client := &fakeWorkflowLLMClient{
+		responses: []llm.ChatResponse{{Content: "not json"}},
+	}
+	svc := newWorkflowGenerateServiceForRetryTest(client, 0)
+
+	_, err := svc.Generate(context.Background(), &GenerateRequest{
+		CollaborationSpec: "用户提交 VPN 申请后经理审批",
+	})
+	if !errors.Is(err, ErrWorkflowGeneration) {
+		t.Fatalf("expected ErrWorkflowGeneration, got %v", err)
+	}
+	if client.calls != 1 {
+		t.Fatalf("expected one LLM call, got %d", client.calls)
+	}
+}
+
 func TestGenerate_RetriesValidationFailure(t *testing.T) {
 	client := &fakeWorkflowLLMClient{
 		responses: []llm.ChatResponse{
@@ -331,6 +389,38 @@ func TestGenerate_RetriesValidationFailure(t *testing.T) {
 	}
 	if resp.Retries != 1 {
 		t.Fatalf("expected retries=1, got %d", resp.Retries)
+	}
+}
+
+func TestWorkflowGenerateHandlerReturnsOKForParsableWorkflowWithBlockingIssues(t *testing.T) {
+	client := &fakeWorkflowLLMClient{
+		responses: []llm.ChatResponse{{Content: `{"nodes":[],"edges":[]}`}},
+	}
+	h := &WorkflowGenerateHandler{svc: newWorkflowGenerateServiceForRetryTest(client, 0)}
+	c, rec := newGinContext(http.MethodPost, "/api/v1/itsm/workflows/generate")
+	c.Request.Body = io.NopCloser(bytes.NewBufferString(`{"collaborationSpec":"用户提交 VPN 申请后经理审批"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.Generate(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Code int              `json:"code"`
+		Data GenerateResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Code != 0 {
+		t.Fatalf("expected unified response code 0, got %+v", got)
+	}
+	if len(got.Data.Errors) == 0 {
+		t.Fatalf("expected validation errors in response, got %+v", got.Data)
+	}
+	if !got.Data.Saved {
+		t.Fatalf("expected no-service draft response to be marked saved, got %+v", got.Data)
 	}
 }
 
@@ -402,6 +492,66 @@ func TestBuildGenerateResponse_PersistsWorkflowAndHealthSnapshot(t *testing.T) {
 	}
 	if resp.Service.PublishHealthCheck == nil {
 		t.Fatal("expected service response to include saved health snapshot")
+	}
+}
+
+func TestBuildGenerateResponse_PersistsBlockingDraftAndHealthFailure(t *testing.T) {
+	db := newTestDB(t)
+	serviceDefs := newServiceDefServiceForTest(t, db)
+	catSvc := newCatalogServiceForTest(t, db)
+
+	root, _ := catSvc.Create("Root", "root", "", "", nil, 10)
+	user := createServiceHealthUser(t, db, "operator", true)
+	serviceAgent := createServiceHealthAgent(t, db, "service-agent", true)
+	decisionAgent := createServiceHealthAgent(t, db, "decision-agent", true)
+	setServiceHealthDecisionAgent(t, db, decisionAgent.ID)
+	seedServiceHealthPathEngine(t, db)
+	service, err := serviceDefs.Create(&ServiceDefinition{
+		Name:              "Smart",
+		Code:              "smart-blocking-draft",
+		CatalogID:         root.ID,
+		EngineType:        "smart",
+		CollaborationSpec: "旧协作规范",
+		AgentID:           &serviceAgent.ID,
+	})
+	if err != nil {
+		t.Fatalf("create service: %v", err)
+	}
+
+	workflowJSON := json.RawMessage(workflowWithBlockingIssueForGenerateTest(user.ID))
+	validationErrors := engine.ValidateWorkflow(workflowJSON)
+	if !hasBlockingErrors(validationErrors) {
+		t.Fatalf("expected blocking validation errors, got %+v", validationErrors)
+	}
+
+	svc := &WorkflowGenerateService{serviceDefSvc: serviceDefs}
+	resp, err := svc.buildGenerateResponse(&GenerateRequest{
+		ServiceID:         service.ID,
+		CollaborationSpec: "用户提交申请后由处理人处理",
+	}, workflowJSON, 0, validationErrors)
+	if err != nil {
+		t.Fatalf("build response: %v", err)
+	}
+	if !resp.Saved {
+		t.Fatalf("expected blocking draft to be saved, got %+v", resp)
+	}
+	if resp.Service == nil || resp.HealthCheck == nil {
+		t.Fatalf("expected service and health check in response, got %+v", resp)
+	}
+	if len(resp.Errors) != len(validationErrors) {
+		t.Fatalf("expected validation errors to be preserved, got %+v", resp.Errors)
+	}
+	if resp.HealthCheck.Status != "fail" {
+		t.Fatalf("expected health check fail for blocking draft, got %+v", resp.HealthCheck)
+	}
+	if !serviceHealthHasItem(resp.HealthCheck, "reference_path", "fail") {
+		t.Fatalf("expected reference_path fail item, got %+v", resp.HealthCheck.Items)
+	}
+	if string(resp.Service.WorkflowJSON) != string(workflowJSON) {
+		t.Fatalf("expected workflow json to be saved, got %s", resp.Service.WorkflowJSON)
+	}
+	if resp.Service.CollaborationSpec != "用户提交申请后由处理人处理" {
+		t.Fatalf("expected collaboration spec to be saved, got %q", resp.Service.CollaborationSpec)
 	}
 }
 

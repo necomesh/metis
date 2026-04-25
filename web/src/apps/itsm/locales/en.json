@@ -661,7 +661,7 @@
     "button": "Generate Reference Path",
     "generating": "Generating...",
     "success": "Reference path generated",
-    "partialSuccess": "Reference path generated with {{count}} validation issues",
+    "partialSuccess": "Reference path draft generated with {{count}} issue(s) to review",
     "specRequired": "Please fill in the collaboration spec first",
     "workflowEmptySmartHint": "Fill in the collaboration spec above, then click \"Generate Reference Path\" to create a strategy sketch",
     "nodeType": "Node Type"

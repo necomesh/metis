@@ -778,7 +778,8 @@ export function fetchModels(providerId: number) {
 export interface WorkflowGenerateResponse {
   workflowJson: unknown
   retries: number
-  errors?: { nodeId?: string; edgeId?: string; message: string }[]
+  errors?: { nodeId?: string; edgeId?: string; level?: "blocking" | "warning"; message: string }[]
+  saved: boolean
   service?: ServiceDefItem
   healthCheck?: ServiceHealthCheck
 }

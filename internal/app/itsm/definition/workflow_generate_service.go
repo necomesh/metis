@@ -167,7 +167,8 @@ func (s *WorkflowGenerateService) Generate(ctx context.Context, req *GenerateReq
 			continue
 		}
 
-		// Return last attempt with blocking errors — will NOT save
+		// Return the last parsable draft with validation issues. The draft is
+		// still useful as an agentic reference path; publish health carries risk.
 		return s.buildGenerateResponse(req, lastWorkflowJSON, attempt, validationErrors)
 	}
 
@@ -223,11 +224,6 @@ func (s *WorkflowGenerateService) buildGenerateResponse(req *GenerateRequest, wo
 		WorkflowJSON: workflowJSON,
 		Retries:      retries,
 		Errors:       validationErrors,
-	}
-
-	// If there are blocking errors, return without saving
-	if hasBlockingErrors(validationErrors) {
-		return resp, nil
 	}
 
 	if req.ServiceID == 0 || s.serviceDefSvc == nil {

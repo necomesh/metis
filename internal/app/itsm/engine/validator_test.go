@@ -356,6 +356,56 @@ func TestValidateWorkflowDeadEnd(t *testing.T) {
 	}
 }
 
+func TestValidateWorkflowAllowsMultipleTerminalBranches(t *testing.T) {
+	workflowJSON := json.RawMessage(`{
+		"nodes": [
+			{"id":"start","type":"start","data":{"label":"开始"}},
+			{"id":"gw","type":"exclusive","data":{"label":"分支"}},
+			{"id":"form_ok","type":"form","data":{"label":"正常补充","participants":[{"type":"requester"}]}},
+			{"id":"form_reject","type":"form","data":{"label":"驳回确认","participants":[{"type":"requester"}]}},
+			{"id":"end_ok","type":"end","data":{"label":"正常结束"}},
+			{"id":"end_reject","type":"end","data":{"label":"驳回结束"}}
+		],
+		"edges": [
+			{"id":"e1","source":"start","target":"gw","data":{}},
+			{"id":"e2","source":"gw","target":"form_ok","data":{"condition":{"field":"ticket.status","operator":"equals","value":"approved"}}},
+			{"id":"e3","source":"gw","target":"form_reject","data":{"default":true}},
+			{"id":"e4","source":"form_ok","target":"end_ok","data":{}},
+			{"id":"e5","source":"form_reject","target":"end_reject","data":{}}
+		]
+	}`)
+
+	errs := ValidateWorkflow(workflowJSON)
+	for _, e := range errs {
+		if strings.Contains(e.Message, "无法到达终点") {
+			t.Fatalf("expected all branches to reach one terminal node, got dead-end error: %+v", errs)
+		}
+	}
+}
+
+func TestValidateWorkflowDoesNotRequireEndToReachAnotherEnd(t *testing.T) {
+	workflowJSON := json.RawMessage(`{
+		"nodes": [
+			{"id":"start","type":"start","data":{"label":"开始"}},
+			{"id":"gw","type":"exclusive","data":{"label":"分支"}},
+			{"id":"end_ok","type":"end","data":{"label":"正常结束"}},
+			{"id":"end_reject","type":"end","data":{"label":"驳回结束"}}
+		],
+		"edges": [
+			{"id":"e1","source":"start","target":"gw","data":{}},
+			{"id":"e2","source":"gw","target":"end_ok","data":{"condition":{"field":"ticket.status","operator":"equals","value":"approved"}}},
+			{"id":"e3","source":"gw","target":"end_reject","data":{"default":true}}
+		]
+	}`)
+
+	errs := ValidateWorkflow(workflowJSON)
+	for _, e := range errs {
+		if e.NodeID == "end_reject" && strings.Contains(e.Message, "无法到达终点") {
+			t.Fatalf("end node must not be required to reach another end node, got %+v", errs)
+		}
+	}
+}
+
 func TestValidateWorkflowInvalidParticipantType(t *testing.T) {
 	workflowJSON := json.RawMessage(`{
 		"nodes": [

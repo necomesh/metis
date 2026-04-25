@@ -888,17 +888,15 @@ func detectCycles(nodes []WFNode, edges []WFEdge) []ValidationError {
 	return errs
 }
 
-// detectDeadEnds checks that all nodes can reach the end node via reverse BFS.
+// detectDeadEnds checks that all nodes can reach at least one end node via reverse BFS.
 func detectDeadEnds(nodes []WFNode, edges []WFEdge) []ValidationError {
-	// Find end node
-	var endNodeID string
+	var endNodeIDs []string
 	for _, n := range nodes {
 		if n.Type == NodeEnd {
-			endNodeID = n.ID
-			break
+			endNodeIDs = append(endNodeIDs, n.ID)
 		}
 	}
-	if endNodeID == "" {
+	if len(endNodeIDs) == 0 {
 		return nil // end node validation handled elsewhere
 	}
 
@@ -908,10 +906,14 @@ func detectDeadEnds(nodes []WFNode, edges []WFEdge) []ValidationError {
 		reverseAdj[e.Target] = append(reverseAdj[e.Target], e.Source)
 	}
 
-	// BFS from end node backwards
+	// BFS from all end nodes backwards. Multiple terminal branches are valid
+	// (for example normal completion and rejection completion).
 	visited := make(map[string]bool)
-	queue := []string{endNodeID}
-	visited[endNodeID] = true
+	queue := make([]string, 0, len(endNodeIDs))
+	for _, endNodeID := range endNodeIDs {
+		visited[endNodeID] = true
+		queue = append(queue, endNodeID)
+	}
 	for len(queue) > 0 {
 		curr := queue[0]
 		queue = queue[1:]

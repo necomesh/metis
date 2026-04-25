@@ -661,7 +661,7 @@
     "button": "生成参考路径",
     "generating": "生成中...",
     "success": "参考路径生成成功",
-    "partialSuccess": "参考路径已生成，但存在 {{count}} 个校验问题",
+    "partialSuccess": "参考路径草图已生成，仍有 {{count}} 个问题需要确认",
     "specRequired": "请先填写协作规范",
     "workflowEmptySmartHint": "请在上方填写协作规范，然后点击「生成参考路径」按钮生成策略草图",
     "nodeType": "节点类型"

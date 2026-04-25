@@ -326,7 +326,10 @@ function GenerateWorkflowButton({ serviceId, collaborationSpec }: {
         toast.success(t("itsm:generate.success"))
       }
       if (resp.service) {
-        queryClient.setQueryData(["itsm-service", serviceId], resp.service)
+        queryClient.setQueryData(["itsm-service", serviceId], {
+          ...resp.service,
+          publishHealthCheck: resp.healthCheck ?? resp.service.publishHealthCheck,
+        })
       } else {
         queryClient.invalidateQueries({ queryKey: ["itsm-service", serviceId] })
       }
