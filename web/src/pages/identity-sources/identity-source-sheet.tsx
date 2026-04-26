@@ -1,6 +1,6 @@
 import { useEffect } from "react"
 import { useTranslation } from "react-i18next"
-import { useForm, type Resolver } from "react-hook-form"
+import { useForm, useWatch, type Resolver } from "react-hook-form"
 import { z } from "zod"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
@@ -142,7 +142,7 @@ export function IdentitySourceSheet({ open, onOpenChange, source }: IdentitySour
     } as FormValues,
   })
 
-  const selectedType = form.watch("type")
+  const selectedType = useWatch({ control: form.control, name: "type" })
 
   useEffect(() => {
     if (open) {

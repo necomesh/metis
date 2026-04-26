@@ -191,7 +191,6 @@ function WorkflowEdgeInner({
 
 export const WorkflowEdge = memo(WorkflowEdgeInner)
 
-// eslint-disable-next-line react-refresh/only-export-components
 export const edgeTypes = {
   workflow: WorkflowEdge,
 }

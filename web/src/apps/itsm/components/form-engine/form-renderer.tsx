@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useCallback } from "react"
-import { useForm, Controller } from "react-hook-form"
+import { useForm, Controller, useWatch } from "react-hook-form"
 import { cn } from "@/lib/utils"
 import { renderField } from "./field-renderers"
 import { buildZodSchema, defaultValueForField } from "./build-zod-schema"
@@ -37,7 +37,7 @@ export function FormRenderer({
     resolver: undefined, // will set dynamically below
   })
 
-  const watchValues = form.watch()
+  const watchValues = useWatch({ control: form.control }) as Record<string, unknown>
 
   // Compute field visibility
   const visibleFields = useFieldVisibility(schema, watchValues)
@@ -62,25 +62,17 @@ export function FormRenderer({
   }, [data, mode, schema, form])
 
   // onChange callback
-  const handleChange = useCallback(() => {
-    if (onChange) {
-      const values = form.getValues()
-      // Exclude hidden fields
-      const filtered: Record<string, unknown> = {}
-      for (const key of Object.keys(values)) {
-        if (visibleFields.has(key)) {
-          filtered[key] = values[key]
-        }
-      }
-      onChange(filtered)
-    }
-  }, [onChange, form, visibleFields])
-
   useEffect(() => {
     if (!onChange) return
-    const subscription = form.watch(() => handleChange())
-    return () => subscription.unsubscribe()
-  }, [form, handleChange, onChange])
+    const values = form.getValues()
+    const filtered: Record<string, unknown> = {}
+    for (const key of Object.keys(values)) {
+      if (visibleFields.has(key)) {
+        filtered[key] = values[key]
+      }
+    }
+    onChange(filtered)
+  }, [form, onChange, visibleFields, watchValues])
 
   // Submit handler with manual Zod validation
   const handleSubmit = useCallback(async () => {
