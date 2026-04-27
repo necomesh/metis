@@ -152,3 +152,171 @@ func TestListApprovalHistoryDeduplicatesMultipleCompletedActivities(t *testing.T
 		t.Fatalf("expected one deduplicated ticket, got total=%d items=%v", total, items)
 	}
 }
+
+func TestListSupportsGroupedStatusFilters(t *testing.T) {
+	db := migrateTicketHistoryTestDB(t)
+	priority := Priority{Name: "普通", Code: "normal", Value: 10, Color: "#666"}
+	if err := db.Create(&priority).Error; err != nil {
+		t.Fatalf("create priority: %v", err)
+	}
+	requesterID := uint(7)
+	statuses := []string{
+		TicketStatusSubmitted,
+		TicketStatusWaitingHuman,
+		TicketStatusDecisioning,
+		TicketStatusCompleted,
+		TicketStatusRejected,
+	}
+	for i, status := range statuses {
+		ticket := Ticket{
+			Code:        "TICK-GROUP-" + string(rune('A'+i)),
+			Title:       "group filter",
+			ServiceID:   1,
+			EngineType:  "smart",
+			Status:      status,
+			PriorityID:  priority.ID,
+			RequesterID: requesterID,
+		}
+		if err := db.Create(&ticket).Error; err != nil {
+			t.Fatalf("create ticket %s: %v", status, err)
+		}
+	}
+
+	repo := &TicketRepo{db: db}
+	activeItems, activeTotal, err := repo.List(TicketListParams{
+		RequesterID: &requesterID,
+		Status:      "active",
+		Page:        1,
+		PageSize:    20,
+	})
+	if err != nil {
+		t.Fatalf("list active: %v", err)
+	}
+	if activeTotal != 3 || len(activeItems) != 3 {
+		t.Fatalf("expected 3 active tickets, got total=%d len=%d", activeTotal, len(activeItems))
+	}
+	for _, item := range activeItems {
+		if IsTerminalTicketStatus(item.Status) {
+			t.Fatalf("active filter should not contain terminal status, got %s", item.Status)
+		}
+	}
+
+	terminalItems, terminalTotal, err := repo.List(TicketListParams{
+		RequesterID: &requesterID,
+		Status:      "terminal",
+		Page:        1,
+		PageSize:    20,
+	})
+	if err != nil {
+		t.Fatalf("list terminal: %v", err)
+	}
+	if terminalTotal != 2 || len(terminalItems) != 2 {
+		t.Fatalf("expected 2 terminal tickets, got total=%d len=%d", terminalTotal, len(terminalItems))
+	}
+	for _, item := range terminalItems {
+		if !IsTerminalTicketStatus(item.Status) {
+			t.Fatalf("terminal filter should only contain terminal status, got %s", item.Status)
+		}
+	}
+}
+
+func TestListDecisioningFilterIncludesDecisioningVariants(t *testing.T) {
+	db := migrateTicketHistoryTestDB(t)
+	priority := Priority{Name: "普通", Code: "normal", Value: 10, Color: "#666"}
+	if err := db.Create(&priority).Error; err != nil {
+		t.Fatalf("create priority: %v", err)
+	}
+	requesterID := uint(9)
+	statuses := []string{
+		TicketStatusDecisioning,
+		TicketStatusApprovedDecisioning,
+		TicketStatusRejectedDecisioning,
+		TicketStatusWaitingHuman,
+	}
+	for i, status := range statuses {
+		ticket := Ticket{
+			Code:        "TICK-DEC-" + string(rune('A'+i)),
+			Title:       "decisioning filter",
+			ServiceID:   1,
+			EngineType:  "smart",
+			Status:      status,
+			PriorityID:  priority.ID,
+			RequesterID: requesterID,
+		}
+		if err := db.Create(&ticket).Error; err != nil {
+			t.Fatalf("create ticket %s: %v", status, err)
+		}
+	}
+
+	repo := &TicketRepo{db: db}
+	items, total, err := repo.List(TicketListParams{
+		RequesterID: &requesterID,
+		Status:      TicketStatusDecisioning,
+		Page:        1,
+		PageSize:    20,
+	})
+	if err != nil {
+		t.Fatalf("list decisioning: %v", err)
+	}
+	if total != 3 || len(items) != 3 {
+		t.Fatalf("expected 3 decisioning tickets, got total=%d len=%d", total, len(items))
+	}
+	for _, item := range items {
+		if item.Status != TicketStatusDecisioning && item.Status != TicketStatusApprovedDecisioning && item.Status != TicketStatusRejectedDecisioning {
+			t.Fatalf("unexpected status in decisioning filter: %s", item.Status)
+		}
+	}
+}
+
+func TestListDateRangeFiltersByCreatedAt(t *testing.T) {
+	db := migrateTicketHistoryTestDB(t)
+	priority := Priority{Name: "普通", Code: "normal", Value: 10, Color: "#666"}
+	if err := db.Create(&priority).Error; err != nil {
+		t.Fatalf("create priority: %v", err)
+	}
+	requesterID := uint(11)
+	createTicketAt := func(code string, ts time.Time) uint {
+		ticket := Ticket{
+			Code:        code,
+			Title:       "date filter",
+			ServiceID:   1,
+			EngineType:  "smart",
+			Status:      TicketStatusCompleted,
+			PriorityID:  priority.ID,
+			RequesterID: requesterID,
+		}
+		if err := db.Create(&ticket).Error; err != nil {
+			t.Fatalf("create ticket %s: %v", code, err)
+		}
+		if err := db.Model(&Ticket{}).Where("id = ?", ticket.ID).
+			Updates(map[string]any{"created_at": ts, "updated_at": ts}).Error; err != nil {
+			t.Fatalf("set created_at for %s: %v", code, err)
+		}
+		return ticket.ID
+	}
+
+	createTicketAt("TICK-DATE-1", time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC))
+	createTicketAt("TICK-DATE-2", time.Date(2026, 4, 10, 12, 0, 0, 0, time.UTC))
+	createTicketAt("TICK-DATE-3", time.Date(2026, 4, 20, 18, 0, 0, 0, time.UTC))
+
+	start := time.Date(2026, 4, 5, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 4, 15, 23, 59, 59, 0, time.UTC)
+
+	repo := &TicketRepo{db: db}
+	items, total, err := repo.List(TicketListParams{
+		RequesterID: &requesterID,
+		StartDate:   &start,
+		EndDate:     &end,
+		Page:        1,
+		PageSize:    20,
+	})
+	if err != nil {
+		t.Fatalf("list date range: %v", err)
+	}
+	if total != 1 || len(items) != 1 {
+		t.Fatalf("expected 1 ticket in created_at range, got total=%d len=%d", total, len(items))
+	}
+	if items[0].Code != "TICK-DATE-2" {
+		t.Fatalf("expected TICK-DATE-2, got %s", items[0].Code)
+	}
+}

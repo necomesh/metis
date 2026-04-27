@@ -233,7 +233,7 @@ function FactItem({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="min-w-0 rounded-lg border border-border/50 bg-background/35 px-3 py-2">
       <p className="text-[11px] text-muted-foreground">{label}</p>
-      <div className="mt-1 truncate text-sm font-medium">{value}</div>
+      <div className="mt-1 min-w-0 text-sm font-medium">{value}</div>
     </div>
   )
 }
@@ -665,7 +665,7 @@ export function Component() {
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
         <main className="min-w-0 space-y-4">
           <section className="workspace-surface rounded-[1.25rem] p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -687,7 +687,7 @@ export function Component() {
               <SectionBlock label="下一步" value={nextStep} />
             </div>
 
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-[repeat(5,minmax(0,1fr))_minmax(220px,1.35fr)]">
               <FactItem label={t("itsm:tickets.service")} value={ticket.serviceName} />
               <FactItem
                 label={t("itsm:tickets.priority")}

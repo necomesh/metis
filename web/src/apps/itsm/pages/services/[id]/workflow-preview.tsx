@@ -258,7 +258,7 @@ export default function WorkflowPreview({
   return (
     <div
       className={embedded
-        ? "flex min-h-[460px] gap-3 overflow-hidden rounded-[1.15rem] border border-border/55 bg-gradient-to-b from-white/78 to-white/58 shadow-[0_26px_56px_-46px_rgba(15,23,42,0.52)]"
+        ? "workspace-surface flex min-h-[460px] gap-3 overflow-hidden rounded-[1.1rem]"
         : "flex min-h-[460px] gap-3 overflow-hidden rounded-2xl border border-border/55 bg-white/38"}
     >
       <div className="min-w-0 flex-1 transition-all">

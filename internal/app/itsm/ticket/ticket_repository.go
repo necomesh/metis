@@ -167,10 +167,10 @@ func (r *TicketRepo) List(params TicketListParams) ([]Ticket, int64, error) {
 		query = query.Where("requester_id = ?", *params.RequesterID)
 	}
 	if params.StartDate != nil {
-		query = query.Where("finished_at >= ?", *params.StartDate)
+		query = query.Where("created_at >= ?", *params.StartDate)
 	}
 	if params.EndDate != nil {
-		query = query.Where("finished_at <= ?", *params.EndDate)
+		query = query.Where("created_at <= ?", *params.EndDate)
 	}
 
 	var total int64
@@ -222,6 +222,10 @@ func (r *TicketRepo) ListMonitorBase(params TicketMonitorParams) ([]Ticket, erro
 
 func applyTicketStatusFilter(query *gorm.DB, status string) *gorm.DB {
 	switch status {
+	case "active":
+		return query.Where("status NOT IN ?", TerminalTicketStatuses())
+	case "terminal":
+		return query.Where("status IN ?", TerminalTicketStatuses())
 	case TicketStatusDecisioning:
 		return query.Where("status IN ?", []string{
 			TicketStatusDecisioning,
