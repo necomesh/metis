@@ -16,7 +16,6 @@ import {
   CheckCircle2,
   CircleX,
   Clock,
-  FileText,
   Info,
   Loader2,
   Play,
@@ -53,7 +52,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Textarea } from "@/components/ui/textarea"
 import { Progress } from "@/components/ui/progress"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -67,6 +66,7 @@ import {
   fetchTicketActivities,
   fetchTicketTimeline,
   fetchTicketTokens,
+  fetchTicketVariables,
   fetchUsers,
   progressTicket,
   withdrawTicket,
@@ -545,12 +545,10 @@ function AIEvidencePanel({
 
 function TimelinePanel({ timeline }: { timeline: TimelineItem[] }) {
   const { t } = useTranslation(["itsm", "common"])
-
   return (
-    <section className="workspace-surface rounded-[1.1rem] p-5">
-      <h3 className="text-base font-semibold">{t("itsm:tickets.timeline")}</h3>
-
-      <div className="mt-4">
+    <div>
+      <h4 className="text-sm font-semibold">{t("itsm:tickets.timeline")}</h4>
+      <div className="mt-3">
         {timeline.length === 0 ? (
           <p className="text-sm text-muted-foreground">{t("itsm:tickets.empty")}</p>
         ) : (
@@ -559,7 +557,7 @@ function TimelinePanel({ timeline }: { timeline: TimelineItem[] }) {
               const style = TIMELINE_EVENT_STYLE[event.eventType] ?? DEFAULT_EVENT_STYLE
               const Icon = style.icon
               return (
-                <div key={event.id} className="flex gap-3 pb-6 last:pb-0">
+                <div key={event.id} className="flex gap-3 pb-5 last:pb-0">
                   <div className="flex flex-col items-center">
                     <div className={`flex h-6 w-6 items-center justify-center rounded-full ${style.bg}`}>
                       <Icon className={`h-3 w-3 ${style.fg}`} />
@@ -588,7 +586,7 @@ function TimelinePanel({ timeline }: { timeline: TimelineItem[] }) {
           </div>
         )}
       </div>
-    </section>
+    </div>
   )
 }
 
@@ -738,7 +736,7 @@ function FlatAside({
   actionableActivity: ActivityItem | undefined
 }) {
   return (
-    <aside className="workspace-surface rounded-[1.2rem] p-4 xl:sticky xl:top-4 xl:self-start">
+    <aside className="workspace-surface rounded-[1.2rem] p-4">
       <div className="flex items-center justify-between gap-3 border-b border-border/45 pb-3">
         <h3 className="inline-flex items-center gap-2 text-base font-semibold">
           <CheckCircle2 className="h-4 w-4" />
@@ -814,6 +812,80 @@ function FlatAside({
   )
 }
 
+function RightRailInsights({
+  ticket,
+  activities,
+  timeline,
+  t,
+}: {
+  ticket: TicketItem
+  activities: ActivityItem[]
+  timeline: TimelineItem[]
+  t: (key: string) => string
+}) {
+  const totalActivities = activities.length
+  const completedActivities = activities.filter((item) => item.status === "completed").length
+  const progressPct = totalActivities > 0 ? Math.round((completedActivities / totalActivities) * 100) : 0
+  const latestEvents = [...timeline]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 4)
+  const keyTimes = [
+    { label: t("itsm:tickets.createdAt"), value: formatDateCompact(ticket.createdAt), raw: formatDate(ticket.createdAt) },
+    { label: t("itsm:tickets.slaResponseDeadline"), value: formatDateCompact(ticket.slaResponseDeadline), raw: formatDate(ticket.slaResponseDeadline) },
+    { label: t("itsm:tickets.slaResolutionDeadline"), value: formatDateCompact(ticket.slaResolutionDeadline), raw: formatDate(ticket.slaResolutionDeadline) },
+  ]
+
+  return (
+    <section className="workspace-surface rounded-[1.2rem] p-4">
+      <div className="border-b border-border/45 pb-3">
+        <h3 className="text-sm font-semibold">当前进展</h3>
+      </div>
+
+      <div className="space-y-2 border-b border-border/45 py-3">
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <span>流程进度</span>
+          <span>{completedActivities}/{totalActivities || 0}</span>
+        </div>
+        <Progress value={progressPct} className="h-2" />
+      </div>
+
+      <div className="border-b border-border/45 py-3">
+        <p className="text-xs font-medium text-muted-foreground">最新动态</p>
+        {latestEvents.length === 0 ? (
+          <p className="mt-2 text-xs text-muted-foreground">暂无审计事件</p>
+        ) : (
+          <div className="mt-2 space-y-2">
+            {latestEvents.map((event) => (
+              <div key={event.id} className="rounded-md border border-border/35 bg-background/25 p-2.5">
+                <p className="line-clamp-2 text-xs leading-5 text-foreground" title={event.content}>
+                  {event.content}
+                </p>
+                <p className="mt-1 text-[11px] text-muted-foreground" title={formatDate(event.createdAt)}>
+                  {event.operatorName} · {formatDateCompact(event.createdAt)}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="pt-3">
+        <p className="text-xs font-medium text-muted-foreground">关键时间</p>
+        <div className="mt-2 space-y-2">
+          {keyTimes.map((item) => (
+            <div key={item.label} className="flex items-start justify-between gap-3 text-xs">
+              <span className="text-muted-foreground">{item.label}</span>
+              <span className="truncate whitespace-nowrap text-foreground" title={item.raw}>
+                {item.value}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  )
+}
+
 function renderFlowTab(
   ticket: TicketItem,
   activities: ActivityItem[],
@@ -883,6 +955,11 @@ export function Component() {
   const { data: timeline = [] } = useQuery({
     queryKey: ["itsm-ticket-timeline", ticketId],
     queryFn: () => fetchTicketTimeline(ticketId),
+    enabled: ticketId > 0,
+  })
+  const { data: variables = [] } = useQuery({
+    queryKey: ["itsm-ticket-variables", ticketId],
+    queryFn: () => fetchTicketVariables(ticketId),
     enabled: ticketId > 0,
   })
 
@@ -1054,6 +1131,7 @@ export function Component() {
     ? (isDecisioning ? t("itsm:tickets.statusDecisioning") : summarizeDecision(plan, ticket.nextStepSummary, actionableActivity?.name))
     : ""
   const owner = ticket ? ownerName(ticket, actionableActivity) : "—"
+  const advancedInfoSummary = `${timeline.length} 条时间线 · ${variables.length} 个变量`
 
   if (isLoading) {
     return (
@@ -1092,72 +1170,63 @@ export function Component() {
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
         <main className="min-w-0 space-y-4">
           <SummaryBand ticket={ticket} owner={owner} nextStep={nextStep} t={t} />
+          <AIEvidencePanel ticket={ticket} activity={explanationActivity} plan={plan} />
+          {renderFlowTab(ticket, activities, tokens, t)}
 
-          <Tabs defaultValue="ai" className="space-y-3">
-            <TabsList className="workspace-surface rounded-xl p-1.5" variant="default">
-              <TabsTrigger value="ai">
-                <Bot className="h-4 w-4" />
-                AI 依据
-              </TabsTrigger>
-              <TabsTrigger value="flow">
-                <ShieldCheck className="h-4 w-4" />
-                流程轨迹
-              </TabsTrigger>
-              <TabsTrigger value="variables">
-                <FileText className="h-4 w-4" />
-                变量
-              </TabsTrigger>
-              <TabsTrigger value="timeline">
-                <Clock className="h-4 w-4" />
-                时间线
-              </TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="ai">
-              <AIEvidencePanel ticket={ticket} activity={explanationActivity} plan={plan} />
-            </TabsContent>
-
-            <TabsContent value="flow">
-              {renderFlowTab(ticket, activities, tokens, t)}
-            </TabsContent>
-
-            <TabsContent value="variables">
-              <VariablesPanel ticketId={ticketId} />
-            </TabsContent>
-
-            <TabsContent value="timeline">
-              <TimelinePanel timeline={timeline} />
-            </TabsContent>
-          </Tabs>
+          <section className="workspace-surface rounded-[1.1rem] px-5 py-3">
+            <Accordion type="single" collapsible>
+              <AccordionItem value="advanced" className="border-none">
+                <AccordionTrigger className="py-2 hover:no-underline">
+                  <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+                    <span className="text-sm font-semibold text-foreground">详细记录（时间线与变量）</span>
+                    <span className="truncate whitespace-nowrap text-xs text-muted-foreground">
+                      {advancedInfoSummary}
+                    </span>
+                  </div>
+                </AccordionTrigger>
+                <AccordionContent className="pb-1">
+                  <div className="space-y-5 border-t border-border/45 pt-4">
+                    <TimelinePanel timeline={timeline} />
+                    <div className="border-t border-border/45 pt-4">
+                      <VariablesPanel ticketId={ticketId} variant="flat" />
+                    </div>
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
+          </section>
         </main>
 
-        <FlatAside
-          ticket={ticket}
-          owner={owner}
-          confidencePct={confidencePct}
-          decisioningMessage={decisioningMessage}
-          isDecisioning={isDecisioning}
-          isActive={isActive}
-          isTerminal={isTerminal}
-          activeHumanActivity={activeHumanActivity}
-          isCurrentUserResponsible={isCurrentUserResponsible}
-          progressPending={progressMut.isPending}
-          openApprovalSheet={openApprovalSheet}
-          getNodeOutcomes={getNodeOutcomes}
-          outcomeLabel={outcomeLabel}
-          t={t}
-          canProcess={canProcessFromEntry}
-          canAssign={canAssignFromEntry}
-          assignForm={assignForm}
-          setAssignOpen={setAssignOpen}
-          canCancel={canCancelFromEntry}
-          cancelForm={cancelForm}
-          setCancelOpen={setCancelOpen}
-          canWithdraw={canWithdraw}
-          withdrawForm={withdrawForm}
-          setWithdrawOpen={setWithdrawOpen}
-          actionableActivity={actionableActivity}
-        />
+        <div className="space-y-4 xl:sticky xl:top-4 xl:self-start">
+          <FlatAside
+            ticket={ticket}
+            owner={owner}
+            confidencePct={confidencePct}
+            decisioningMessage={decisioningMessage}
+            isDecisioning={isDecisioning}
+            isActive={isActive}
+            isTerminal={isTerminal}
+            activeHumanActivity={activeHumanActivity}
+            isCurrentUserResponsible={isCurrentUserResponsible}
+            progressPending={progressMut.isPending}
+            openApprovalSheet={openApprovalSheet}
+            getNodeOutcomes={getNodeOutcomes}
+            outcomeLabel={outcomeLabel}
+            t={t}
+            canProcess={canProcessFromEntry}
+            canAssign={canAssignFromEntry}
+            assignForm={assignForm}
+            setAssignOpen={setAssignOpen}
+            canCancel={canCancelFromEntry}
+            cancelForm={cancelForm}
+            setCancelOpen={setCancelOpen}
+            canWithdraw={canWithdraw}
+            withdrawForm={withdrawForm}
+            setWithdrawOpen={setWithdrawOpen}
+            actionableActivity={actionableActivity}
+          />
+          <RightRailInsights ticket={ticket} activities={activities} timeline={timeline} t={t} />
+        </div>
       </div>
 
       <Sheet open={assignOpen} onOpenChange={setAssignOpen}>
