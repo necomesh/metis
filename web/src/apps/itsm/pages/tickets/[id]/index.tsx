@@ -710,7 +710,6 @@ function FlatAside({
   decisioningMessage,
   isDecisioning,
   isActive,
-  isTerminal,
   activeHumanActivity,
   isCurrentUserResponsible,
   progressPending,
@@ -736,7 +735,6 @@ function FlatAside({
   decisioningMessage: string
   isDecisioning: boolean
   isActive: boolean
-  isTerminal: boolean
   activeHumanActivity: ActivityItem | undefined
   isCurrentUserResponsible: boolean
   progressPending: boolean
@@ -1065,7 +1063,6 @@ export function Component() {
   const confidence = confidenceOf(explanationActivity, plan)
   const confidencePct = confidence == null ? null : Math.round(confidence * 100)
   const isActive = ticket ? ACTIVE_STATUSES.has(ticket.status) : false
-  const isTerminal = ticket ? TERMINAL_STATUSES.has(ticket.status) : false
   const isDecisioning = ticket?.engineType === "smart" && ticket.smartState === "ai_reasoning"
   const canWithdraw = Boolean(canWithdrawFromEntry && ticket && isActive && !isDecisioning && ticket.status === "submitted" && ticket.requesterId === currentUserId)
   const actionableActivity = activeHumanActivity
@@ -1128,11 +1125,10 @@ export function Component() {
             ticket={ticket}
             owner={owner}
             confidencePct={confidencePct}
-            decisioningMessage={decisioningMessage}
-            isDecisioning={isDecisioning}
-            isActive={isActive}
-            isTerminal={isTerminal}
-            activeHumanActivity={activeHumanActivity}
+          decisioningMessage={decisioningMessage}
+          isDecisioning={isDecisioning}
+          isActive={isActive}
+          activeHumanActivity={activeHumanActivity}
             isCurrentUserResponsible={isCurrentUserResponsible}
             progressPending={progressMut.isPending}
             openApprovalSheet={openApprovalSheet}
