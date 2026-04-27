@@ -385,8 +385,8 @@ function DetailItem({ label, value, title }: { label: string; value: ReactNode; 
 
 function DecisionButtonContent({ icon: Icon, children }: { icon: LucideIcon; children: ReactNode }) {
   return (
-    <span className="grid w-[5.25rem] grid-cols-[0.875rem_minmax(0,1fr)] items-center gap-2 text-left text-[11px] leading-none">
-      <Icon className="h-3.5 w-3.5 shrink-0 justify-self-center" />
+    <span className="inline-flex w-full items-center justify-center gap-1.5 text-center text-[11px] leading-none">
+      <Icon className="h-3.5 w-3.5 shrink-0" />
       <span className="truncate font-medium">{children}</span>
     </span>
   )
