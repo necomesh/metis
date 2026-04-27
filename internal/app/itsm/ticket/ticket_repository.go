@@ -246,7 +246,7 @@ func (r *TicketRepo) ListPendingApprovals(params TicketApprovalListParams, opera
 		Where("assign.status = ?", AssignmentPending).
 		Where(r.assignmentOperatorCondition("assign", operatorID, positionIDs, departmentIDs))
 
-	return r.listApprovalQuery(query, params, "itsm_priorities.value ASC, itsm_tickets.created_at ASC, itsm_tickets.id ASC")
+	return r.listApprovalQuery(query, params, true)
 }
 
 func (r *TicketRepo) ListApprovalHistory(params TicketApprovalListParams, operatorID uint) ([]Ticket, int64, error) {
@@ -256,10 +256,10 @@ func (r *TicketRepo) ListApprovalHistory(params TicketApprovalListParams, operat
 		Where("act.activity_type IN ?", []string{"approve", "form", "process"}).
 		Where("assign.status IN ? AND assign.assignee_id = ?", []string{AssignmentApproved, AssignmentRejected}, operatorID)
 
-	return r.listApprovalQuery(query, params, "assign.finished_at DESC, itsm_tickets.id DESC")
+	return r.listApprovalQuery(query, params, false)
 }
 
-func (r *TicketRepo) listApprovalQuery(query *gorm.DB, params TicketApprovalListParams, order string) ([]Ticket, int64, error) {
+func (r *TicketRepo) listApprovalQuery(query *gorm.DB, params TicketApprovalListParams, pending bool) ([]Ticket, int64, error) {
 	query = query.Joins("LEFT JOIN itsm_priorities ON itsm_priorities.id = itsm_tickets.priority_id")
 	if params.Keyword != "" {
 		like := "%" + params.Keyword + "%"
@@ -278,11 +278,43 @@ func (r *TicketRepo) listApprovalQuery(query *gorm.DB, params TicketApprovalList
 		params.PageSize = 20
 	}
 
-	var items []Ticket
 	offset := (params.Page - 1) * params.PageSize
-	if err := query.Distinct("itsm_tickets.*").Offset(offset).Limit(params.PageSize).Order(order).Find(&items).Error; err != nil {
+	pageQuery := query.Session(&gorm.Session{}).Select("itsm_tickets.id")
+	if pending {
+		pageQuery = pageQuery.Group("itsm_tickets.id, itsm_priorities.value, itsm_tickets.created_at").
+			Order("itsm_priorities.value ASC, itsm_tickets.created_at ASC, itsm_tickets.id ASC")
+	} else {
+		pageQuery = pageQuery.Group("itsm_tickets.id").
+			Order("MAX(assign.finished_at) DESC, itsm_tickets.id DESC")
+	}
+
+	var ids []uint
+	if err := pageQuery.Offset(offset).Limit(params.PageSize).Pluck("itsm_tickets.id", &ids).Error; err != nil {
 		return nil, 0, err
 	}
+	if len(ids) == 0 {
+		return []Ticket{}, total, nil
+	}
+
+	var rawItems []Ticket
+	if err := r.db.Model(&Ticket{}).Where("id IN ?", ids).Find(&rawItems).Error; err != nil {
+		return nil, 0, err
+	}
+
+	itemByID := make(map[uint]Ticket, len(rawItems))
+	for _, item := range rawItems {
+		itemByID[item.ID] = item
+	}
+
+	items := make([]Ticket, 0, len(ids))
+	for _, id := range ids {
+		item, ok := itemByID[id]
+		if !ok {
+			continue
+		}
+		items = append(items, item)
+	}
+
 	return items, total, nil
 }
 

@@ -191,6 +191,48 @@ function toRecord(value: unknown) {
     : null
 }
 
+function asTrimmedString(value: unknown) {
+  return typeof value === "string" ? value.trim() : ""
+}
+
+function hasCJK(value: string) {
+  return /[\u3400-\u9fff]/.test(value)
+}
+
+interface FieldDisplayMeta {
+  label?: string
+  valueLabels: Record<string, string>
+}
+
+function parseFieldDisplayMeta(schema: unknown) {
+  const root = toRecord(schema)
+  const rawFields = Array.isArray(root?.fields) ? root.fields : []
+  const meta: Record<string, FieldDisplayMeta> = {}
+  for (const rawField of rawFields) {
+    const field = toRecord(rawField)
+    if (!field) continue
+    const key = asTrimmedString(field.key)
+    if (!key) continue
+    const label = asTrimmedString(field.label)
+    const valueLabels: Record<string, string> = {}
+    const rawOptions = Array.isArray(field.options) ? field.options : []
+    for (const rawOption of rawOptions) {
+      const option = toRecord(rawOption)
+      if (option) {
+        const optionLabel = asTrimmedString(option.label)
+        const optionValue = option.value
+        if (optionLabel && optionValue != null) valueLabels[String(optionValue)] = optionLabel
+        continue
+      }
+      if (typeof rawOption === "string" || typeof rawOption === "number" || typeof rawOption === "boolean") {
+        valueLabels[String(rawOption)] = String(rawOption)
+      }
+    }
+    meta[key] = { label: label || undefined, valueLabels }
+  }
+  return meta
+}
+
 function formatDate(value?: string | null) {
   return value ? new Date(value).toLocaleString() : "—"
 }
@@ -231,6 +273,69 @@ function mapStepTypeToLabel(stepType?: string | null) {
   if (normalized === "approve" || normalized === "审批") return "等待审批决策"
   if (normalized === "action" || normalized === "动作") return "执行自动化动作"
   return null
+}
+
+function resolveI18nValue(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  path: string,
+) {
+  const value = t(path, { defaultValue: "" })
+  if (!value || value === path) return ""
+  return value
+}
+
+function resolveFieldLabel(
+  key: string,
+  fieldMeta: Record<string, FieldDisplayMeta>,
+  t: (key: string, options?: Record<string, unknown>) => string,
+  locale: string,
+) {
+  const schemaLabel = fieldMeta[key]?.label || ""
+  const i18nLabel = resolveI18nValue(t, `itsm:tickets.fieldLabels.${key}`)
+  if (locale.startsWith("zh")) return schemaLabel || i18nLabel || key
+  if (i18nLabel) return i18nLabel
+  if (schemaLabel && !hasCJK(schemaLabel)) return schemaLabel
+  return schemaLabel || key
+}
+
+function resolveFieldOptionLabel(
+  fieldKey: string,
+  rawValue: unknown,
+  fieldMeta: Record<string, FieldDisplayMeta>,
+  t: (key: string, options?: Record<string, unknown>) => string,
+  locale: string,
+) {
+  const valueKey = String(rawValue)
+  const schemaLabel = fieldMeta[fieldKey]?.valueLabels[valueKey] || ""
+  const i18nLabel = resolveI18nValue(t, `itsm:tickets.fieldValueLabels.${fieldKey}.${valueKey}`)
+  if (locale.startsWith("zh")) return schemaLabel || i18nLabel || valueKey
+  if (i18nLabel) return i18nLabel
+  if (schemaLabel && !hasCJK(schemaLabel)) return schemaLabel
+  return schemaLabel || valueKey
+}
+
+function resolveFieldDisplayValue(
+  fieldKey: string,
+  rawValue: unknown,
+  fieldMeta: Record<string, FieldDisplayMeta>,
+  t: (key: string, options?: Record<string, unknown>) => string,
+  locale: string,
+) {
+  if (Array.isArray(rawValue)) {
+    const separator = locale.startsWith("zh") ? "、" : ", "
+    return rawValue
+      .map((item) => {
+        if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") {
+          return resolveFieldOptionLabel(fieldKey, item, fieldMeta, t, locale)
+        }
+        return compactValue(item)
+      })
+      .join(separator)
+  }
+  if (typeof rawValue === "string" || typeof rawValue === "number" || typeof rawValue === "boolean") {
+    return resolveFieldOptionLabel(fieldKey, rawValue, fieldMeta, t, locale)
+  }
+  return compactValue(rawValue)
 }
 
 function summarizeDecision(plan: DecisionPlan | null, fallback?: string | null, activityName?: string | null) {
@@ -318,8 +423,11 @@ function AIEvidencePanel({
   activity?: ActivityItem | null
   plan: DecisionPlan | null
 }) {
+  const { t, i18n } = useTranslation("itsm")
   const formRecord = toRecord(ticket.formData)
   const activityFormRecord = toRecord(activity?.formData)
+  const fieldMeta = parseFieldDisplayMeta(activity?.formSchema)
+  const locale = i18n.resolvedLanguage || i18n.language || "zh-CN"
   const confidence = confidenceOf(activity, plan)
   const confidencePct = confidence == null ? null : Math.round(confidence * 100)
   const firstActivity = plan?.activities?.[0]
@@ -391,26 +499,33 @@ function AIEvidencePanel({
           <div className="space-y-2 border-t border-border/45 pt-4">
             <p className="text-sm font-medium">申请字段</p>
             <div className="grid gap-x-6 gap-y-0.5 md:grid-cols-2">
-              {Object.entries(activityFormRecord ?? formRecord ?? {}).slice(0, 10).map(([key, value]) => (
-                <div
-                  key={key}
-                  className={`min-w-0 border-b border-border/35 py-3 ${/(remark|description|comment|note|reason|详情|描述|备注|说明|原因)/i.test(key) ? "md:col-span-2" : ""}`}
-                >
-                  <p className="truncate whitespace-nowrap text-[11px] font-medium text-muted-foreground/90">{key}</p>
-                  {/(remark|description|comment|note|reason|详情|描述|备注|说明|原因)/i.test(key) ? (
+              {Object.entries(activityFormRecord ?? formRecord ?? {}).slice(0, 10).map(([key, value]) => {
+                const displayLabel = resolveFieldLabel(key, fieldMeta, t, locale)
+                const displayValue = resolveFieldDisplayValue(key, value, fieldMeta, t, locale)
+                const isLongField = /(remark|description|comment|note|reason|详情|描述|备注|说明|原因)/i.test(key)
+                return (
+                  <div
+                    key={key}
+                    className={`min-w-0 border-b border-border/35 py-3 ${isLongField ? "md:col-span-2" : ""}`}
+                  >
+                    <p className="truncate whitespace-nowrap text-[11px] font-medium text-muted-foreground/90" title={displayLabel}>
+                      {displayLabel}
+                    </p>
+                    {isLongField ? (
                     <p
                       className="mt-1 overflow-hidden text-[15px] font-medium leading-6 text-foreground [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]"
-                      title={compactValue(value)}
+                      title={displayValue}
                     >
-                      {compactValue(value)}
+                      {displayValue}
                     </p>
                   ) : (
-                    <p className="mt-1 truncate whitespace-nowrap text-[15px] font-medium leading-6 text-foreground" title={compactValue(value)}>
-                      {compactValue(value)}
+                    <p className="mt-1 truncate whitespace-nowrap text-[15px] font-medium leading-6 text-foreground" title={displayValue}>
+                      {displayValue}
                     </p>
                   )}
-                </div>
-              ))}
+                  </div>
+                )
+              })}
             </div>
           </div>
         )}
@@ -584,6 +699,7 @@ function FlatAside({
   getNodeOutcomes,
   outcomeLabel,
   t,
+  canProcess,
   canAssign,
   assignForm,
   setAssignOpen,
@@ -609,6 +725,7 @@ function FlatAside({
   getNodeOutcomes: (activityType: string) => ApprovalOutcome[]
   outcomeLabel: (activity: ActivityItem, outcome: string, t: (key: string) => string) => string
   t: (key: string) => string
+  canProcess: boolean
   canAssign: boolean
   assignForm: ReturnType<typeof useForm<{ assigneeId: number }>>
   setAssignOpen: (open: boolean) => void
@@ -649,7 +766,7 @@ function FlatAside({
           </p>
         )}
 
-        {isActive && !isDecisioning && activeHumanActivity && isCurrentUserResponsible && getNodeOutcomes(activeHumanActivity.activityType).map((outcome) => (
+        {canProcess && isActive && !isDecisioning && activeHumanActivity && isCurrentUserResponsible && getNodeOutcomes(activeHumanActivity.activityType).map((outcome) => (
           <Button
             data-testid={outcome === "approved" ? "itsm-ticket-approve-button" : "itsm-ticket-reject-button"}
             key={`${activeHumanActivity.id}-${outcome}`}
@@ -745,8 +862,11 @@ export function Component() {
   const canAssign = usePermission("itsm:ticket:assign")
   const canCancel = usePermission("itsm:ticket:cancel")
   const activeMenuPermission = getActiveMenuPermission(location.state)
-  const isMineEntry = activeMenuPermission === TICKET_MENU_PERMISSION.mine
-  const canCancelFromEntry = canCancel && !isMineEntry
+  const canProcessFromEntry = activeMenuPermission === TICKET_MENU_PERMISSION.approvalPending
+  const canManageFromEntry = activeMenuPermission === TICKET_MENU_PERMISSION.list || activeMenuPermission === "itsm:ticket:monitor"
+  const canWithdrawFromEntry = activeMenuPermission === TICKET_MENU_PERMISSION.mine
+  const canAssignFromEntry = canAssign && canManageFromEntry
+  const canCancelFromEntry = canCancel && canManageFromEntry
   const currentUser = useAuthStore((s) => s.user)
   const currentUserId = currentUser?.id ?? 0
 
@@ -925,7 +1045,7 @@ export function Component() {
   const isActive = ticket ? ACTIVE_STATUSES.has(ticket.status) : false
   const isTerminal = ticket ? TERMINAL_STATUSES.has(ticket.status) : false
   const isDecisioning = ticket?.engineType === "smart" && ticket.smartState === "ai_reasoning"
-  const canWithdraw = Boolean(ticket && isActive && !isDecisioning && ticket.status === "submitted" && ticket.requesterId === currentUserId)
+  const canWithdraw = Boolean(canWithdrawFromEntry && ticket && isActive && !isDecisioning && ticket.status === "submitted" && ticket.requesterId === currentUserId)
   const actionableActivity = activeHumanActivity
   const isCurrentUserResponsible = Boolean(
     ticket?.canAct || actionableActivity?.canAct || (ticket?.assigneeId && ticket.assigneeId === currentUserId),
@@ -1026,7 +1146,8 @@ export function Component() {
           getNodeOutcomes={getNodeOutcomes}
           outcomeLabel={outcomeLabel}
           t={t}
-          canAssign={canAssign}
+          canProcess={canProcessFromEntry}
+          canAssign={canAssignFromEntry}
           assignForm={assignForm}
           setAssignOpen={setAssignOpen}
           canCancel={canCancelFromEntry}

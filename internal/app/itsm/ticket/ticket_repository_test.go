@@ -153,6 +153,166 @@ func TestListApprovalHistoryDeduplicatesMultipleCompletedActivities(t *testing.T
 	}
 }
 
+func TestListApprovalHistoryOrdersByLatestFinishedAtDesc(t *testing.T) {
+	db := migrateTicketHistoryTestDB(t)
+	operatorID := uint(1)
+	priority := Priority{Name: "普通", Code: "normal", Value: 10, Color: "#666"}
+	if err := db.Create(&priority).Error; err != nil {
+		t.Fatalf("create priority: %v", err)
+	}
+
+	olderTicket := Ticket{
+		Code:        "TICK-HIST-OLDER",
+		Title:       "历史较旧",
+		ServiceID:   1,
+		EngineType:  "smart",
+		Status:      TicketStatusCompleted,
+		PriorityID:  priority.ID,
+		RequesterID: operatorID,
+	}
+	if err := db.Create(&olderTicket).Error; err != nil {
+		t.Fatalf("create older ticket: %v", err)
+	}
+	newerTicket := Ticket{
+		Code:        "TICK-HIST-NEWER",
+		Title:       "历史较新",
+		ServiceID:   1,
+		EngineType:  "smart",
+		Status:      TicketStatusCompleted,
+		PriorityID:  priority.ID,
+		RequesterID: operatorID,
+	}
+	if err := db.Create(&newerTicket).Error; err != nil {
+		t.Fatalf("create newer ticket: %v", err)
+	}
+
+	oldTime := time.Now().Add(-2 * time.Hour)
+	newTime := time.Now().Add(-1 * time.Hour)
+	for i, ticket := range []Ticket{olderTicket, newerTicket} {
+		finishedAt := oldTime
+		if i == 1 {
+			finishedAt = newTime
+		}
+		activity := TicketActivity{
+			TicketID:     ticket.ID,
+			Name:         "审批",
+			ActivityType: "approve",
+			Status:       "completed",
+			FinishedAt:   &finishedAt,
+		}
+		if err := db.Create(&activity).Error; err != nil {
+			t.Fatalf("create history activity %d: %v", i, err)
+		}
+		if err := db.Create(&TicketAssignment{
+			TicketID:        ticket.ID,
+			ActivityID:      activity.ID,
+			ParticipantType: "user",
+			UserID:          &operatorID,
+			AssigneeID:      &operatorID,
+			Status:          AssignmentApproved,
+			FinishedAt:      &finishedAt,
+		}).Error; err != nil {
+			t.Fatalf("create history assignment %d: %v", i, err)
+		}
+	}
+
+	repo := &TicketRepo{db: db}
+	items, total, err := repo.ListApprovalHistory(TicketApprovalListParams{Page: 1, PageSize: 20}, operatorID)
+	if err != nil {
+		t.Fatalf("list history: %v", err)
+	}
+	if total != 2 || len(items) != 2 {
+		t.Fatalf("expected 2 history tickets, got total=%d len=%d", total, len(items))
+	}
+	if items[0].ID != newerTicket.ID || items[1].ID != olderTicket.ID {
+		t.Fatalf("expected newer ticket first, got items=%v", items)
+	}
+}
+
+func TestListPendingApprovalsDeduplicatesAndOrdersByPriorityThenCreatedAt(t *testing.T) {
+	db := migrateTicketHistoryTestDB(t)
+	operatorID := uint(1)
+	highPriority := Priority{Name: "高", Code: "high", Value: 1, Color: "#f00"}
+	normalPriority := Priority{Name: "普通", Code: "normal", Value: 10, Color: "#666"}
+	if err := db.Create(&highPriority).Error; err != nil {
+		t.Fatalf("create high priority: %v", err)
+	}
+	if err := db.Create(&normalPriority).Error; err != nil {
+		t.Fatalf("create normal priority: %v", err)
+	}
+
+	early := time.Now().Add(-2 * time.Hour)
+	late := time.Now().Add(-1 * time.Hour)
+	ticketA := Ticket{
+		Code:        "TICK-PEND-A",
+		Title:       "高优先级",
+		ServiceID:   1,
+		EngineType:  "smart",
+		Status:      TicketStatusSubmitted,
+		PriorityID:  highPriority.ID,
+		RequesterID: operatorID,
+	}
+	ticketB := Ticket{
+		Code:        "TICK-PEND-B",
+		Title:       "普通优先级-更早",
+		ServiceID:   1,
+		EngineType:  "smart",
+		Status:      TicketStatusSubmitted,
+		PriorityID:  normalPriority.ID,
+		RequesterID: operatorID,
+	}
+	if err := db.Create(&ticketA).Error; err != nil {
+		t.Fatalf("create ticket A: %v", err)
+	}
+	if err := db.Create(&ticketB).Error; err != nil {
+		t.Fatalf("create ticket B: %v", err)
+	}
+	if err := db.Model(&Ticket{}).Where("id = ?", ticketA.ID).Update("created_at", late).Error; err != nil {
+		t.Fatalf("update ticket A created_at: %v", err)
+	}
+	if err := db.Model(&Ticket{}).Where("id = ?", ticketB.ID).Update("created_at", early).Error; err != nil {
+		t.Fatalf("update ticket B created_at: %v", err)
+	}
+
+	addPending := func(ticketID uint, suffix string) {
+		activity := TicketActivity{
+			TicketID:     ticketID,
+			Name:         "审批-" + suffix,
+			ActivityType: "approve",
+			Status:       "pending",
+		}
+		if err := db.Create(&activity).Error; err != nil {
+			t.Fatalf("create pending activity %s: %v", suffix, err)
+		}
+		if err := db.Create(&TicketAssignment{
+			TicketID:        ticketID,
+			ActivityID:      activity.ID,
+			ParticipantType: "user",
+			UserID:          &operatorID,
+			AssigneeID:      &operatorID,
+			Status:          AssignmentPending,
+		}).Error; err != nil {
+			t.Fatalf("create pending assignment %s: %v", suffix, err)
+		}
+	}
+
+	addPending(ticketA.ID, "A1")
+	addPending(ticketA.ID, "A2")
+	addPending(ticketB.ID, "B1")
+
+	repo := &TicketRepo{db: db}
+	items, total, err := repo.ListPendingApprovals(TicketApprovalListParams{Page: 1, PageSize: 20}, operatorID, nil, nil)
+	if err != nil {
+		t.Fatalf("list pending approvals: %v", err)
+	}
+	if total != 2 || len(items) != 2 {
+		t.Fatalf("expected 2 deduplicated pending tickets, got total=%d len=%d", total, len(items))
+	}
+	if items[0].ID != ticketA.ID || items[1].ID != ticketB.ID {
+		t.Fatalf("expected high priority ticket first, got items=%v", items)
+	}
+}
+
 func TestListSupportsGroupedStatusFilters(t *testing.T) {
 	db := migrateTicketHistoryTestDB(t)
 	priority := Priority{Name: "普通", Code: "normal", Value: 10, Color: "#666"}

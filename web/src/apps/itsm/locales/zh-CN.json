@@ -390,7 +390,24 @@
     "startDate": "开始日期",
     "endDate": "结束日期",
     "titlePlaceholder": "请输入工单标题",
-    "descriptionPlaceholder": "请输入工单描述"
+    "descriptionPlaceholder": "请输入工单描述",
+    "fieldLabels": {
+      "vpn_account": "VPN账号",
+      "device_usage": "设备与用途说明",
+      "request_kind": "访问原因"
+    },
+    "fieldValueLabels": {
+      "request_kind": {
+        "online_support": "线上支持",
+        "troubleshooting": "故障排查",
+        "production_emergency": "生产应急",
+        "network_access_issue": "网络接入问题",
+        "external_collaboration": "外部协作",
+        "long_term_remote_work": "长期远程办公",
+        "cross_border_access": "跨境访问",
+        "security_compliance": "安全合规事项"
+      }
+    }
   },
   "validation": {
     "nameRequired": "名称不能为空",
