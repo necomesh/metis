@@ -1758,9 +1758,9 @@ func (e *SmartEngine) buildInitialSeed(tx *gorm.DB, ticketID uint, svc *serviceM
 
 func decisionTriggerReason(completedActivityID *uint) string {
 	if completedActivityID != nil && *completedActivityID > 0 {
-		return "activity_completed"
+		return TriggerReasonActivityDone
 	}
-	return "initial_decision"
+	return TriggerReasonInitialDecision
 }
 
 func normalizedTriggerReason(completedActivityID *uint, triggerReasons ...string) string {

@@ -95,7 +95,7 @@ func (s *TicketService) Create(input CreateTicketInput, requesterID uint) (*Tick
 		return nil, err
 	}
 	if ticket.EngineType == "smart" {
-		s.smartEngine.DispatchDecisionAsync(ticket.ID, nil, "ticket_created")
+		s.smartEngine.DispatchDecisionAsync(ticket.ID, nil, engine.TriggerReasonTicketCreated)
 	}
 
 	return s.ticketRepo.FindByID(ticket.ID)
@@ -259,7 +259,7 @@ func (s *TicketService) createAgentTicket(ctx context.Context, input CreateTicke
 			return nil, err
 		}
 		if ticket.EngineType == "smart" {
-			s.smartEngine.DispatchDecisionAsync(ticket.ID, nil, "ticket_created")
+			s.smartEngine.DispatchDecisionAsync(ticket.ID, nil, engine.TriggerReasonTicketCreated)
 		}
 		return s.ticketRepo.FindByID(ticket.ID)
 	}
@@ -344,7 +344,7 @@ func (s *TicketService) createAgentTicket(ctx context.Context, input CreateTicke
 		return nil, err
 	}
 	if created.EngineType == "smart" {
-		s.smartEngine.DispatchDecisionAsync(created.ID, nil, "ticket_created")
+		s.smartEngine.DispatchDecisionAsync(created.ID, nil, engine.TriggerReasonTicketCreated)
 	}
 	return s.ticketRepo.FindByID(created.ID)
 }
@@ -423,11 +423,8 @@ func (s *TicketService) Progress(ticketID uint, activityID uint, outcome string,
 	if t.EngineType == "smart" {
 		updated, findErr := s.ticketRepo.FindByID(ticketID)
 		if findErr == nil && isDecisioningStatus(updated.Status) {
-			triggerReason := "activity_approved"
-			if outcome == "rejected" {
-				triggerReason = "activity_rejected"
-			}
-			s.smartEngine.DispatchDecisionAsync(ticketID, &activityID, triggerReason)
+			event := engine.NewActivityDecidedEvent(ticketID, activityID, outcome, operatorID)
+			s.smartEngine.DispatchDecisionAsync(event.TicketID, event.CompletedActivityID, event.TriggerReason)
 			return updated, nil
 		}
 	}
@@ -703,7 +700,7 @@ func buildDecisionExplanation(resp *TicketResponse, activity *TicketActivity, sn
 		}
 	}
 	if explanation.Trigger == "" {
-		explanation.Trigger = "ai_decision"
+		explanation.Trigger = engine.TriggerReasonAIDecision
 	}
 	if explanation.Decision == "" {
 		explanation.Decision = "等待决策引擎输出"
@@ -771,11 +768,11 @@ func buildRecoveryActions(resp *TicketResponse) []RecoveryAction {
 func decisioningReason(status string) string {
 	switch status {
 	case TicketStatusApprovedDecisioning:
-		return "activity_approved"
+		return engine.TriggerReasonActivityApprove
 	case TicketStatusRejectedDecisioning:
-		return "activity_rejected"
+		return engine.TriggerReasonActivityReject
 	case TicketStatusDecisioning:
-		return "ai_decision"
+		return engine.TriggerReasonAIDecision
 	default:
 		return ""
 	}
@@ -1454,7 +1451,7 @@ func (s *TicketService) retryAI(ticketID uint, reason string, operatorID uint, l
 	}); err != nil {
 		return nil, err
 	}
-	s.smartEngine.DispatchDecisionAsync(ticketID, nil, "manual_retry")
+	s.smartEngine.DispatchDecisionAsync(ticketID, nil, engine.TriggerReasonManualRetry)
 	return s.ticketRepo.FindByID(ticketID)
 }
 
