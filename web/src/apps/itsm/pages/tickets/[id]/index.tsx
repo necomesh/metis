@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, type ReactNode } from "react"
-import { useParams, useNavigate } from "react-router"
+import { useLocation, useParams, useNavigate } from "react-router"
 import { useTranslation } from "react-i18next"
 import { useForm } from "react-hook-form"
 import { z } from "zod"
@@ -17,6 +17,7 @@ import {
   CircleX,
   Clock,
   FileText,
+  Info,
   Loader2,
   Play,
   PlusCircle,
@@ -55,7 +56,9 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { Progress } from "@/components/ui/progress"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { usePermission } from "@/hooks/use-permission"
+import { getActiveMenuPermission } from "@/lib/navigation-state"
 import { useAuthStore } from "@/stores/auth"
 import {
   assignTicket,
@@ -76,6 +79,7 @@ import { TicketStatusBadge } from "../../../components/ticket-status-badge"
 import { SmartFlowVisualization } from "../../../components/smart-flow-visualization"
 import { VariablesPanel } from "../../../components/variables-panel"
 import { WorkflowViewer } from "../../../components/workflow"
+import { TICKET_MENU_PERMISSION } from "../navigation"
 
 const ACTIVE_STATUSES = new Set(["submitted", "waiting_human", "approved_decisioning", "rejected_decisioning", "decisioning", "executing_action"])
 const TERMINAL_STATUSES = new Set(["completed", "rejected", "withdrawn", "cancelled", "failed"])
@@ -297,7 +301,33 @@ function AIEvidencePanel({
           value={activity?.aiReasoning ? "AI 已记录推理摘要" : formRecord ? "申请字段与运行轨迹" : "流程运行轨迹"}
         />
         <DetailItem label="下一步建议" value={summarizeDecision(plan, ticket.nextStepSummary)} title={summarizeDecision(plan, ticket.nextStepSummary)} />
-        <DetailItem label="置信度" value={confidencePct == null ? "—" : `${confidencePct}%`} />
+        <div className="space-y-1.5">
+          <div className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
+            <span>置信度</span>
+            {activity?.aiReasoning && (
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label="查看推理摘要"
+                    className="inline-flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  >
+                    <Info className="h-3.5 w-3.5" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-[22rem] max-w-[85vw] p-3">
+                  <p className="text-xs font-medium text-foreground">推理摘要</p>
+                  <p className="mt-2 max-h-60 overflow-y-auto whitespace-pre-wrap pr-1 text-xs leading-5 text-muted-foreground">
+                    {activity.aiReasoning}
+                  </p>
+                </PopoverContent>
+              </Popover>
+            )}
+          </div>
+          <div className="truncate whitespace-nowrap text-sm leading-6 text-foreground">
+            {confidencePct == null ? "—" : `${confidencePct}%`}
+          </div>
+        </div>
       </div>
 
       <div className="mt-4 space-y-5">
@@ -308,15 +338,6 @@ function AIEvidencePanel({
               <span>{confidencePct >= 80 ? "可自动推进" : confidencePct >= 50 ? "建议观察" : "需要人工确认"}</span>
             </div>
             <Progress value={confidencePct} className="h-2" />
-          </div>
-        )}
-
-        {activity?.aiReasoning && (
-          <div className="space-y-2">
-            <p className="text-sm font-medium">推理摘要</p>
-            <p className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
-              {activity.aiReasoning}
-            </p>
           </div>
         )}
 
@@ -658,6 +679,7 @@ function renderFlowTab(
 export function Component() {
   const { t } = useTranslation(["itsm", "common"])
   const { id } = useParams<{ id: string }>()
+  const location = useLocation()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const ticketId = Number(id)
@@ -671,6 +693,9 @@ export function Component() {
 
   const canAssign = usePermission("itsm:ticket:assign")
   const canCancel = usePermission("itsm:ticket:cancel")
+  const activeMenuPermission = getActiveMenuPermission(location.state)
+  const isMineEntry = activeMenuPermission === TICKET_MENU_PERMISSION.mine
+  const canCancelFromEntry = canCancel && !isMineEntry
   const currentUser = useAuthStore((s) => s.user)
   const currentUserId = currentUser?.id ?? 0
 
@@ -951,7 +976,7 @@ export function Component() {
           canAssign={canAssign}
           assignForm={assignForm}
           setAssignOpen={setAssignOpen}
-          canCancel={canCancel}
+          canCancel={canCancelFromEntry}
           cancelForm={cancelForm}
           setCancelOpen={setCancelOpen}
           canWithdraw={canWithdraw}
