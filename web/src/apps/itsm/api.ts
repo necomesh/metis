@@ -688,6 +688,7 @@ export interface StaffingAgentSelector {
 export interface StaffingPathBuilderConfig extends EngineAgentConfig {
   maxRetries: number
   timeoutSeconds: number
+  systemPrompt: string
 }
 
 export interface EngineHealthItem {
@@ -711,6 +712,7 @@ export interface SmartStaffingConfig {
 export interface EngineSettingsConfig {
   runtime: {
     pathBuilder: StaffingPathBuilderConfig
+    titleBuilder: StaffingPathBuilderConfig
     guard: {
       auditLevel: string
       fallbackAssignee: number
@@ -731,7 +733,8 @@ export interface SmartStaffingConfigUpdate {
 
 export interface EngineSettingsConfigUpdate {
   runtime: {
-    pathBuilder: { modelId: number; temperature: number; maxRetries: number; timeoutSeconds: number }
+    pathBuilder: { modelId: number; temperature: number; maxRetries: number; timeoutSeconds: number; systemPrompt: string }
+    titleBuilder: { modelId: number; temperature: number; maxRetries: number; timeoutSeconds: number; systemPrompt: string }
     guard: { auditLevel: string; fallbackAssignee: number }
   }
 }

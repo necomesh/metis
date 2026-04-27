@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	. "metis/internal/app/itsm/config"
 	. "metis/internal/app/itsm/domain"
+	"metis/internal/app/itsm/prompts"
 	"strconv"
 	"strings"
 	"time"
@@ -985,13 +986,19 @@ func SeedEngineConfig(db *gorm.DB) error {
 	seedServiceMatchToolRuntime(db)
 
 	defaults := map[string]string{
-		SmartTicketDecisionModeKey:    "direct_first",
-		SmartTicketPathModelKey:       "0",
-		SmartTicketPathTemperatureKey: "0.3",
-		SmartTicketPathMaxRetriesKey:  "1",
-		SmartTicketPathTimeoutKey:     "60",
-		SmartTicketGuardAuditLevelKey: "full",
-		SmartTicketGuardFallbackKey:   "0",
+		SmartTicketDecisionModeKey:            "direct_first",
+		SmartTicketPathModelKey:               "0",
+		SmartTicketPathTemperatureKey:         "0.3",
+		SmartTicketPathMaxRetriesKey:          "1",
+		SmartTicketPathTimeoutKey:             "60",
+		SmartTicketPathSystemPromptKey:        prompts.PathBuilderSystemPromptDefault,
+		SmartTicketSessionTitleModelKey:       "0",
+		SmartTicketSessionTitleTemperatureKey: "0.2",
+		SmartTicketSessionTitleMaxRetriesKey:  "1",
+		SmartTicketSessionTitleTimeoutKey:     "30",
+		SmartTicketSessionTitlePromptKey:      SessionTitleSystemPromptDefault,
+		SmartTicketGuardAuditLevelKey:         "full",
+		SmartTicketGuardFallbackKey:           "0",
 	}
 
 	for key, value := range defaults {

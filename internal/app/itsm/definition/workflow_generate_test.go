@@ -93,6 +93,41 @@ func workflowWithBlockingIssueForGenerateTest(userID uint) string {
 	}`, userID)
 }
 
+func TestGenerate_UsesConfiguredSystemPrompt(t *testing.T) {
+	client := &fakeWorkflowLLMClient{
+		responses: []llm.ChatResponse{{Content: validWorkflowJSONForGenerateTest()}},
+	}
+	svc := &WorkflowGenerateService{
+		engineConfigSvc: fakePathEngineConfigProvider{cfg: LLMEngineRuntimeConfig{
+			Model:          "gpt-test",
+			Protocol:       llm.ProtocolOpenAI,
+			BaseURL:        "https://example.test/v1",
+			APIKey:         "test-key",
+			Temperature:    0.3,
+			MaxTokens:      1024,
+			MaxRetries:     0,
+			TimeoutSeconds: 30,
+			SystemPrompt:   "configured prompt",
+		}},
+		llmClientFactory: func(string, string, string) (llm.Client, error) {
+			return client, nil
+		},
+	}
+
+	_, err := svc.Generate(context.Background(), &GenerateRequest{
+		CollaborationSpec: "用户提交申请，服务台处理后结束",
+	})
+	if err != nil {
+		t.Fatalf("generate failed: %v", err)
+	}
+	if len(client.requests) == 0 || len(client.requests[0].Messages) == 0 {
+		t.Fatalf("expected at least one llm request")
+	}
+	if got := client.requests[0].Messages[0].Content; got != "configured prompt" {
+		t.Fatalf("expected configured system prompt, got %q", got)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Layer 1: Unit tests — extractJSON
 // ---------------------------------------------------------------------------

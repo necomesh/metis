@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next"
 import { useForm, useWatch } from "react-hook-form"
 import { z } from "zod"
 import { zodResolver } from "@hookform/resolvers/zod"
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { useQuery, useMutation, useQueryClient, useIsMutating } from "@tanstack/react-query"
 import { ArrowLeft, Plus, Pencil, Trash2, Zap, Save, Loader2, Sparkles, ShieldCheck, CheckCircle2, AlertTriangle, XCircle } from "lucide-react"
 import { usePermission } from "@/hooks/use-permission"
 import { cn } from "@/lib/utils"
@@ -53,6 +53,7 @@ import type { FormSchema } from "../../../components/form-engine"
 import { ClassicWorkflowWorkbench } from "./classic-workflow-workbench"
 
 const WorkflowPreview = lazy(() => import("./workflow-preview"))
+const GENERATE_WORKFLOW_MUTATION_KEY = ["itsm-generate-workflow"] as const
 
 // ─── Schema hooks ──────────────────────────────────────
 
@@ -318,6 +319,7 @@ function GenerateWorkflowButton({ serviceId, collaborationSpec }: {
   const queryClient = useQueryClient()
 
   const generateMut = useMutation({
+    mutationKey: [...GENERATE_WORKFLOW_MUTATION_KEY, serviceId],
     mutationFn: () => generateWorkflow({ serviceId, collaborationSpec }),
     onSuccess: (resp) => {
       if (resp.errors && resp.errors.length > 0) {
@@ -407,7 +409,8 @@ function healthItemStatusText(status: ServiceHealthItem["status"]) {
   return "需确认"
 }
 
-function ServiceHealthSection({ health }: { health: ServiceHealthCheck | null }) {
+function ServiceHealthSection({ health, isGenerating }: { health: ServiceHealthCheck | null; isGenerating: boolean }) {
+  const { t } = useTranslation("itsm")
   const displayStatus: ServiceHealthItem["status"] | "empty" = !health ? "empty" : health.status
   const overall = healthTone(displayStatus)
   const OverallIcon = overall.icon
@@ -424,6 +427,15 @@ function ServiceHealthSection({ health }: { health: ServiceHealthCheck | null })
         action={<Badge variant={overall.badge}>{healthStatusText(displayStatus)}</Badge>}
       />
       <div className="workspace-surface flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.1rem]">
+        {isGenerating ? (
+          <div className="flex min-h-[260px] flex-1 items-center justify-center px-4 py-5">
+            <div className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>{t("generate.generating")}</span>
+            </div>
+          </div>
+        ) : (
+          <>
         <div className="flex items-start gap-3 border-b border-border/45 px-4 py-3 text-sm">
           <OverallIcon className={cn("mt-0.5 h-4 w-4", overall.iconClassName)} />
           <div className="min-w-0 space-y-1">
@@ -460,6 +472,8 @@ function ServiceHealthSection({ health }: { health: ServiceHealthCheck | null })
             </div>
           )}
         </div>
+          </>
+        )}
       </div>
     </section>
   )
@@ -731,6 +745,7 @@ export function Component() {
     queryKey: ["itsm-sla"],
     queryFn: () => fetchSLATemplates(),
   })
+  const isGeneratingWorkflow = useIsMutating({ mutationKey: [...GENERATE_WORKFLOW_MUTATION_KEY, serviceId] }) > 0
 
   if (isLoading || catalogsLoading || slaLoading) {
     return <div className="flex h-96 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
@@ -759,7 +774,12 @@ export function Component() {
         </Button>
       ) : undefined}
     >
-      {!service.workflowJson ? (
+      {isGeneratingWorkflow ? (
+        <div className="flex min-h-32 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border/70 bg-background/25 px-4 py-7 text-muted-foreground">
+          <Loader2 className="h-5 w-5 animate-spin" />
+          <p className="text-sm">{t("itsm:generate.generating")}</p>
+        </div>
+      ) : !service.workflowJson ? (
         <div className="flex min-h-32 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border/70 bg-background/25 px-4 py-7 text-muted-foreground">
           <p className="text-sm">
             {service.engineType === "smart" ? "暂无参考路径" : t("itsm:services.workflowEmpty")}
@@ -809,7 +829,7 @@ export function Component() {
       {service.engineType === "smart" ? (
         <div className="grid items-stretch gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.38fr)]">
           <div className="min-w-0">{workflowSection}</div>
-          <ServiceHealthSection health={service.publishHealthCheck} />
+          <ServiceHealthSection health={service.publishHealthCheck} isGenerating={isGeneratingWorkflow} />
         </div>
       ) : (
         <>
