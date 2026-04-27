@@ -12,9 +12,9 @@ Feature: 智能引擎恢复机制
   Scenario: 恢复无活跃活动的智能引擎票据
     Given 存在一个状态为 "decisioning" 的智能引擎票据且无活跃活动
     When 执行智能引擎恢复扫描
-    Then 恢复任务已提交
+    Then 恢复分发已触发智能决策
 
   Scenario: 跳过有活跃活动的智能引擎票据
     Given 存在一个状态为 "decisioning" 的智能引擎票据且有活跃活动
     When 执行智能引擎恢复扫描
-    Then 恢复任务未提交
+    Then 恢复分发未触发智能决策

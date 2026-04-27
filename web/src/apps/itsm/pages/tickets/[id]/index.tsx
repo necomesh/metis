@@ -199,6 +199,14 @@ function formatDate(value?: string | null) {
   return value ? new Date(value).toLocaleString() : "—"
 }
 
+function formatDateCompact(value?: string | null) {
+  if (!value) return "—"
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return "—"
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 function summarizeDecision(plan: DecisionPlan | null, fallback?: string | null) {
   const first = plan?.activities?.[0]
   if (first?.instructions) return first.instructions
@@ -231,9 +239,9 @@ function factSource(ticket: TicketItem, t: (key: string) => string) {
 
 function FactItem({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="min-w-0 rounded-lg border border-border/50 bg-background/35 px-3 py-2">
-      <p className="text-[11px] text-muted-foreground">{label}</p>
-      <div className="mt-1 min-w-0 text-sm font-medium">{value}</div>
+    <div className="min-w-0 px-2 py-1.5">
+      <p className="truncate whitespace-nowrap text-[11px] text-muted-foreground">{label}</p>
+      <div className="mt-1 min-w-0 truncate whitespace-nowrap text-sm font-medium tracking-[-0.01em]">{value}</div>
     </div>
   )
 }
@@ -679,15 +687,23 @@ export function Component() {
               </div>
             </div>
 
-            <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(240px,0.55fr)]">
-              <SectionBlock
-                label="工单诉求"
-                value={ticket.description ? <span className="whitespace-pre-wrap">{ticket.description}</span> : ticket.title}
-              />
-              <SectionBlock label="下一步" value={nextStep} />
+            <div className="mt-4 rounded-xl border border-border/40 bg-background/25 px-4 py-3">
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(220px,0.48fr)]">
+                <div className="min-w-0 lg:pr-4 lg:border-r lg:border-border/40">
+                  <p className="text-xs font-medium text-muted-foreground">工单诉求</p>
+                  <p className="mt-2 truncate whitespace-nowrap text-sm text-foreground tracking-[-0.01em]">
+                    {ticket.description || ticket.title}
+                  </p>
+                </div>
+                <div className="min-w-0 lg:pl-1">
+                  <p className="text-xs font-medium text-muted-foreground">下一步</p>
+                  <p className="mt-2 truncate whitespace-nowrap text-sm text-foreground tracking-[-0.01em]">{nextStep}</p>
+                </div>
+              </div>
             </div>
 
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-[repeat(5,minmax(0,1fr))_minmax(220px,1.35fr)]">
+            <div className="mt-4 rounded-lg border border-border/35 bg-background/15 px-2 py-2">
+              <div className="grid gap-x-2 gap-y-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
               <FactItem label={t("itsm:tickets.service")} value={ticket.serviceName} />
               <FactItem
                 label={t("itsm:tickets.priority")}
@@ -700,8 +716,9 @@ export function Component() {
               />
               <FactItem label={t("itsm:tickets.requester")} value={ticket.requesterName} />
               <FactItem label={t("itsm:tickets.source")} value={factSource(ticket, t)} />
-              <FactItem label={t("itsm:tickets.createdAt")} value={formatDate(ticket.createdAt)} />
-              <FactItem label={t("itsm:tickets.slaStatus")} value={<SLABadge slaStatus={ticket.slaStatus} slaResolutionDeadline={ticket.slaResolutionDeadline} />} />
+              <FactItem label={t("itsm:tickets.createdAt")} value={formatDateCompact(ticket.createdAt)} />
+              <FactItem label={t("itsm:tickets.slaStatus")} value={<SLABadge finalOnly slaStatus={ticket.slaStatus} slaResolutionDeadline={ticket.slaResolutionDeadline} />} />
+              </div>
             </div>
           </section>
 
