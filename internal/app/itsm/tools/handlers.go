@@ -691,6 +691,17 @@ func validateDraftData(detail *ServiceDetail, formData map[string]any) ([]DraftW
 			})
 			continue
 		}
+		if value != "" && isTimeSemanticField(f) && hasAmbiguousRelativeTime(value) {
+			blocking = true
+			warnedFields[f.Key] = struct{}{}
+			missingRequired = append(missingRequired, item)
+			warnings = append(warnings, DraftWarning{
+				Type:    "ambiguous_time",
+				Field:   f.Key,
+				Message: fmt.Sprintf("%s 包含相对日期和宽泛时段，但缺少具体时分，请继续追问具体时间。", f.Label),
+			})
+			continue
+		}
 		if value == "" || (f.Type != form.FieldSelect && f.Type != form.FieldRadio) {
 			continue
 		}
@@ -773,6 +784,125 @@ func validateDraftData(detail *ServiceDetail, formData map[string]any) ([]DraftW
 		})
 	}
 	return warnings, missingRequired, blocking
+}
+
+func isTimeSemanticField(f FormField) bool {
+	if f.Type == form.FieldDate || f.Type == form.FieldDatetime || f.Type == form.FieldDateRange {
+		return true
+	}
+	text := strings.ToLower(strings.Join([]string{f.Key, f.Label, f.Description}, " "))
+	return strings.Contains(text, "time") ||
+		strings.Contains(text, "date") ||
+		strings.Contains(text, "时间") ||
+		strings.Contains(text, "时段") ||
+		strings.Contains(text, "窗口") ||
+		strings.Contains(text, "生效")
+}
+
+func canonicalizeTimeSemanticFields(detail *ServiceDetail, summary string, formData map[string]any) map[string]any {
+	if len(formData) == 0 {
+		return formData
+	}
+	canonical := make(map[string]any, len(formData))
+	for key, val := range formData {
+		canonical[key] = val
+	}
+
+	sources := []string{summary}
+	for _, raw := range formData {
+		if raw != nil {
+			sources = append(sources, strings.TrimSpace(fmt.Sprintf("%v", raw)))
+		}
+	}
+	for _, f := range detail.FormFields {
+		if !isTimeSemanticField(f) || !isDraftEmptyValue(canonical[f.Key]) {
+			continue
+		}
+		for _, source := range sources {
+			if value := extractLabeledAbsoluteTimeValue(source, f); value != "" {
+				canonical[f.Key] = value
+				break
+			}
+		}
+	}
+	return canonical
+}
+
+func extractLabeledAbsoluteTimeValue(source string, f FormField) string {
+	if source == "" {
+		return ""
+	}
+	absoluteDateTime := `\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}`
+	rangeTail := `(?:\s*(?:~|到|至)\s*` + absoluteDateTime + `)?`
+	valuePattern := `(` + absoluteDateTime + rangeTail + `)`
+	for _, token := range []string{f.Label, f.Key, "访问时段", "时间窗口", "执行窗口", "生效时间"} {
+		if token == "" {
+			continue
+		}
+		re := regexp.MustCompile(regexp.QuoteMeta(token) + `\s*(?:[:：=为是])?\s*` + valuePattern)
+		if match := re.FindStringSubmatch(source); len(match) > 1 {
+			return strings.TrimSpace(match[1])
+		}
+	}
+	return ""
+}
+
+func validateDraftTimeSource(detail *ServiceDetail, summary string, formData map[string]any) ([]DraftWarning, []FieldCollectionItem, bool) {
+	sources := []string{summary}
+	for _, raw := range formData {
+		if raw != nil {
+			sources = append(sources, strings.TrimSpace(fmt.Sprintf("%v", raw)))
+		}
+	}
+
+	for _, f := range detail.FormFields {
+		if !isTimeSemanticField(f) {
+			continue
+		}
+		for _, source := range sources {
+			if !sourceMentionsTimeField(source, f) || !hasAmbiguousRelativeTime(source) {
+				continue
+			}
+			item := FieldCollectionItem{
+				Key:      f.Key,
+				Label:    f.Label,
+				Type:     f.Type,
+				Required: f.Required,
+				Source:   "time_semantics",
+			}
+			return []DraftWarning{{
+				Type:    "ambiguous_time",
+				Field:   f.Key,
+				Message: fmt.Sprintf("%s 只有相对日期和宽泛时段，缺少具体时分，请继续追问具体时间。", f.Label),
+			}}, []FieldCollectionItem{item}, true
+		}
+	}
+	return nil, nil, false
+}
+
+func sourceMentionsTimeField(source string, f FormField) bool {
+	if source == "" {
+		return false
+	}
+	for _, token := range []string{f.Key, f.Label, "访问时段", "时间窗口", "执行窗口", "生效时间", "时间"} {
+		if token != "" && strings.Contains(source, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAmbiguousRelativeTime(value string) bool {
+	text := strings.TrimSpace(value)
+	if text == "" {
+		return false
+	}
+	ambiguousPeriod := regexp.MustCompile(`(今天|明天|后天)?(上午|早上|中午|下午|晚上|晚间|夜间|凌晨)`)
+	if !ambiguousPeriod.MatchString(text) {
+		return false
+	}
+	explicitClock := regexp.MustCompile(`\d{1,2}\s*[:：]\s*\d{1,2}|\d{1,2}\s*(点|时)(\s*\d{1,2}\s*分)?`)
+	return !explicitClock.MatchString(text)
 }
 
 func isDraftEmptyValue(val any) bool {
@@ -1347,8 +1477,13 @@ func draftPrepareHandler(op ServiceDeskOperator, store StateStore) ToolHandler {
 
 		p.FormData = normalizeFormDataKeys(p.FormData, detail.FormFields)
 		p.FormData = mergePrefillFormData(p.FormData, state.PrefillFormData)
+		p.FormData = canonicalizeTimeSemanticFields(detail, p.Summary, p.FormData)
 
 		warnings, missingRequired, blocking := validateDraftData(detail, p.FormData)
+		timeWarnings, timeMissing, timeBlocking := validateDraftTimeSource(detail, p.Summary, p.FormData)
+		warnings = append(warnings, timeWarnings...)
+		missingRequired = append(missingRequired, timeMissing...)
+		blocking = blocking || timeBlocking
 		syncConversationProgress(state, missingRequired)
 
 		if blocking {

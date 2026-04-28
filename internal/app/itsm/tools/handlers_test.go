@@ -417,6 +417,112 @@ func TestDraftPrepare_UsesPrefillSuggestionsBeforeRequiredValidation(t *testing.
 	}
 }
 
+func TestDraftPrepare_BlocksAmbiguousRelativeTimeWindow(t *testing.T) {
+	store := newMemStateStore()
+	detail := vpnServiceDetail(5)
+	detail.FormFields = append(detail.FormFields, FormField{
+		Key:      "access_period",
+		Label:    "访问时段",
+		Type:     "text",
+		Required: false,
+	})
+	op := &stubOperator{detail: detail}
+	store.states[1] = &ServiceDeskState{
+		Stage:           "service_loaded",
+		LoadedServiceID: 5,
+		FieldsHash:      "vpn123",
+	}
+	ctx := context.WithValue(context.Background(), app.SessionIDKey, uint(1))
+
+	result, err := draftPrepareHandler(op, store)(ctx, 1, []byte(`{
+		"summary":"VPN 开通申请，访问时段明天晚上",
+		"form_data":{
+			"vpn_account":"wenhaowu@dev.com",
+			"device_usage":"线上支持用",
+			"request_kind":"online_support",
+			"access_period":"2026-04-29 18:00:00 ~ 2026-04-29 23:59:59"
+		}
+	}`))
+	if err != nil {
+		t.Fatalf("prepare draft: %v", err)
+	}
+
+	var resp struct {
+		OK                    bool `json:"ok"`
+		ReadyForConfirmation  bool `json:"ready_for_confirmation"`
+		MissingRequiredFields []struct {
+			Key    string `json:"key"`
+			Source string `json:"source"`
+		} `json:"missing_required_fields"`
+		Warnings []struct {
+			Type  string `json:"type"`
+			Field string `json:"field"`
+		} `json:"warnings"`
+	}
+	if err := json.Unmarshal(result, &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.OK || resp.ReadyForConfirmation {
+		t.Fatalf("expected ambiguous time window to block draft confirmation, got %s", string(result))
+	}
+	foundWarning := false
+	for _, warning := range resp.Warnings {
+		if warning.Type == "ambiguous_time" && warning.Field == "access_period" {
+			foundWarning = true
+			break
+		}
+	}
+	if !foundWarning {
+		t.Fatalf("expected ambiguous_time warning for access_period, got %+v", resp.Warnings)
+	}
+}
+
+func TestDraftPrepare_CanonicalizesLabeledAbsoluteTimeIntoTimeField(t *testing.T) {
+	store := newMemStateStore()
+	detail := vpnServiceDetail(5)
+	detail.FormFields = append(detail.FormFields, FormField{
+		Key:      "access_period",
+		Label:    "访问时段",
+		Type:     "text",
+		Required: false,
+	})
+	op := &stubOperator{detail: detail}
+	store.states[1] = &ServiceDeskState{
+		Stage:           "service_loaded",
+		LoadedServiceID: 5,
+		FieldsHash:      "vpn123",
+	}
+	ctx := context.WithValue(context.Background(), app.SessionIDKey, uint(1))
+
+	result, err := draftPrepareHandler(op, store)(ctx, 1, []byte(`{
+		"summary":"VPN 开通申请",
+		"form_data":{
+			"vpn_account":"wenhaowu@dev.com",
+			"device_usage":"线上支持用",
+			"request_kind":"online_support",
+			"reason":"线上支持用，访问时段2026-04-28 12:00:00~2026-04-29 10:00:00"
+		}
+	}`))
+	if err != nil {
+		t.Fatalf("prepare draft: %v", err)
+	}
+
+	var resp struct {
+		OK                   bool           `json:"ok"`
+		ReadyForConfirmation bool           `json:"ready_for_confirmation"`
+		FormData             map[string]any `json:"form_data"`
+	}
+	if err := json.Unmarshal(result, &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if !resp.OK || !resp.ReadyForConfirmation {
+		t.Fatalf("expected canonicalized time field to be ready, got %s", string(result))
+	}
+	if resp.FormData["access_period"] != "2026-04-28 12:00:00~2026-04-29 10:00:00" {
+		t.Fatalf("expected access_period to be canonicalized, got %+v", resp.FormData)
+	}
+}
+
 func TestDraftPrepare_BlocksUsernameForEmailSemanticAccountField(t *testing.T) {
 	store := newMemStateStore()
 	op := &stubOperator{detail: vpnServiceDetail(5)}
