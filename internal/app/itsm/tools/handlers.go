@@ -681,6 +681,19 @@ func validateDraftData(detail *ServiceDetail, formData map[string]any, requestTe
 			raw = normalizedRaw
 			formData[f.Key] = normalizedRaw
 		}
+		if warning := validateDateTimeRangeField(f, raw, requestText); warning != nil {
+			blocking = true
+			warnedFields[f.Key] = struct{}{}
+			missingRequired = append(missingRequired, FieldCollectionItem{
+				Key:      f.Key,
+				Label:    f.Label,
+				Type:     f.Type,
+				Required: f.Required,
+				Source:   "time_semantics",
+			})
+			warnings = append(warnings, *warning)
+			continue
+		}
 		value := ""
 		if s, ok := raw.(string); ok {
 			value = strings.TrimSpace(s)

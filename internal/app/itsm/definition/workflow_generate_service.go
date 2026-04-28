@@ -389,7 +389,7 @@ func (s *WorkflowGenerateService) buildActionsContext(actions []ServiceAction) s
 	sb.WriteString("\n\n## 可用动作（Action）列表\n")
 	sb.WriteString("以下动作可在工作流中作为 action 类型节点使用：\n\n")
 	for _, a := range actions {
-		sb.WriteString(fmt.Sprintf("- **%s**（code: `%s`）", a.Name, a.Code))
+		sb.WriteString(fmt.Sprintf("- **%s**（id: `%d`, code: `%s`）", a.Name, a.ID, a.Code))
 		if a.Description != "" {
 			sb.WriteString(fmt.Sprintf("：%s", a.Description))
 		}
@@ -432,6 +432,12 @@ func (s *WorkflowGenerateService) buildUserMessage(spec string, actionsCtx strin
 			sb.WriteString("。\n")
 			sb.WriteString("- 如果不同网关分支进入不同岗位处理节点，每个 process 节点必须分别配置对应岗位的 participants。\n")
 		}
+		if validationErrorsRequireActionRepair(prevErrors) {
+			sb.WriteString("\n## 动作节点修正要求\n\n")
+			sb.WriteString("- 只有协作规范明确要求在参考路径 workflow_json 里编排系统动作，且“可用动作列表”给出了动作 id 时，才允许生成 type=\"action\" 节点。\n")
+			sb.WriteString("- 如果没有可用动作 id，或动作应由智能体运行时通过工具调用完成，不要生成 action 节点；请改用 process/notify/end 表达参考路径。\n")
+			sb.WriteString("- 保留人工处理语义：人工处理、并行处理、部门岗位处理必须使用 type=\"process\"，不能写成 action。\n")
+		}
 	}
 
 	sb.WriteString("\n\n请仅输出合法的 JSON，不要包含任何额外文字或 markdown 代码块标记。")
@@ -450,6 +456,17 @@ func validationErrorsRequireParticipantRepair(validationErrors []engine.Validati
 			strings.Contains(msg, "participants") ||
 			strings.Contains(msg, "position_code") ||
 			strings.Contains(msg, "department_code") {
+			return true
+		}
+	}
+	return false
+}
+
+func validationErrorsRequireActionRepair(validationErrors []engine.ValidationError) bool {
+	for _, validationErr := range validationErrors {
+		msg := validationErr.Message
+		if strings.Contains(msg, "action_id") ||
+			strings.Contains(msg, "动作节点") {
 			return true
 		}
 	}
