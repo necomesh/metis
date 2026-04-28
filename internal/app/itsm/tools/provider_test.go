@@ -44,7 +44,11 @@ func TestSeedAgentsUpdatesExistingPresetAgentPrompt(t *testing.T) {
 	}
 	if got.SystemPrompt == "stale prompt" ||
 		!strings.Contains(got.SystemPrompt, "prefill_suggestions") ||
-		!strings.Contains(got.SystemPrompt, "itsm.current_request_context") {
+		!strings.Contains(got.SystemPrompt, "itsm.current_request_context") ||
+		!strings.Contains(got.SystemPrompt, "general.current_time") ||
+		!strings.Contains(got.SystemPrompt, "china_formatted_time") ||
+		!strings.Contains(got.SystemPrompt, "warnings 为空时再追问 missing_required_fields") ||
+		!strings.Contains(got.SystemPrompt, "待填字段存在时间相关字段") {
 		t.Fatalf("expected service desk prompt to be refreshed")
 	}
 	if got.Name != "IT 服务台智能体" || !got.IsActive {

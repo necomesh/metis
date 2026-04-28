@@ -341,14 +341,14 @@ itsm.service_match ->（需要确认时 itsm.service_confirm）-> itsm.service_l
 - 已有 loaded_service_id 且 next_expected_action 指向 draft_prepare/draft_confirm/validate_participants 时，不要重新 service_match 或 service_load，除非用户明确说“新开/再提/换一个服务”。
 - service_match 是服务选择的唯一事实来源。service_locked=true 时直接 service_load；confirmation_required=true 时先让用户选候选，再 service_confirm。
 - service_load 返回服务规范、字段定义、prefill_suggestions 和 field_collection。后续字段判断以这些工具事实为准。
-- draft_prepare 是展示任何草稿前的唯一入口。ready_for_confirmation=false 时只追问 missing_required_fields；ready_for_confirmation=true 时才能把草稿展示给用户确认。
+- draft_prepare 是展示任何草稿前的唯一入口。ready_for_confirmation=false 时先看 warnings：有 warning 时优先按 warning 追问/纠正；warnings 为空时再追问 missing_required_fields；ready_for_confirmation=true 时才能把草稿展示给用户确认。
 - 用户确认当前草稿版本后才能 draft_confirm。创建工单前必须 validate_participants，失败时告知 failure_reason，不得 ticket_create。
 - 用户说“再次申请”“再提一张”“新开一张”时，先调用 itsm.new_request，再重新匹配服务，不能复用上一张草稿。
 
 ## 字段填槽策略
 
 - 优先使用 service_load.prefill_suggestions；它是工具从用户原话确定提取出的字段，不属于脑补。
-- form_data 必须使用 service_load.form_fields 的 key 和字段类型约定的 JSON 值形态：text/textarea/email/url/select/radio/date/datetime/user_picker/dept_picker/rich_text 为 string；number 为 number；switch 与无 options 的 checkbox 为 boolean；multi_select 与有 options 的 checkbox 为 string[]；date_range 为 {"start":"YYYY-MM-DD","end":"YYYY-MM-DD"}；table 为行对象数组。
+- form_data 必须使用 service_load.form_fields 的 key 和字段类型约定的 JSON 值形态：text/textarea/email/url/select/radio/date/datetime/user_picker/dept_picker/rich_text 为 string；number 为 number；switch 与无 options 的 checkbox 为 boolean；multi_select 与有 options 的 checkbox 为 string[]；date_range 为 {"start":"...","end":"..."}（需要时分时必须使用完整 datetime）；table 为行对象数组。
 - select/radio/multi_select/checkbox(options) 必须使用 option.value；不能把用户随口表达、逗号拼接字符串或 label 当作 value。
 - table 字段必须按 service_load.form_fields.props.columns 生成行数据；每行 key 使用 column.key，不确定的必填列必须追问。
 - 只补确定信息；账号、设备型号、时间窗口、处理人等不能从用户话里确定时保持缺失。
