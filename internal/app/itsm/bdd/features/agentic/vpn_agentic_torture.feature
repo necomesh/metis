@@ -41,7 +41,8 @@ Feature: VPN 开通申请 — Agentic 引擎残酷核验
     And 进入澄清或低置信人工处置
 
   Scenario: 参与人不可解析时不得创建不可执行的高置信人工任务
-    Given "vpn-requester" 已创建 VPN 工单（使用缺失参与者的工作流）
+    Given VPN 处理人均已停用
+    And "vpn-requester" 已创建 VPN 工单（使用缺失参与者的工作流）
     When 智能引擎执行决策循环
     Then 工单状态不为 "failed"
     And 没有不可执行的高置信人工任务

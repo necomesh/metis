@@ -17,6 +17,7 @@ import (
 
 	"metis/internal/app/itsm/engine"
 	"metis/internal/llm"
+	"metis/internal/model"
 )
 
 type fakePathEngineConfigProvider struct {
@@ -231,7 +232,7 @@ func TestBuildUserMessage_Basic(t *testing.T) {
 func TestBuildUserMessage_WithActions(t *testing.T) {
 	svc := &WorkflowGenerateService{}
 	actionsCtx := svc.buildActionsContext([]ServiceAction{
-		{Name: "发送邮件", Code: "send-email", Description: "发送通知邮件"},
+		{BaseModel: model.BaseModel{ID: 7}, Name: "发送邮件", Code: "send-email", Description: "发送通知邮件"},
 	})
 	msg := svc.buildUserMessage("处理流程", actionsCtx, nil)
 
@@ -243,6 +244,9 @@ func TestBuildUserMessage_WithActions(t *testing.T) {
 	}
 	if !strings.Contains(msg, "send-email") {
 		t.Fatal("message should contain action code")
+	}
+	if !strings.Contains(msg, "id: `7`") {
+		t.Fatal("message should contain action id")
 	}
 }
 

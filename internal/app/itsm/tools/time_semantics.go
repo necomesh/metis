@@ -265,15 +265,47 @@ func timesNearlyEqual(a, b time.Time) bool {
 
 func resolveRelativeDateTimeRange(text string, base time.Time) relativeDateTimeRangeResult {
 	normalized := normalizeTimeText(text)
-	if normalized == "" || !relativeDateKeywordRegexp.MatchString(normalized) {
+	if normalized == "" {
 		return relativeDateTimeRangeResult{}
 	}
 	parts := []string{}
+	hasRange := false
 	if matched := explicitTimeRangePattern.FindStringSubmatch(normalized); len(matched) >= 3 {
 		parts = []string{strings.TrimSpace(matched[1]), strings.TrimSpace(matched[2])}
+		hasRange = true
 	} else {
-		parts = rangeSeparatorPattern.Split(normalized, 2)
+		candidateParts := rangeSeparatorPattern.Split(normalized, 2)
+		if len(candidateParts) == 2 && clockPattern.MatchString(candidateParts[0]) && clockPattern.MatchString(candidateParts[1]) {
+			parts = candidateParts
+			hasRange = true
+		}
 	}
+
+	if !hasRange {
+		if !relativeDateKeywordRegexp.MatchString(normalized) {
+			return relativeDateTimeRangeResult{}
+		}
+		clock, ok := parseClockWithContext(normalized)
+		if !ok {
+			return relativeDateTimeRangeResult{
+				NeedsClarification: true,
+				Reason:             "检测到相对时间描述，但缺少明确的开始和结束时刻，请补充完整时间。",
+			}
+		}
+		offset, known := relativeDayOffset(normalized, normalized)
+		if !known {
+			offset = 0
+		}
+		startDate := midnight(base).AddDate(0, 0, offset)
+		startAt := time.Date(startDate.Year(), startDate.Month(), startDate.Day(), clock.hour, clock.minute, 0, 0, base.Location())
+		if !known && !startAt.After(base) {
+			startAt = startAt.AddDate(0, 0, 1)
+		}
+		return relativeDateTimeRangeResult{
+			Resolved: &resolvedDateTimeRange{Start: startAt, End: startAt.Add(time.Hour)},
+		}
+	}
+
 	if len(parts) != 2 {
 		return relativeDateTimeRangeResult{
 			NeedsClarification: true,
@@ -301,10 +333,8 @@ func resolveRelativeDateTimeRange(text string, base time.Time) relativeDateTimeR
 	startOffset, startKnown := relativeDayOffset(parts[0], normalized)
 	endOffset, endKnown := relativeDayOffset(parts[1], normalized)
 	if !startKnown && !endKnown {
-		return relativeDateTimeRangeResult{
-			NeedsClarification: true,
-			Reason:             "检测到相对时间描述，但无法定位到具体日期，请说明是今天、明天还是后天。",
-		}
+		startOffset = 0
+		endOffset = 0
 	}
 	if !startKnown {
 		startOffset = endOffset
@@ -318,17 +348,12 @@ func resolveRelativeDateTimeRange(text string, base time.Time) relativeDateTimeR
 	startAt := time.Date(startDate.Year(), startDate.Month(), startDate.Day(), startClock.hour, startClock.minute, 0, 0, base.Location())
 	endAt := time.Date(endDate.Year(), endDate.Month(), endDate.Day(), endClock.hour, endClock.minute, 0, 0, base.Location())
 
-	if !endKnown && !endAt.After(startAt) {
-		return relativeDateTimeRangeResult{
-			NeedsClarification: true,
-			Reason:             "结束时间看起来早于开始时间，请确认是否跨天到次日。",
-		}
+	if !startKnown && !endKnown && !startAt.After(base) {
+		startAt = startAt.AddDate(0, 0, 1)
+		endAt = endAt.AddDate(0, 0, 1)
 	}
 	if !endAt.After(startAt) {
-		return relativeDateTimeRangeResult{
-			NeedsClarification: true,
-			Reason:             "结束时间必须晚于开始时间，请重新确认起止时间。",
-		}
+		endAt = endAt.AddDate(0, 0, 1)
 	}
 
 	return relativeDateTimeRangeResult{

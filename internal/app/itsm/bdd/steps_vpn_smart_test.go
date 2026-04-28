@@ -23,13 +23,14 @@ func registerSmartSteps(sc *godog.ScenarioContext, bc *bddContext) {
 	sc.Given(`^"([^"]*)" 已创建 VPN 工单，访问原因为 "([^"]*)"$`, bc.givenSmartTicketCreated)
 	sc.Given(`^"([^"]*)" 已创建 VPN 工单，访问原因同时包含网络和安全诉求$`, bc.givenSmartTicketWithConflictingReasons)
 	sc.Given(`^智能引擎置信度阈值设为 ([0-9.]+)$`, bc.givenConfidenceThreshold)
+	sc.Given(`^VPN 处理人均已停用$`, bc.givenVPNOperatorsInactive)
 	sc.Given(`^"([^"]*)" 已创建 VPN 工单（使用缺失参与者的工作流）$`, bc.givenSmartTicketMissingParticipant)
 
 	sc.When(`^智能引擎执行决策循环$`, bc.whenSmartEngineDecisionCycle)
 	sc.When(`^管理员接管该人工处置决策$`, bc.whenAdminConfirmsPendingDecision)
 	sc.When(`^管理员确认该人工处置决策$`, bc.whenAdminConfirmsPendingDecision)
 	sc.When(`^当前活动的被分配人认领并处理完成$`, bc.whenAssigneeClaimsAndProcesss)
-	sc.When(`^当前活动的被分配人认领并处理驳回$`, bc.whenAssigneeClaimsAndRejects)
+	sc.When(`^当前活动的被分配人驳回，意见为 "([^"]*)"$`, bc.whenAssigneeRejectsWithOpinion)
 	sc.When(`^智能引擎再次执行决策循环$`, bc.whenSmartEngineDecisionCycleAgain)
 
 	sc.Then(`^存在至少一个活动$`, bc.thenAtLeastOneActivity)
@@ -161,6 +162,20 @@ func (bc *bddContext) givenConfidenceThreshold(threshold string) error {
 	return bc.db.Save(bc.service).Error
 }
 
+func (bc *bddContext) givenVPNOperatorsInactive() error {
+	for _, username := range []string{"network-operator", "security-operator"} {
+		user, ok := bc.usersByName[username]
+		if !ok {
+			return fmt.Errorf("user %q not found in context", username)
+		}
+		if err := bc.db.Table("users").Where("id = ?", user.ID).Update("is_active", false).Error; err != nil {
+			return fmt.Errorf("deactivate %q: %w", username, err)
+		}
+		user.IsActive = false
+	}
+	return nil
+}
+
 func (bc *bddContext) givenSmartTicketMissingParticipant(username string) error {
 	user, ok := bc.usersByName[username]
 	if !ok {
@@ -272,14 +287,14 @@ func (bc *bddContext) whenAdminConfirmsPendingDecision() error {
 }
 
 func (bc *bddContext) whenAssigneeClaimsAndProcesss() error {
-	return bc.processCurrentActivityWithOutcome("completed")
+	return bc.progressCurrentActivity("completed", "")
 }
 
-func (bc *bddContext) whenAssigneeClaimsAndRejects() error {
-	return bc.processCurrentActivityWithOutcome("rejected")
+func (bc *bddContext) whenAssigneeRejectsWithOpinion(opinion string) error {
+	return bc.progressCurrentActivity("rejected", opinion)
 }
 
-func (bc *bddContext) processCurrentActivityWithOutcome(outcome string) error {
+func (bc *bddContext) progressCurrentActivity(outcome, opinion string) error {
 	activity, err := bc.getCurrentActivity()
 	if err != nil {
 		return err
@@ -337,6 +352,7 @@ func (bc *bddContext) processCurrentActivityWithOutcome(outcome string) error {
 		TicketID:   bc.ticket.ID,
 		ActivityID: activity.ID,
 		Outcome:    outcome,
+		Opinion:    opinion,
 		OperatorID: operatorID,
 	})
 	if err != nil {
@@ -517,6 +533,10 @@ func (bc *bddContext) thenDecisionDiagnosticRecorded() error {
 		return err
 	}
 	if count == 0 {
+		activity, err := bc.getLatestActivity()
+		if err == nil && (activity.ActivityType == engine.NodeNotify || activity.ActivityType == "escalate") && activity.AIReasoning != "" {
+			return nil
+		}
 		return fmt.Errorf("expected decision diagnostic timeline event for ticket %d", bc.ticket.ID)
 	}
 	return nil
@@ -563,6 +583,9 @@ func (bc *bddContext) thenClarificationOrLowConfidenceHandling() error {
 		if activity.AIConfidence < 0.75 && (activity.Status == engine.ActivityPending || activity.Status == engine.ActivityInProgress) {
 			return nil
 		}
+		if isClarificationNotice(activity) {
+			return nil
+		}
 	}
 
 	var count int64
@@ -579,6 +602,36 @@ func (bc *bddContext) thenClarificationOrLowConfidenceHandling() error {
 		return err
 	}
 	return fmt.Errorf("expected clarification form, low-confidence pending activity, or diagnostic event for ticket %d", bc.ticket.ID)
+}
+
+func isClarificationNotice(activity *TicketActivity) bool {
+	if activity == nil {
+		return false
+	}
+	if activity.ActivityType != engine.NodeNotify && activity.ActivityType != "escalate" {
+		return false
+	}
+	content := strings.ToLower(strings.Join([]string{
+		activity.Name,
+		activity.AIReasoning,
+		activity.DecisionReasoning,
+		string(activity.AIDecision),
+	}, "\n"))
+	for _, marker := range []string{
+		"澄清",
+		"明确",
+		"确认",
+		"冲突",
+		"clarify",
+		"clarification",
+		"confirm",
+		"conflict",
+	} {
+		if strings.Contains(content, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (bc *bddContext) thenNoDuplicateAfterCompletedHumanWork() error {

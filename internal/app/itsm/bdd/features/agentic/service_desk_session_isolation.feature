@@ -7,7 +7,8 @@ Feature: 服务台会话隔离
     And 已准备好以下参与人、岗位与职责
       | 身份       | 用户名        | 部门 | 岗位       |
       | 申请人     | vpn-requester | it   | staff      |
-      | 网络管理   | net-admin     | it   | net_admin  |
+      | 网络管理   | network-operator | it   | network_admin  |
+      | 安全管理   | security-operator | it   | security_admin |
     And 已定义 VPN 开通申请协作规范
     And 已基于协作规范发布 VPN 服务（智能引擎）
 
