@@ -321,7 +321,11 @@ type presetAgent struct {
 	Temperature  float64
 	MaxTokens    int
 	MaxTurns     int
-	ToolNames    []string // tool names to bind (can include non-ITSM tools)
+	ToolNames    []string
+	SkillNames   []string
+	MCPNames     []string
+	KBNames      []string
+	KGNames      []string
 }
 
 const serviceDeskAgentSystemPrompt = `你是 IT 服务台智能体，负责把用户的自然语言诉求稳定推进为可确认、可创建的 ITSM 工单；也可以回答服务目录、工单状态和流程规则类问题。
@@ -449,6 +453,7 @@ func SeedAgents(db *gorm.DB) error {
 		}
 	}
 
+	defaultModelID := resolveDefaultLLMModelID(db)
 	agents := []presetAgent{
 		{
 			Name:         "IT 服务台智能体",
@@ -522,24 +527,15 @@ func SeedAgents(db *gorm.DB) error {
 	}
 
 	for _, agent := range agents {
-		// Match by code field for preset agents (upsert mode)
+		// Existing preset agents are treated as user-owned runtime config.
+		// Seed only initializes new records; it does not overwrite later edits.
 		var existing struct {
 			ID   uint
 			Code string
 		}
 		if agent.Code != "" {
 			if err := db.Table("ai_agents").Where("code = ?", agent.Code).Select("id", "code").First(&existing).Error; err == nil {
-				db.Table("ai_agents").Where("id = ?", existing.ID).Updates(map[string]any{
-					"name":          agent.Name,
-					"description":   agent.Description,
-					"system_prompt": agent.SystemPrompt,
-					"temperature":   agent.Temperature,
-					"max_tokens":    agent.MaxTokens,
-					"max_turns":     agent.MaxTurns,
-					"is_active":     true,
-				})
-				slog.Info("ITSM agent seed: updated preset agent", "name", agent.Name, "code", agent.Code)
-				syncAgentToolBindings(db, existing.ID, agent.ToolNames)
+				slog.Info("ITSM agent seed: preset agent already exists, keeping user configuration", "name", agent.Name, "code", agent.Code)
 				continue
 			}
 		}
@@ -553,18 +549,9 @@ func SeedAgents(db *gorm.DB) error {
 			}
 			if len(updates) > 0 {
 				db.Table("ai_agents").Where("id = ?", existing.ID).Updates(updates)
+				slog.Info("ITSM agent seed: backfilled preset agent code", "name", agent.Name, "code", agent.Code)
 			}
-			db.Table("ai_agents").Where("id = ?", existing.ID).Updates(map[string]any{
-				"name":          agent.Name,
-				"description":   agent.Description,
-				"system_prompt": agent.SystemPrompt,
-				"temperature":   agent.Temperature,
-				"max_tokens":    agent.MaxTokens,
-				"max_turns":     agent.MaxTurns,
-				"is_active":     true,
-			})
-			slog.Info("ITSM agent seed: updated preset agent", "name", agent.Name, "code", agent.Code)
-			syncAgentToolBindings(db, existing.ID, agent.ToolNames)
+			slog.Info("ITSM agent seed: preset agent matched by name, keeping user configuration", "name", agent.Name, "code", agent.Code)
 			continue
 		}
 
@@ -583,6 +570,9 @@ func SeedAgents(db *gorm.DB) error {
 			"is_active":     true,
 			"created_by":    1, // admin user
 		}
+		if defaultModelID != nil {
+			record["model_id"] = *defaultModelID
+		}
 		result := db.Table("ai_agents").Create(record)
 		if result.Error != nil {
 			slog.Error("ITSM agent seed: failed to create agent", "name", agent.Name, "error", result.Error)
@@ -591,61 +581,80 @@ func SeedAgents(db *gorm.DB) error {
 
 		slog.Info("ITSM agent seed: created agent", "name", agent.Name)
 
-		// Bind tools for newly created agent
-		if len(agent.ToolNames) > 0 {
-			var agentRow struct{ ID uint }
-			if err := db.Table("ai_agents").Where("name = ?", agent.Name).Select("id").First(&agentRow).Error; err != nil {
-				slog.Error("ITSM agent seed: failed to find created agent for tool binding", "name", agent.Name, "error", err)
-				continue
-			}
-			syncAgentToolBindings(db, agentRow.ID, agent.ToolNames)
+		var agentRow struct{ ID uint }
+		if err := db.Table("ai_agents").Where("name = ?", agent.Name).Select("id").First(&agentRow).Error; err != nil {
+			slog.Error("ITSM agent seed: failed to find created agent for default bindings", "name", agent.Name, "error", err)
+			continue
+		}
+		if err := seedPresetAgentBindings(db, agentRow.ID, agent); err != nil {
+			slog.Warn("ITSM agent seed: failed to apply preset default bindings", "name", agent.Name, "error", err)
 		}
 	}
 
 	return nil
 }
 
-// syncAgentToolBindings ensures the agent's tool bindings match the desired ToolNames list.
-// It adds missing bindings and removes stale ones.
-func syncAgentToolBindings(db *gorm.DB, agentID uint, toolNames []string) {
-	// Resolve desired tool IDs
-	desiredToolIDs := make(map[uint]string) // toolID -> toolName
-	for _, toolName := range toolNames {
-		var toolRow struct{ ID uint }
-		if err := db.Table("ai_tools").Where("name = ?", toolName).Select("id").First(&toolRow).Error; err != nil {
-			slog.Warn("ITSM agent seed: tool not found, skipping binding", "agent_id", agentID, "tool", toolName)
+func resolveDefaultLLMModelID(db *gorm.DB) *uint {
+	var modelRow struct{ ID uint }
+	if err := db.Table("ai_models").
+		Where("type = ? AND status = ? AND is_default = ?", "llm", "active", true).
+		Order("id ASC").
+		Select("id").
+		First(&modelRow).Error; err == nil && modelRow.ID > 0 {
+		return &modelRow.ID
+	}
+	return nil
+}
+
+func seedPresetAgentBindings(db *gorm.DB, agentID uint, agent presetAgent) error {
+	for _, binding := range []struct {
+		table     string
+		idColumn  string
+		lookupTbl string
+		lookupCol string
+		names     []string
+		kind      string
+	}{
+		{table: "ai_agent_tools", idColumn: "tool_id", lookupTbl: "ai_tools", lookupCol: "name", names: agent.ToolNames, kind: "tool"},
+		{table: "ai_agent_skills", idColumn: "skill_id", lookupTbl: "ai_skills", lookupCol: "name", names: agent.SkillNames, kind: "skill"},
+		{table: "ai_agent_mcp_servers", idColumn: "mcp_server_id", lookupTbl: "ai_mcp_servers", lookupCol: "name", names: agent.MCPNames, kind: "mcp"},
+		{table: "ai_agent_knowledge_bases", idColumn: "knowledge_base_id", lookupTbl: "ai_knowledge_assets", lookupCol: "name", names: agent.KBNames, kind: "knowledge_base"},
+		{table: "ai_agent_knowledge_graphs", idColumn: "knowledge_graph_id", lookupTbl: "ai_knowledge_assets", lookupCol: "name", names: agent.KGNames, kind: "knowledge_graph"},
+	} {
+		if err := seedNamedBindings(db, agentID, binding.table, binding.idColumn, binding.lookupTbl, binding.lookupCol, binding.names, binding.kind); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func seedNamedBindings(db *gorm.DB, agentID uint, bindingTable, bindingColumn, lookupTable, lookupColumn string, names []string, kind string) error {
+	for _, name := range names {
+		var target struct{ ID uint }
+		query := db.Table(lookupTable).Where(lookupColumn+" = ?", name).Select("id")
+		switch kind {
+		case "knowledge_base":
+			query = query.Where("category = ?", "kb")
+		case "knowledge_graph":
+			query = query.Where("category = ?", "kg")
+		}
+		if err := query.First(&target).Error; err != nil {
+			slog.Warn("ITSM agent seed: preset binding target not found, skipping", "agent_id", agentID, "kind", kind, "name", name)
 			continue
 		}
-		desiredToolIDs[toolRow.ID] = toolName
-	}
 
-	// Query current bindings
-	var currentBindings []struct {
-		ToolID uint `gorm:"column:tool_id"`
-	}
-	db.Table("ai_agent_tools").Where("agent_id = ?", agentID).Select("tool_id").Find(&currentBindings)
-
-	currentSet := make(map[uint]bool)
-	for _, b := range currentBindings {
-		currentSet[b.ToolID] = true
-	}
-
-	// Add missing bindings
-	for toolID := range desiredToolIDs {
-		if !currentSet[toolID] {
-			db.Table("ai_agent_tools").Create(map[string]any{
-				"agent_id": agentID,
-				"tool_id":  toolID,
-			})
-			slog.Info("ITSM agent seed: added tool binding", "agent_id", agentID, "tool", desiredToolIDs[toolID])
+		attrs := map[string]any{"agent_id": agentID, bindingColumn: target.ID}
+		var count int64
+		if err := db.Table(bindingTable).Where(attrs).Count(&count).Error; err != nil {
+			return err
 		}
-	}
-
-	// Remove stale bindings
-	for _, b := range currentBindings {
-		if _, wanted := desiredToolIDs[b.ToolID]; !wanted {
-			db.Table("ai_agent_tools").Where("agent_id = ? AND tool_id = ?", agentID, b.ToolID).Delete(nil)
-			slog.Info("ITSM agent seed: removed stale tool binding", "agent_id", agentID, "tool_id", b.ToolID)
+		if count > 0 {
+			continue
 		}
+		if err := db.Table(bindingTable).Create(attrs).Error; err != nil {
+			return err
+		}
+		slog.Info("ITSM agent seed: added preset default binding", "agent_id", agentID, "kind", kind, "name", name)
 	}
+	return nil
 }
