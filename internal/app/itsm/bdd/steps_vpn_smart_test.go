@@ -26,6 +26,7 @@ func registerSmartSteps(sc *godog.ScenarioContext, bc *bddContext) {
 	sc.When(`^智能引擎执行决策循环$`, bc.whenSmartEngineDecisionCycle)
 	sc.When(`^管理员接管该人工处置决策$`, bc.whenAdminConfirmsPendingDecision)
 	sc.When(`^当前活动的被分配人认领并处理完成$`, bc.whenAssigneeClaimsAndProcesss)
+	sc.When(`^当前活动的被分配人认领并处理驳回$`, bc.whenAssigneeClaimsAndRejects)
 	sc.When(`^智能引擎再次执行决策循环$`, bc.whenSmartEngineDecisionCycleAgain)
 
 	sc.Then(`^存在至少一个活动$`, bc.thenAtLeastOneActivity)
@@ -180,6 +181,14 @@ func (bc *bddContext) whenAdminConfirmsPendingDecision() error {
 }
 
 func (bc *bddContext) whenAssigneeClaimsAndProcesss() error {
+	return bc.processCurrentActivityWithOutcome("completed")
+}
+
+func (bc *bddContext) whenAssigneeClaimsAndRejects() error {
+	return bc.processCurrentActivityWithOutcome("rejected")
+}
+
+func (bc *bddContext) processCurrentActivityWithOutcome(outcome string) error {
 	activity, err := bc.getCurrentActivity()
 	if err != nil {
 		return err
@@ -236,7 +245,7 @@ func (bc *bddContext) whenAssigneeClaimsAndProcesss() error {
 	err = bc.smartEngine.Progress(ctx, bc.db, engine.ProgressParams{
 		TicketID:   bc.ticket.ID,
 		ActivityID: activity.ID,
-		Outcome:    "completed",
+		Outcome:    outcome,
 		OperatorID: operatorID,
 	})
 	if err != nil {
