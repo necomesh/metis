@@ -927,7 +927,7 @@ func (e *SmartEngine) validateDecisionPlan(tx *gorm.DB, ticketID uint, plan *Dec
 			}
 		}
 		if isHumanActivityType(a.Type) {
-			if !e.hasResolvableHumanParticipant(a) {
+			if !e.hasResolvableHumanParticipant(tx, a) {
 				return fmt.Errorf("activities[%d] 缺少可解析的处理人", i)
 			}
 		}
@@ -970,6 +970,9 @@ func (e *SmartEngine) validateDecisionPlan(tx *gorm.DB, ticketID uint, plan *Dec
 		return fmt.Errorf("confidence %.2f 不在 [0, 1] 范围内", plan.Confidence)
 	}
 
+	if err := e.validateRoutingConflictDecision(tx, ticketID, plan, svc); err != nil {
+		return err
+	}
 	if err := e.validateRejectedRecoveryDecision(tx, ticketID, completedActivityID, plan, svc); err != nil {
 		return err
 	}
@@ -980,17 +983,151 @@ func (e *SmartEngine) validateDecisionPlan(tx *gorm.DB, ticketID uint, plan *Dec
 	return nil
 }
 
-func (e *SmartEngine) hasResolvableHumanParticipant(a DecisionActivity) bool {
+func (e *SmartEngine) hasResolvableHumanParticipant(tx *gorm.DB, a DecisionActivity) bool {
 	if a.ParticipantID != nil && *a.ParticipantID > 0 {
 		return true
 	}
 	if a.ParticipantType == "position_department" && a.PositionCode != "" && a.DepartmentCode != "" {
-		return true
+		var positionID, departmentID uint
+		tx.Table("positions").Where("code = ?", a.PositionCode).Select("id").Scan(&positionID)
+		tx.Table("departments").Where("code = ?", a.DepartmentCode).Select("id").Scan(&departmentID)
+		userIDs, err := resolveUsersByPositionDepartmentInTx(tx, positionID, departmentID)
+		if err == nil && len(userIDs) > 0 {
+			return true
+		}
 	}
 	if a.ParticipantType == "requester" {
 		return true
 	}
 	return e.configProvider != nil && e.configProvider.FallbackAssigneeID() > 0
+}
+
+func (e *SmartEngine) validateRoutingConflictDecision(tx *gorm.DB, ticketID uint, plan *DecisionPlan, svc *serviceModel) error {
+	if plan == nil || svc == nil || svc.WorkflowJSON == "" || plan.Confidence < DefaultConfidenceThreshold {
+		return nil
+	}
+	if !planCreatesSingleRouteHumanWork(plan) {
+		return nil
+	}
+	conflicts, err := detectTicketRoutingConflicts(tx, ticketID, svc.WorkflowJSON)
+	if err != nil || len(conflicts) == 0 {
+		return nil
+	}
+	return fmt.Errorf("表单路由字段存在跨分支冲突：%s；不得高置信选择单一路由，请先澄清或降级人工处置", strings.Join(conflicts, "；"))
+}
+
+func planCreatesSingleRouteHumanWork(plan *DecisionPlan) bool {
+	for _, activity := range plan.Activities {
+		if !isHumanActivityType(activity.Type) {
+			continue
+		}
+		if activity.ParticipantType == "requester" {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func detectTicketRoutingConflicts(tx *gorm.DB, ticketID uint, workflowJSON string) ([]string, error) {
+	var ticket struct {
+		FormData string
+	}
+	if err := tx.Table("itsm_tickets").Where("id = ?", ticketID).Select("form_data").First(&ticket).Error; err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(ticket.FormData) == "" {
+		return nil, nil
+	}
+
+	var formData map[string]any
+	if err := json.Unmarshal([]byte(ticket.FormData), &formData); err != nil {
+		return nil, nil
+	}
+
+	def, err := ParseWorkflowDef(json.RawMessage(workflowJSON))
+	if err != nil {
+		return nil, nil
+	}
+	fieldRoutes := map[string]map[string]string{}
+	for _, edge := range def.Edges {
+		if edge.Data.Condition == nil {
+			continue
+		}
+		collectConditionRoutes(*edge.Data.Condition, edge.Target, fieldRoutes)
+	}
+
+	var conflicts []string
+	for field, valueRoutes := range fieldRoutes {
+		formKey := strings.TrimPrefix(field, "form.")
+		raw, ok := formData[formKey]
+		if !ok {
+			continue
+		}
+		targets := map[string]struct{}{}
+		for _, value := range conditionValues(raw) {
+			if target := valueRoutes[value]; target != "" {
+				targets[target] = struct{}{}
+			}
+		}
+		if len(targets) > 1 {
+			conflicts = append(conflicts, fmt.Sprintf("%s 命中 %d 条分支", field, len(targets)))
+		}
+	}
+	return conflicts, nil
+}
+
+func collectConditionRoutes(cond GatewayCondition, target string, routes map[string]map[string]string) {
+	if cond.Field != "" && strings.HasPrefix(cond.Field, "form.") {
+		values := conditionValues(cond.Value)
+		if len(values) > 0 {
+			if routes[cond.Field] == nil {
+				routes[cond.Field] = map[string]string{}
+			}
+			for _, value := range values {
+				routes[cond.Field][value] = target
+			}
+		}
+	}
+	for _, child := range cond.Conditions {
+		collectConditionRoutes(child, target, routes)
+	}
+}
+
+func conditionValues(raw any) []string {
+	switch v := raw.(type) {
+	case []any:
+		values := make([]string, 0, len(v))
+		for _, item := range v {
+			if s := strings.TrimSpace(fmt.Sprint(item)); s != "" {
+				values = append(values, s)
+			}
+		}
+		return values
+	case []string:
+		values := make([]string, 0, len(v))
+		for _, item := range v {
+			if s := strings.TrimSpace(item); s != "" {
+				values = append(values, s)
+			}
+		}
+		return values
+	case string:
+		if strings.Contains(v, ",") {
+			parts := strings.Split(v, ",")
+			values := make([]string, 0, len(parts))
+			for _, part := range parts {
+				if s := strings.TrimSpace(part); s != "" {
+					values = append(values, s)
+				}
+			}
+			return values
+		}
+		if s := strings.TrimSpace(v); s != "" {
+			return []string{s}
+		}
+	}
+	return nil
 }
 
 func (e *SmartEngine) validateNoDuplicateCompletedHumanActivity(tx *gorm.DB, ticketID uint, plan *DecisionPlan) error {
