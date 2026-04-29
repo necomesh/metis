@@ -533,6 +533,51 @@ func TestValidateDecisionPlanRejectsRequesterSupplementWithoutSpec(t *testing.T)
 	}
 }
 
+func TestValidateDecisionPlanRejectsRequesterProcessAfterRejectedWithoutSpec(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&ticketModel{}, &activityModel{}, &assignmentModel{}); err != nil {
+		t.Fatalf("migrate db: %v", err)
+	}
+
+	ticket := ticketModel{Status: "in_progress", EngineType: "smart"}
+	if err := db.Create(&ticket).Error; err != nil {
+		t.Fatalf("create ticket: %v", err)
+	}
+	activity := activityModel{
+		TicketID:          ticket.ID,
+		Name:              "网络管理员处理",
+		ActivityType:      NodeProcess,
+		Status:            ActivityCompleted,
+		TransitionOutcome: "rejected",
+		DecisionReasoning: "不符合申请要求",
+	}
+	if err := db.Create(&activity).Error; err != nil {
+		t.Fatalf("create activity: %v", err)
+	}
+
+	eng := &SmartEngine{}
+	plan := &DecisionPlan{
+		NextStepType:  NodeProcess,
+		ExecutionMode: "single",
+		Activities: []DecisionActivity{{
+			Type:            NodeProcess,
+			ParticipantType: "requester",
+			Instructions:    "请申请人补充 VPN 申请理由",
+		}},
+		Confidence: 0.9,
+	}
+	err = eng.validateDecisionPlan(db, ticket.ID, plan, &serviceModel{
+		ID:                1,
+		CollaborationSpec: "处理完成后直接结束流程。",
+	}, &activity.ID)
+	if err == nil || !strings.Contains(err.Error(), "申请人补充/返工活动") {
+		t.Fatalf("expected requester process recovery to be rejected without explicit spec, got %v", err)
+	}
+}
+
 func TestValidateDecisionPlanAllowsRequesterSupplementWhenSpecExplicit(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
