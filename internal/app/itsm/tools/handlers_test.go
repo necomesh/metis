@@ -143,6 +143,31 @@ func smartVPNServiceDetail(serviceID uint) *ServiceDetail {
 	return detail
 }
 
+func smartServerAccessServiceDetail(serviceID uint) *ServiceDetail {
+	fields := []FormField{
+		{Key: "target_servers", Label: "访问服务器", Type: "textarea", Required: true},
+		{Key: "access_window", Label: "访问时段", Type: "date_range", Required: true},
+		{Key: "operation_purpose", Label: "操作目的", Type: "textarea", Required: true},
+		{Key: "access_reason", Label: "访问原因", Type: "textarea", Required: true},
+	}
+	return &ServiceDetail{
+		ServiceID:  serviceID,
+		Name:       "生产服务器临时访问申请",
+		EngineType: "smart",
+		FormFields: fields,
+		FormSchema: map[string]any{
+			"version": 1,
+			"fields": []map[string]any{
+				{"key": "target_servers", "type": "textarea", "label": "访问服务器", "required": true},
+				{"key": "access_window", "type": "date_range", "label": "访问时段", "required": true},
+				{"key": "operation_purpose", "type": "textarea", "label": "操作目的", "required": true},
+				{"key": "access_reason", "type": "textarea", "label": "访问原因", "required": true},
+			},
+		},
+		FieldsHash: "server-access123",
+	}
+}
+
 func TestServiceLoad_ReturnsPrefillSuggestionsFromRequestText(t *testing.T) {
 	store := newMemStateStore()
 	op := &stubOperator{
@@ -500,13 +525,12 @@ func TestDraftPrepare_CanonicalizesLabeledAbsoluteTimeIntoTimeField(t *testing.T
 			"vpn_account":"wenhaowu@dev.com",
 			"device_usage":"线上支持用",
 			"request_kind":"online_support",
-			"reason":"线上支持用，访问时段2026-04-28 12:00:00~2026-04-29 10:00:00"
+			"reason":"线上支持用，访问时段2026-05-01 12:00:00~2026-05-02 10:00:00"
 		}
 	}`))
 	if err != nil {
 		t.Fatalf("prepare draft: %v", err)
 	}
-
 	var resp struct {
 		OK                   bool           `json:"ok"`
 		ReadyForConfirmation bool           `json:"ready_for_confirmation"`
@@ -518,7 +542,7 @@ func TestDraftPrepare_CanonicalizesLabeledAbsoluteTimeIntoTimeField(t *testing.T
 	if !resp.OK || !resp.ReadyForConfirmation {
 		t.Fatalf("expected canonicalized time field to be ready, got %s", string(result))
 	}
-	if resp.FormData["access_period"] != "2026-04-28 12:00:00~2026-04-29 10:00:00" {
+	if resp.FormData["access_period"] != "2026-05-01 12:00:00~2026-05-02 10:00:00" {
 		t.Fatalf("expected access_period to be canonicalized, got %+v", resp.FormData)
 	}
 }

@@ -146,8 +146,9 @@ const serviceDeskTestPrompt = `你是 IT 服务台智能体，帮助用户完成
 - 如果 itsm.draft_prepare 返回的 warnings 中包含 multivalue_on_single_field，根据 resolved_values 判断这些值是否属于同一路由分支：若跨路由，向用户说明并请用户选择；若同路由，修正为单值后重新调用
 - 访问时段、执行窗口、生效时间等时间字段必须写成中国本地时间的绝对时间：YYYY-MM-DD HH:mm:ss，范围用 ~ 连接
 - 用户给出“今天”“明天”“下午 5 点”“明天下午 5 点”等相对日期或缺少年月日但时刻明确的表达时，必须先调用 general.current_time，并以返回的 china_formatted_time 为基准解析，不得使用过去日期
+- 用户只给“下午 5 点”这类没有日期但时刻明确的表达时，按距离当前时间最近的未来时刻解析；如果今天对应时刻已过去，就解析为明天同一时刻
 - 用户只给“今天上午”“明天晚上”“后天下午”等宽泛时段、无法唯一确定具体时分时，不得自行补全为具体时分，必须追问具体时间后再 draft_prepare
-- 用户给出 22:00-01:00、12:00-10:00 这类自然解析后结束不晚于开始的时间区间时，默认按跨天处理，把结束时间解释为次日对应时刻并写入草稿，由用户人工检查确认
+- 用户给出 22:00-01:00、12:00-10:00 这类没有日期的明确时间区间时，先把开始时间解析为距离当前时间最近的未来时刻；如果结束不晚于开始，默认按跨天处理，把结束时间解释为次日对应时刻并写入草稿，由用户人工检查确认
 - “尽快”“随时”“越快越好”不能写入时间字段；需要追问具体时间`
 
 func setupDialogTest(bc *bddContext) (func(ctx context.Context, userMsg string) error, error) {
@@ -668,7 +669,13 @@ func (bc *bddContext) thenAccessPeriodNeverUsesPastAfternoonFive() error {
 		return fmt.Errorf("access_period uses past same-day 17:00 %q after current time %s", actual, now.Format("2006-01-02 15:04:05"))
 	}
 	if hasToolCall(bc.dialogState.toolCalls, "itsm.draft_prepare") {
-		return fmt.Errorf("current time is after 17:00; expected clarification instead of draft_prepare, got access_period=%q", actual)
+		if valueErr != nil {
+			return valueErr
+		}
+		expected := todayAt17.AddDate(0, 0, 1).Format("2006-01-02 15:04:05")
+		if !strings.Contains(actual, expected) {
+			return fmt.Errorf("expected next-day 17:00 access_period %q after current time %s, got %q", expected, now.Format("2006-01-02 15:04:05"), actual)
+		}
 	}
 	return nil
 }

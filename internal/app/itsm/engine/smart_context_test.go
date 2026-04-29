@@ -23,7 +23,8 @@ func TestBuildInitialSeedIncludesDecisionTrigger(t *testing.T) {
 		status text,
 		outcome text,
 		source text,
-		priority_id integer
+		priority_id integer,
+		form_data text
 	)`).Error; err != nil {
 		t.Fatalf("create tickets: %v", err)
 	}
@@ -71,7 +72,8 @@ func TestBuildInitialSeedIncludesRejectedActivityPolicy(t *testing.T) {
 		status text,
 		outcome text,
 		source text,
-		priority_id integer
+		priority_id integer,
+		form_data text
 	)`).Error; err != nil {
 		t.Fatalf("create tickets: %v", err)
 	}
@@ -301,6 +303,7 @@ func TestDecisionTicketContextMarksRejectedActivityForRecovery(t *testing.T) {
 		ticketID:            42,
 		serviceID:           7,
 		workflowJSON:        vpnWorkflowContextFixture,
+		collaborationSpec:   "处理任务完成后直接结束流程。",
 		completedActivityID: uintPtrIf(9),
 		data: fakeDecisionDataProvider{
 			ticket: &DecisionTicketData{
@@ -363,6 +366,112 @@ func TestDecisionTicketContextMarksRejectedActivityForRecovery(t *testing.T) {
 	}
 	if resp.WorkflowContext.Kind != "ai_generated_workflow_blueprint" || resp.WorkflowContext.RelatedStep.ID != "network_process" || len(resp.WorkflowContext.RelatedStep.OutgoingEdges) != 1 {
 		t.Fatalf("expected workflow context anchored to rejected activity, got %+v", resp.WorkflowContext)
+	}
+}
+
+func TestDecisionTicketContextExposesSelectedVPNBranchContract(t *testing.T) {
+	now := time.Now()
+	def := toolTicketContext()
+	raw, err := def.Handler(&decisionToolContext{
+		ticketID:            42,
+		serviceID:           7,
+		workflowJSON:        branchContractWorkflowFixture,
+		collaborationSpec:   "处理任务完成后直接结束流程。",
+		completedActivityID: uintPtrIf(9),
+		data: fakeDecisionDataProvider{
+			ticket: &DecisionTicketData{
+				Code:        "TICK-42",
+				Title:       "VPN",
+				Description: "安全合规访问",
+				Status:      "rejected_decisioning",
+				Source:      "agent",
+				FormData:    `{"request_kind":"security_compliance"}`,
+			},
+			history: []activityModel{
+				{ID: 9, Name: "信息安全管理员处理", ActivityType: NodeProcess, Status: ActivityCompleted, NodeID: "security_process", TransitionOutcome: "rejected", DecisionReasoning: "安全条件不满足", FinishedAt: &now},
+			},
+			activityByID: map[uint]activityModel{
+				9: {ID: 9, Name: "信息安全管理员处理", ActivityType: NodeProcess, Status: ActivityCompleted, NodeID: "security_process", TransitionOutcome: "rejected", DecisionReasoning: "安全条件不满足", FinishedAt: &now},
+			},
+			assignments: map[uint][]ActivityAssignmentInfo{
+				9: {{ParticipantType: "position_department", PositionID: uintPtrIf(11), DepartmentID: uintPtrIf(22), AssigneeID: uintPtrIf(1), Status: "completed", FinishedAt: &now}},
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("ticket context: %v", err)
+	}
+
+	var resp struct {
+		SelectedBranch struct {
+			BranchNodeID               string `json:"branch_node_id"`
+			BranchLabel                string `json:"branch_label"`
+			BranchRejectedTerminal     bool   `json:"branch_rejected_terminal"`
+			BranchTerminalOnCompletion bool   `json:"branch_terminal_on_completion"`
+		} `json:"selected_branch"`
+		ActiveBranchContract struct {
+			BranchNodeID string `json:"branch_node_id"`
+		} `json:"active_branch_contract"`
+		AllowedNextBranchNodes []string `json:"allowed_next_branch_nodes"`
+		CompletionContract     struct {
+			RejectedTargetNodeID      string `json:"rejected_target_node_id"`
+			CanCompleteAfterRejection bool   `json:"can_complete_after_rejection"`
+		} `json:"completion_contract"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatalf("unmarshal context: %v", err)
+	}
+	if resp.SelectedBranch.BranchNodeID != "security_process" || resp.ActiveBranchContract.BranchNodeID != "security_process" {
+		t.Fatalf("expected security branch contract, got %+v / %+v", resp.SelectedBranch, resp.ActiveBranchContract)
+	}
+	if !resp.SelectedBranch.BranchRejectedTerminal || !resp.SelectedBranch.BranchTerminalOnCompletion {
+		t.Fatalf("expected terminal branch contract, got %+v", resp.SelectedBranch)
+	}
+	if len(resp.AllowedNextBranchNodes) != 1 || resp.AllowedNextBranchNodes[0] != "end_reject_sec" {
+		t.Fatalf("expected rejected continuation to stay on branch terminal node, got %+v", resp.AllowedNextBranchNodes)
+	}
+	if resp.CompletionContract.RejectedTargetNodeID != "end_reject_sec" || !resp.CompletionContract.CanCompleteAfterRejection {
+		t.Fatalf("expected rejected completion contract, got %+v", resp.CompletionContract)
+	}
+}
+
+func TestDecisionTicketContextExposesSelectedServerAccessBranchFromCurrentActivity(t *testing.T) {
+	def := toolTicketContext()
+	raw, err := def.Handler(&decisionToolContext{
+		ticketID:          52,
+		serviceID:         8,
+		workflowJSON:      branchContractWorkflowFixture,
+		collaborationSpec: "处理任务完成后直接结束流程。",
+		data: fakeDecisionDataProvider{
+			ticket: &DecisionTicketData{
+				Code:        "TICK-52",
+				Title:       "Server Access",
+				Description: "高敏访问",
+				Status:      "waiting_human",
+				Source:      "agent",
+				FormData:    `{"request_kind":"security_compliance"}`,
+			},
+			current: []CurrentActivityInfo{
+				{ID: 12, Name: "信息安全管理员处理", ActivityType: NodeProcess, NodeID: "security_process", Status: ActivityPending},
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("ticket context: %v", err)
+	}
+
+	var resp struct {
+		SelectedBranch struct {
+			BranchNodeID string `json:"branch_node_id"`
+			BranchLabel  string `json:"branch_label"`
+		} `json:"selected_branch"`
+		CurrentBranchNodeID string `json:"current_branch_node_id"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatalf("unmarshal context: %v", err)
+	}
+	if resp.SelectedBranch.BranchNodeID != "security_process" || resp.CurrentBranchNodeID != "security_process" {
+		t.Fatalf("expected current security branch to be exposed, got %+v", resp)
 	}
 }
 
@@ -533,6 +642,51 @@ func TestValidateDecisionPlanRejectsRequesterSupplementWithoutSpec(t *testing.T)
 	}
 }
 
+func TestValidateDecisionPlanRejectsRequesterProcessAfterRejectedWithoutSpec(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&ticketModel{}, &activityModel{}, &assignmentModel{}); err != nil {
+		t.Fatalf("migrate db: %v", err)
+	}
+
+	ticket := ticketModel{Status: "in_progress", EngineType: "smart"}
+	if err := db.Create(&ticket).Error; err != nil {
+		t.Fatalf("create ticket: %v", err)
+	}
+	activity := activityModel{
+		TicketID:          ticket.ID,
+		Name:              "网络管理员处理",
+		ActivityType:      NodeProcess,
+		Status:            ActivityCompleted,
+		TransitionOutcome: "rejected",
+		DecisionReasoning: "不符合申请要求",
+	}
+	if err := db.Create(&activity).Error; err != nil {
+		t.Fatalf("create activity: %v", err)
+	}
+
+	eng := &SmartEngine{}
+	plan := &DecisionPlan{
+		NextStepType:  NodeProcess,
+		ExecutionMode: "single",
+		Activities: []DecisionActivity{{
+			Type:            NodeProcess,
+			ParticipantType: "requester",
+			Instructions:    "请申请人补充 VPN 申请理由",
+		}},
+		Confidence: 0.9,
+	}
+	err = eng.validateDecisionPlan(db, ticket.ID, plan, &serviceModel{
+		ID:                1,
+		CollaborationSpec: "处理完成后直接结束流程。",
+	}, &activity.ID)
+	if err == nil || !strings.Contains(err.Error(), "申请人补充/返工活动") {
+		t.Fatalf("expected requester process recovery to be rejected without explicit spec, got %v", err)
+	}
+}
+
 func TestValidateDecisionPlanAllowsRequesterSupplementWhenSpecExplicit(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
@@ -587,6 +741,28 @@ const vpnWorkflowContextFixture = `{
   "edges": [
     {"id": "e1", "source": "start", "target": "network_process"},
     {"id": "e2", "source": "network_process", "target": "end", "data": {"outcome": "approved"}}
+  ]
+}`
+
+const branchContractWorkflowFixture = `{
+  "nodes": [
+    {"id": "start", "type": "start", "data": {"label": "开始"}},
+    {"id": "gateway_route", "type": "exclusive", "data": {"label": "访问原因路由"}},
+    {"id": "network_process", "type": "process", "data": {"label": "网络管理员处理", "participants": [{"type": "position_department", "department_code": "it", "position_code": "network_admin"}]}},
+    {"id": "security_process", "type": "process", "data": {"label": "信息安全管理员处理", "participants": [{"type": "position_department", "department_code": "it", "position_code": "security_admin"}]}},
+    {"id": "end_ok_net", "type": "end", "data": {"label": "网络分支结束"}},
+    {"id": "end_reject_net", "type": "end", "data": {"label": "网络分支驳回结束"}},
+    {"id": "end_ok_sec", "type": "end", "data": {"label": "安全分支结束"}},
+    {"id": "end_reject_sec", "type": "end", "data": {"label": "安全分支驳回结束"}}
+  ],
+  "edges": [
+    {"id": "e1", "source": "start", "target": "gateway_route"},
+    {"id": "e2", "source": "gateway_route", "target": "network_process", "data": {"condition": {"field": "form.request_kind", "operator": "contains_any", "value": ["online_support", "troubleshooting"]}}},
+    {"id": "e3", "source": "gateway_route", "target": "security_process", "data": {"condition": {"field": "form.request_kind", "operator": "contains_any", "value": ["security_compliance", "external_collaboration"]}}},
+    {"id": "e4", "source": "network_process", "target": "end_ok_net", "data": {"outcome": "approved"}},
+    {"id": "e5", "source": "network_process", "target": "end_reject_net", "data": {"outcome": "rejected"}},
+    {"id": "e6", "source": "security_process", "target": "end_ok_sec", "data": {"outcome": "approved"}},
+    {"id": "e7", "source": "security_process", "target": "end_reject_sec", "data": {"outcome": "rejected"}}
   ]
 }`
 
@@ -704,7 +880,7 @@ func TestValidateDecisionPlanNodeID(t *testing.T) {
 }
 
 func TestBuildWorkflowContextApprovedEdgeTarget(t *testing.T) {
-	ctx := buildWorkflowContext(nodeIDValidationWorkflowFixture, &activityModel{
+	ctx := buildWorkflowContext(nodeIDValidationWorkflowFixture, "", nil, "", "", &activityModel{
 		ID:                1,
 		ActivityType:      NodeProcess,
 		Name:              "IT审批",
@@ -732,7 +908,7 @@ func TestBuildWorkflowContextApprovedEdgeTarget(t *testing.T) {
 }
 
 func TestBuildWorkflowContextRejectedEdgeTarget(t *testing.T) {
-	ctx := buildWorkflowContext(nodeIDValidationWorkflowFixture, &activityModel{
+	ctx := buildWorkflowContext(nodeIDValidationWorkflowFixture, "", nil, "", "", &activityModel{
 		ID:                2,
 		ActivityType:      NodeProcess,
 		Name:              "IT审批",
@@ -760,7 +936,7 @@ func TestBuildWorkflowContextRejectedEdgeTarget(t *testing.T) {
 }
 
 func TestBuildWorkflowContextEmptyNodeIDFallback(t *testing.T) {
-	ctx := buildWorkflowContext(nodeIDValidationWorkflowFixture, &activityModel{
+	ctx := buildWorkflowContext(nodeIDValidationWorkflowFixture, "", nil, "", "", &activityModel{
 		ID:                3,
 		ActivityType:      NodeProcess,
 		Name:              "IT审批",

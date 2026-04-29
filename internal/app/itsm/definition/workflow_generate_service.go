@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	. "metis/internal/app/itsm/config"
 	. "metis/internal/app/itsm/domain"
+	"metis/internal/app/itsm/form"
 	"strings"
 	"time"
 
@@ -148,11 +149,13 @@ func (s *WorkflowGenerateService) Generate(ctx context.Context, req *GenerateReq
 
 		// 7. Validate workflow
 		validationErrors := engine.ValidateWorkflow(workflowJSON)
+		intakeFormSchema, formErrors := extractGeneratedIntakeFormSchema(workflowJSON)
+		validationErrors = append(validationErrors, formErrors...)
 		lastWorkflowJSON = workflowJSON
 
 		if len(validationErrors) == 0 || !hasBlockingErrors(validationErrors) {
 			// No errors, or only warnings — save and return
-			return s.buildGenerateResponse(req, workflowJSON, attempt, validationErrors)
+			return s.buildGenerateResponse(req, workflowJSON, intakeFormSchema, attempt, validationErrors)
 		}
 
 		slog.Warn("workflow generate: validation failed",
@@ -167,9 +170,13 @@ func (s *WorkflowGenerateService) Generate(ctx context.Context, req *GenerateReq
 			continue
 		}
 
+		if len(formErrors) > 0 {
+			return nil, fmt.Errorf("%w: å‚è€ƒè·¯å¾„æœªç”Ÿæˆå¯ç”¨çš„ç”³è¯·ç¡®è®¤è¡¨å•", ErrWorkflowGeneration)
+		}
+
 		// Return the last parsable draft with validation issues. The draft is
 		// still useful as an agentic reference path; publish health carries risk.
-		return s.buildGenerateResponse(req, lastWorkflowJSON, attempt, validationErrors)
+		return s.buildGenerateResponse(req, lastWorkflowJSON, intakeFormSchema, attempt, validationErrors)
 	}
 
 	// Should not reach here
@@ -219,7 +226,7 @@ func workflowValidationErrorsLogValue(validationErrors []engine.ValidationError)
 	return sb.String()
 }
 
-func (s *WorkflowGenerateService) buildGenerateResponse(req *GenerateRequest, workflowJSON json.RawMessage, retries int, validationErrors []engine.ValidationError) (*GenerateResponse, error) {
+func (s *WorkflowGenerateService) buildGenerateResponse(req *GenerateRequest, workflowJSON json.RawMessage, intakeFormSchema json.RawMessage, retries int, validationErrors []engine.ValidationError) (*GenerateResponse, error) {
 	resp := &GenerateResponse{
 		WorkflowJSON: workflowJSON,
 		Retries:      retries,
@@ -231,9 +238,18 @@ func (s *WorkflowGenerateService) buildGenerateResponse(req *GenerateRequest, wo
 		return resp, nil
 	}
 
+	if len(intakeFormSchema) == 0 {
+		var formErrors []engine.ValidationError
+		intakeFormSchema, formErrors = extractGeneratedIntakeFormSchema(workflowJSON)
+		if len(formErrors) > 0 {
+			return nil, fmt.Errorf("%w: å‚è€ƒè·¯å¾„æœªç”Ÿæˆå¯ç”¨çš„ç”³è¯·ç¡®è®¤è¡¨å•", ErrWorkflowGeneration)
+		}
+	}
+
 	updated, err := s.serviceDefSvc.Update(req.ServiceID, map[string]any{
 		"workflow_json":      JSONField(workflowJSON),
 		"collaboration_spec": req.CollaborationSpec,
+		"intake_form_schema": JSONField(intakeFormSchema),
 	})
 	if err != nil {
 		return nil, err
@@ -253,6 +269,110 @@ func (s *WorkflowGenerateService) buildGenerateResponse(req *GenerateRequest, wo
 	return resp, nil
 }
 
+func extractGeneratedIntakeFormSchema(workflowJSON json.RawMessage) (json.RawMessage, []engine.ValidationError) {
+	var workflow struct {
+		Nodes []struct {
+			ID   string          `json:"id"`
+			Type string          `json:"type"`
+			Data json.RawMessage `json:"data"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(workflowJSON, &workflow); err != nil {
+		return nil, []engine.ValidationError{{Level: "blocking", Message: fmt.Sprintf("å‚è€ƒè·¯å¾„ JSON è§£æžå¤±è´¥ï¼š%v", err)}}
+	}
+
+	for _, node := range workflow.Nodes {
+		if node.Type != "form" {
+			continue
+		}
+		var data struct {
+			FormSchema json.RawMessage `json:"formSchema"`
+		}
+		if err := json.Unmarshal(node.Data, &data); err != nil {
+			return nil, []engine.ValidationError{{Level: "blocking", NodeID: node.ID, Message: fmt.Sprintf("è¡¨å•èŠ‚ç‚¹æ— æ³•è§£æžï¼š%v", err)}}
+		}
+		if len(data.FormSchema) == 0 || string(data.FormSchema) == "null" {
+			continue
+		}
+		return normalizeGeneratedFormSchema(node.ID, data.FormSchema)
+	}
+
+	return nil, []engine.ValidationError{{Level: "blocking", Message: "å‚è€ƒè·¯å¾„ç¼ºå°‘ requester è¡¨å•èŠ‚ç‚¹çš„ formSchemaï¼Œæ— æ³•ç”Ÿæˆç”³è¯·ç¡®è®¤è¡¨å•"}}
+}
+
+func normalizeGeneratedFormSchema(nodeID string, raw json.RawMessage) (json.RawMessage, []engine.ValidationError) {
+	var schemaMap map[string]any
+	if err := json.Unmarshal(raw, &schemaMap); err != nil {
+		return nil, []engine.ValidationError{{Level: "blocking", NodeID: nodeID, Message: fmt.Sprintf("formSchema ä¸æ˜¯æœ‰æ•ˆ JSONï¼š%v", err)}}
+	}
+	if schemaMap["version"] == nil {
+		schemaMap["version"] = float64(1)
+	}
+	fields, ok := schemaMap["fields"].([]any)
+	if !ok || len(fields) == 0 {
+		return nil, []engine.ValidationError{{Level: "blocking", NodeID: nodeID, Message: "formSchema.fields ä¸èƒ½ä¸ºç©º"}}
+	}
+	for _, rawField := range fields {
+		field, ok := rawField.(map[string]any)
+		if !ok {
+			continue
+		}
+		if required, ok := field["required"].(bool); !ok || !required {
+			field["required"] = true
+		}
+		if normalized := normalizeGeneratedOptions(field["options"]); normalized != nil {
+			field["options"] = normalized
+		}
+	}
+
+	normalized, err := json.Marshal(schemaMap)
+	if err != nil {
+		return nil, []engine.ValidationError{{Level: "blocking", NodeID: nodeID, Message: fmt.Sprintf("formSchema è§„èŒƒåŒ–å¤±è´¥ï¼š%v", err)}}
+	}
+	var schema form.FormSchema
+	if err := json.Unmarshal(normalized, &schema); err != nil {
+		return nil, []engine.ValidationError{{Level: "blocking", NodeID: nodeID, Message: fmt.Sprintf("formSchema ç»“æž„æ— æ•ˆï¼š%v", err)}}
+	}
+	if errs := form.ValidateSchema(schema); len(errs) > 0 {
+		validationErrors := make([]engine.ValidationError, 0, len(errs))
+		for _, err := range errs {
+			validationErrors = append(validationErrors, engine.ValidationError{Level: "blocking", NodeID: nodeID, Message: "formSchema " + err.Error()})
+		}
+		return nil, validationErrors
+	}
+	canonical, err := json.Marshal(schema)
+	if err != nil {
+		return nil, []engine.ValidationError{{Level: "blocking", NodeID: nodeID, Message: fmt.Sprintf("formSchema åºåˆ—åŒ–å¤±è´¥ï¼š%v", err)}}
+	}
+	return canonical, nil
+}
+
+func normalizeGeneratedOptions(raw any) any {
+	options, ok := raw.([]any)
+	if !ok || len(options) == 0 {
+		return raw
+	}
+	normalized := make([]any, 0, len(options))
+	for _, option := range options {
+		switch value := option.(type) {
+		case string:
+			normalized = append(normalized, map[string]any{"label": value, "value": value})
+		case map[string]any:
+			if value["value"] == nil && value["label"] != nil {
+				value["value"] = value["label"]
+			}
+			if value["label"] == nil && value["value"] != nil {
+				value["label"] = fmt.Sprintf("%v", value["value"])
+			}
+			normalized = append(normalized, value)
+		default:
+			label := fmt.Sprintf("%v", value)
+			normalized = append(normalized, map[string]any{"label": label, "value": label})
+		}
+	}
+	return normalized
+}
+
 // hasBlockingErrors returns true if any validation error has Level "blocking".
 func hasBlockingErrors(errs []engine.ValidationError) bool {
 	for _, e := range errs {
@@ -269,7 +389,7 @@ func (s *WorkflowGenerateService) buildActionsContext(actions []ServiceAction) s
 	sb.WriteString("\n\n## 可用动作（Action）列表\n")
 	sb.WriteString("以下动作可在工作流中作为 action 类型节点使用：\n\n")
 	for _, a := range actions {
-		sb.WriteString(fmt.Sprintf("- **%s**（code: `%s`）", a.Name, a.Code))
+		sb.WriteString(fmt.Sprintf("- **%s**（id: `%d`, code: `%s`）", a.Name, a.ID, a.Code))
 		if a.Description != "" {
 			sb.WriteString(fmt.Sprintf("：%s", a.Description))
 		}
@@ -312,6 +432,26 @@ func (s *WorkflowGenerateService) buildUserMessage(spec string, actionsCtx strin
 			sb.WriteString("。\n")
 			sb.WriteString("- 如果不同网关分支进入不同岗位处理节点，每个 process 节点必须分别配置对应岗位的 participants。\n")
 		}
+		if validationErrorsRequireActionRepair(prevErrors) {
+			sb.WriteString("\n## 动作节点修正要求\n\n")
+			sb.WriteString("- 只有协作规范明确要求在参考路径 workflow_json 里编排系统动作，且“可用动作列表”给出了动作 id 时，才允许生成 type=\"action\" 节点。\n")
+			sb.WriteString("- 如果没有可用动作 id，或动作应由智能体运行时通过工具调用完成，不要生成 action 节点；请改用 process/notify/end 表达参考路径。\n")
+			sb.WriteString("- 保留人工处理语义：人工处理、并行处理、部门岗位处理必须使用 type=\"process\"，不能写成 action。\n")
+		}
+		if validationErrorsRequireRejectedEdgeRepair(prevErrors) {
+			sb.WriteString("\n## 人工节点出边修正要求\n\n")
+			sb.WriteString("- 每个 type=\"process\" 节点都必须有且仅有两条决策出边：一条 data.outcome=\"approved\"，一条 data.outcome=\"rejected\"。\n")
+			sb.WriteString("- rejected 出边不能省略；如果 approved 和 rejected 都表示流程结束，可以共同指向同一个 type=\"end\" 节点。\n")
+			sb.WriteString("- 如果协作规范没有明确写驳回后补充、返工或恢复路径，rejected 出边应指向公共结束节点，驳回语义由 edge.data.outcome=\"rejected\" 表达。\n")
+			sb.WriteString("- 不要凭空生成“退回申请人补充”或 form 返工节点；只有协作规范明确写了补充/返工路径时才允许这样生成。\n")
+			sb.WriteString("- 多个 process 节点如果通过或驳回后都是结束，应复用同一个 end 节点，不要拆成“驳回结束”和“完成”。\n")
+		}
+		if validationErrorsRequireGatewayRepair(prevErrors) {
+			sb.WriteString("\n## 网关修正要求\n\n")
+			sb.WriteString("- exclusive 只表示条件分支，必须至少两条出边；不要用 exclusive 表示并行汇聚或单出边汇聚。\n")
+			sb.WriteString("- 并行拆分必须使用 type=\"parallel\" 且 data.gateway_direction=\"fork\"；并行汇聚必须使用 type=\"parallel\" 且 data.gateway_direction=\"join\"。\n")
+			sb.WriteString("- parallel fork 至少两条出边；parallel join 至少两条入边且有且仅有一条出边。\n")
+		}
 	}
 
 	sb.WriteString("\n\n请仅输出合法的 JSON，不要包含任何额外文字或 markdown 代码块标记。")
@@ -330,6 +470,45 @@ func validationErrorsRequireParticipantRepair(validationErrors []engine.Validati
 			strings.Contains(msg, "participants") ||
 			strings.Contains(msg, "position_code") ||
 			strings.Contains(msg, "department_code") {
+			return true
+		}
+	}
+	return false
+}
+
+func validationErrorsRequireActionRepair(validationErrors []engine.ValidationError) bool {
+	for _, validationErr := range validationErrors {
+		msg := validationErr.Message
+		if strings.Contains(msg, "action_id") ||
+			strings.Contains(msg, "动作节点") {
+			return true
+		}
+	}
+	return false
+}
+
+func validationErrorsRequireRejectedEdgeRepair(validationErrors []engine.ValidationError) bool {
+	for _, validationErr := range validationErrors {
+		msg := validationErr.Message
+		if strings.Contains(msg, `outcome="approved"`) ||
+			strings.Contains(msg, `outcome="rejected"`) ||
+			strings.Contains(msg, "驳回路径") ||
+			strings.Contains(msg, "approved 和 rejected") {
+			return true
+		}
+	}
+	return false
+}
+
+func validationErrorsRequireGatewayRepair(validationErrors []engine.ValidationError) bool {
+	for _, validationErr := range validationErrors {
+		msg := validationErr.Message
+		if strings.Contains(msg, "排他网关") ||
+			strings.Contains(msg, "并行网关") ||
+			strings.Contains(msg, "包含网关") ||
+			strings.Contains(msg, "gateway_direction") ||
+			strings.Contains(msg, "fork") ||
+			strings.Contains(msg, "join") {
 			return true
 		}
 	}

@@ -17,6 +17,7 @@ import (
 
 	"metis/internal/app/itsm/engine"
 	"metis/internal/llm"
+	"metis/internal/model"
 )
 
 type fakePathEngineConfigProvider struct {
@@ -76,19 +77,20 @@ func newWorkflowGenerateServiceForRetryTest(client *fakeWorkflowLLMClient, maxRe
 }
 
 func validWorkflowJSONForGenerateTest() string {
-	return `{"nodes":[{"id":"start","type":"start","data":{"label":"开始"}},{"id":"end","type":"end","data":{"label":"结束"}}],"edges":[{"id":"e1","source":"start","target":"end","data":{}}]}`
+	return `{"nodes":[{"id":"start","type":"start","data":{"label":"start"}},{"id":"request","type":"form","data":{"label":"request form","participants":[{"type":"requester"}],"formSchema":{"fields":[{"key":"summary","type":"textarea","label":"Summary"}]}}},{"id":"end","type":"end","data":{"label":"end"}}],"edges":[{"id":"e1","source":"start","target":"request","data":{}},{"id":"e2","source":"request","target":"end","data":{"outcome":"submitted"}}]}`
 }
-
 func workflowWithBlockingIssueForGenerateTest(userID uint) string {
 	return fmt.Sprintf(`{
 		"nodes": [
-			{"id":"start","type":"start","data":{"label":"开始"}},
-			{"id":"process","type":"process","data":{"label":"处理","participants":[{"type":"user","value":"%d"}]}},
-			{"id":"end","type":"end","data":{"label":"结束"}}
+			{"id":"start","type":"start","data":{"label":"start"}},
+			{"id":"request","type":"form","data":{"label":"request form","participants":[{"type":"requester"}],"formSchema":{"fields":[{"key":"summary","type":"textarea","label":"Summary"}]}}},
+			{"id":"process","type":"process","data":{"label":"process","participants":[{"type":"user","value":"%d"}]}},
+			{"id":"end","type":"end","data":{"label":"end"}}
 		],
 		"edges": [
-			{"id":"e1","source":"start","target":"process","data":{}},
-			{"id":"e2","source":"process","target":"end","data":{"outcome":"approved"}}
+			{"id":"e1","source":"start","target":"request","data":{}},
+			{"id":"e2","source":"request","target":"process","data":{"outcome":"submitted"}},
+			{"id":"e3","source":"process","target":"end","data":{"outcome":"approved"}}
 		]
 	}`, userID)
 }
@@ -173,6 +175,41 @@ func TestExtractJSON_Invalid(t *testing.T) {
 	}
 }
 
+func TestExtractGeneratedIntakeFormSchema_NormalizesStringOptions(t *testing.T) {
+	workflow := json.RawMessage(`{"nodes":[{"id":"form1","type":"form","data":{"formSchema":{"fields":[{"key":"reason","type":"select","label":"Reason","options":["ops","security"]}]}}}],"edges":[]}`)
+
+	schemaJSON, errs := extractGeneratedIntakeFormSchema(workflow)
+	if len(errs) > 0 {
+		t.Fatalf("expected schema extraction to pass, got %+v", errs)
+	}
+	var schema struct {
+		Fields []struct {
+			Key      string `json:"key"`
+			Required bool   `json:"required"`
+			Options  []struct {
+				Label string `json:"label"`
+				Value string `json:"value"`
+			} `json:"options"`
+		} `json:"fields"`
+	}
+	if err := json.Unmarshal(schemaJSON, &schema); err != nil {
+		t.Fatalf("unmarshal schema: %v", err)
+	}
+	if len(schema.Fields) != 1 || schema.Fields[0].Key != "reason" || !schema.Fields[0].Required {
+		t.Fatalf("unexpected normalized schema: %s", schemaJSON)
+	}
+	if len(schema.Fields[0].Options) != 2 || schema.Fields[0].Options[0].Value != "ops" {
+		t.Fatalf("expected string options to be normalized, got %s", schemaJSON)
+	}
+}
+
+func TestExtractGeneratedIntakeFormSchema_RequiresFormSchema(t *testing.T) {
+	_, errs := extractGeneratedIntakeFormSchema(json.RawMessage(`{"nodes":[{"id":"start","type":"start","data":{}}],"edges":[]}`))
+	if len(errs) == 0 || errs[0].Level != "blocking" {
+		t.Fatalf("expected missing form schema blocking error, got %+v", errs)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Layer 1: Unit tests — buildUserMessage / buildActionsContext
 // ---------------------------------------------------------------------------
@@ -195,7 +232,7 @@ func TestBuildUserMessage_Basic(t *testing.T) {
 func TestBuildUserMessage_WithActions(t *testing.T) {
 	svc := &WorkflowGenerateService{}
 	actionsCtx := svc.buildActionsContext([]ServiceAction{
-		{Name: "发送邮件", Code: "send-email", Description: "发送通知邮件"},
+		{BaseModel: model.BaseModel{ID: 7}, Name: "发送邮件", Code: "send-email", Description: "发送通知邮件"},
 	})
 	msg := svc.buildUserMessage("处理流程", actionsCtx, nil)
 
@@ -207,6 +244,9 @@ func TestBuildUserMessage_WithActions(t *testing.T) {
 	}
 	if !strings.Contains(msg, "send-email") {
 		t.Fatal("message should contain action code")
+	}
+	if !strings.Contains(msg, "id: `7`") {
+		t.Fatal("message should contain action id")
 	}
 }
 
@@ -239,6 +279,53 @@ func TestBuildUserMessage_WithPrevErrors(t *testing.T) {
 	}
 }
 
+func TestBuildUserMessage_GuidesRejectedEdgeRepair(t *testing.T) {
+	svc := &WorkflowGenerateService{}
+	prevErrors := []engine.ValidationError{
+		{NodeID: "node-process", Level: "blocking", Message: `process 节点 node-process 缺少 outcome="rejected" 的出边；协作规范未定义驳回恢复路径时 rejected 应指向公共结束节点，驳回语义由 edge.data.outcome="rejected" 表达`},
+	}
+	msg := svc.buildUserMessage("处理流程", "", prevErrors)
+
+	requiredSnippets := []string{
+		"人工节点出边修正要求",
+		`data.outcome="approved"`,
+		`data.outcome="rejected"`,
+		"共同指向同一个 type=\"end\" 节点",
+		"驳回语义由 edge.data.outcome=\"rejected\" 表达",
+		"复用同一个 end 节点，不要拆成“驳回结束”和“完成”",
+		"不要凭空生成“退回申请人补充”",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(msg, snippet) {
+			t.Fatalf("message missing rejected edge repair guidance: %s", snippet)
+		}
+	}
+	if strings.Contains(msg, "end_rejected") || strings.Contains(msg, "不能和 approved 指向同一个目标节点") {
+		t.Fatalf("message still contains old rejected end guidance: %s", msg)
+	}
+}
+
+func TestBuildUserMessage_GuidesGatewayRepair(t *testing.T) {
+	svc := &WorkflowGenerateService{}
+	prevErrors := []engine.ValidationError{
+		{NodeID: "node-converge", Level: "blocking", Message: "排他网关节点 node-converge 至少需要两条出边"},
+	}
+	msg := svc.buildUserMessage("并行处理流程", "", prevErrors)
+
+	requiredSnippets := []string{
+		"网关修正要求",
+		"exclusive 只表示条件分支",
+		`type="parallel"`,
+		`data.gateway_direction="fork"`,
+		`data.gateway_direction="join"`,
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(msg, snippet) {
+			t.Fatalf("message missing gateway repair guidance: %s", snippet)
+		}
+	}
+}
+
 func TestPathBuilderSystemPromptRequiresHumanNodeParticipants(t *testing.T) {
 	requiredSnippets := []string{
 		"所有 form/process 等人工节点必须在 data 中配置非空 participants 数组",
@@ -252,6 +339,47 @@ func TestPathBuilderSystemPromptRequiresHumanNodeParticipants(t *testing.T) {
 	for _, snippet := range requiredSnippets {
 		if !strings.Contains(PathBuilderSystemPrompt, snippet) {
 			t.Fatalf("system prompt missing required participant guidance: %s", snippet)
+		}
+	}
+}
+
+func TestPathBuilderSystemPromptGuidesParallelGateway(t *testing.T) {
+	requiredSnippets := []string{
+		"| parallel | 并行网关（拆分/汇聚） | label, nodeType, gateway_direction |",
+		`data.gateway_direction="fork"`,
+		`data.gateway_direction="join"`,
+		"不要用 exclusive 网关做并行汇聚",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(PathBuilderSystemPrompt, snippet) {
+			t.Fatalf("system prompt missing parallel gateway guidance: %s", snippet)
+		}
+	}
+}
+
+func TestPathBuilderSystemPromptReusesEquivalentEndNodes(t *testing.T) {
+	requiredSnippets := []string{
+		"同一个 process 节点的 approved 和 rejected 可以指向同一个 end 节点",
+		"业务结果由 edge.data.outcome 表达，不由 end 节点名称表达",
+		"默认只生成一个公共终态",
+		"多个 process 节点的 rejected 出边如果最终也是结束，也应全部指向同一个 end",
+		"不要生成“驳回结束”“通过完成”",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(PathBuilderSystemPrompt, snippet) {
+			t.Fatalf("system prompt missing end-node reuse guidance: %s", snippet)
+		}
+	}
+
+	misleadingSnippets := []string{
+		"即使两条路径最终都到达结束，也必须创建两个独立的 end 节点",
+		"不能复用同一个。这样画布上才能清晰呈现 Y 形审批分支",
+		"同一个 process 节点的 approved 和 rejected 必须指向不同的目标节点",
+		"end_rejected",
+	}
+	for _, snippet := range misleadingSnippets {
+		if strings.Contains(PathBuilderSystemPrompt, snippet) {
+			t.Fatalf("system prompt still contains misleading end-node guidance: %s", snippet)
 		}
 	}
 }
@@ -278,6 +406,37 @@ func TestWorkflowValidationMessageGuidesParticipantRepair(t *testing.T) {
 	}
 	if !strings.Contains(got, "process_network（网络管理员处理）") {
 		t.Fatalf("expected validation message to include node label, got %q", got)
+	}
+}
+
+func TestWorkflowValidationMessageGuidesSharedRejectedEnd(t *testing.T) {
+	errs := engine.ValidateWorkflow(json.RawMessage(`{
+		"nodes": [
+			{"id":"start","type":"start","data":{"label":"开始"}},
+			{"id":"process_network","type":"process","data":{"label":"网络管理员处理","participants":[{"type":"position_department","department_code":"it","position_code":"network_admin"}]}},
+			{"id":"end_completed","type":"end","data":{"label":"完成"}}
+		],
+		"edges": [
+			{"id":"e1","source":"start","target":"process_network","data":{}},
+			{"id":"e2","source":"process_network","target":"end_completed","data":{"outcome":"approved"}}
+		]
+	}`))
+
+	var got string
+	for _, err := range errs {
+		if strings.Contains(err.Message, `outcome="rejected"`) {
+			got = err.Message
+			break
+		}
+	}
+	if got == "" {
+		t.Fatalf("expected rejected-edge validation message, got %+v", errs)
+	}
+	if !strings.Contains(got, "公共结束节点") || !strings.Contains(got, `edge.data.outcome="rejected"`) {
+		t.Fatalf("expected shared rejected end guidance, got %q", got)
+	}
+	if strings.Contains(got, "独立的 end 节点") || strings.Contains(got, "end_rejected") {
+		t.Fatalf("validation message still encourages duplicate end nodes: %q", got)
 	}
 }
 
@@ -430,7 +589,7 @@ func TestGenerate_RetriesValidationFailure(t *testing.T) {
 
 func TestWorkflowGenerateHandlerReturnsOKForParsableWorkflowWithBlockingIssues(t *testing.T) {
 	client := &fakeWorkflowLLMClient{
-		responses: []llm.ChatResponse{{Content: `{"nodes":[],"edges":[]}`}},
+		responses: []llm.ChatResponse{{Content: workflowWithBlockingIssueForGenerateTest(42)}},
 	}
 	h := &WorkflowGenerateHandler{svc: newWorkflowGenerateServiceForRetryTest(client, 0)}
 	c, rec := newGinContext(http.MethodPost, "/api/v1/itsm/workflows/generate")
@@ -509,11 +668,11 @@ func TestBuildGenerateResponse_PersistsWorkflowAndHealthSnapshot(t *testing.T) {
 	}
 
 	svc := &WorkflowGenerateService{serviceDefSvc: serviceDefs}
-	workflowJSON := json.RawMessage(`{"nodes":[],"edges":[]}`)
+	workflowJSON := json.RawMessage(validWorkflowJSONForGenerateTest())
 	resp, err := svc.buildGenerateResponse(&GenerateRequest{
 		ServiceID:         service.ID,
 		CollaborationSpec: "用户提交申请后直属经理处理",
-	}, workflowJSON, 0, nil)
+	}, workflowJSON, nil, 0, nil)
 	if err != nil {
 		t.Fatalf("build response: %v", err)
 	}
@@ -522,6 +681,9 @@ func TestBuildGenerateResponse_PersistsWorkflowAndHealthSnapshot(t *testing.T) {
 	}
 	if string(resp.Service.WorkflowJSON) != string(workflowJSON) {
 		t.Fatalf("expected workflow json to be saved, got %s", resp.Service.WorkflowJSON)
+	}
+	if len(resp.Service.IntakeFormSchema) == 0 {
+		t.Fatal("expected generated intake form schema to be saved")
 	}
 	if resp.Service.CollaborationSpec != "用户提交申请后直属经理处理" {
 		t.Fatalf("expected collaboration spec to be saved, got %q", resp.Service.CollaborationSpec)
@@ -564,7 +726,7 @@ func TestBuildGenerateResponse_PersistsBlockingDraftAndHealthFailure(t *testing.
 	resp, err := svc.buildGenerateResponse(&GenerateRequest{
 		ServiceID:         service.ID,
 		CollaborationSpec: "用户提交申请后由处理人处理",
-	}, workflowJSON, 0, validationErrors)
+	}, workflowJSON, nil, 0, validationErrors)
 	if err != nil {
 		t.Fatalf("build response: %v", err)
 	}
