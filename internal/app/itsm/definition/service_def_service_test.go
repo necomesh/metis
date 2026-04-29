@@ -18,18 +18,21 @@ import (
 )
 
 type fakePublishHealthConfigProvider struct {
-	cfg LLMEngineRuntimeConfig
-	err error
+	cfg                LLMEngineRuntimeConfig
+	err                error
+	fallbackAssigneeID uint
 }
 
 func (f fakePublishHealthConfigProvider) HealthCheckRuntimeConfig() (LLMEngineRuntimeConfig, error) {
 	return f.cfg, f.err
 }
 
-func (fakePublishHealthConfigProvider) DecisionMode() string     { return "direct_first" }
-func (fakePublishHealthConfigProvider) DecisionAgentID() uint    { return 0 }
-func (fakePublishHealthConfigProvider) FallbackAssigneeID() uint { return 0 }
-func (fakePublishHealthConfigProvider) AuditLevel() string       { return "full" }
+func (fakePublishHealthConfigProvider) DecisionMode() string  { return "direct_first" }
+func (fakePublishHealthConfigProvider) DecisionAgentID() uint { return 0 }
+func (f fakePublishHealthConfigProvider) FallbackAssigneeID() uint {
+	return f.fallbackAssigneeID
+}
+func (fakePublishHealthConfigProvider) AuditLevel() string { return "full" }
 
 type fakePublishHealthLLMClient struct {
 	resp *llm.ChatResponse
@@ -530,6 +533,130 @@ func TestServiceDefServiceRefreshPublishHealthCheck_FailsWhenPositionDepartmentU
 	}
 }
 
+func TestServiceDefServiceRefreshPublishHealthCheck_FiltersLLMFallbackAssigneeValidationGuess(t *testing.T) {
+	db := newTestDB(t)
+	svc := newServiceDefServiceForTest(t, db)
+	catSvc := newCatalogServiceForTest(t, db)
+
+	root, _ := catSvc.Create("Root", "root", "", "", nil, 10)
+	operator := createServiceHealthUser(t, db, "operator", true)
+	fallback := createServiceHealthUser(t, db, "fallback_owner", true)
+	serviceAgent := createServiceHealthAgent(t, db, "service-agent", true)
+	decisionAgent := createServiceHealthAgent(t, db, "decision-agent", true)
+	setServiceHealthDecisionAgent(t, db, decisionAgent.ID)
+	seedServiceHealthPathEngine(t, db)
+	service, err := svc.Create(&ServiceDefinition{
+		Name:              "Smart",
+		Code:              "smart-health-fallback-guess",
+		CatalogID:         root.ID,
+		EngineType:        "smart",
+		IntakeFormSchema:  serviceHealthIntakeFormSchema(),
+		CollaborationSpec: "submit request and end after processing",
+		AgentID:           &serviceAgent.ID,
+		WorkflowJSON:      JSONField(validServiceHealthWorkflow(operator.ID)),
+	})
+	if err != nil {
+		t.Fatalf("create service: %v", err)
+	}
+
+	svc.engineConfigSvc = fakePublishHealthConfigProvider{cfg: testPublishHealthRuntimeConfig(), fallbackAssigneeID: fallback.ID}
+	svc.llmClientFactory = func(string, string, string) (llm.Client, error) {
+		return fakePublishHealthLLMClient{resp: &llm.ChatResponse{Content: `{"status":"fail","items":[{"key":"fallback_assignee","label":"缺少兜底处理人校验","status":"fail","message":"运行时配置中定义了 fallbackAssignee，但未明确校验其有效性。","location":{"kind":"runtime_config","path":"runtime.fallbackAssignee"},"recommendation":"请确保 fallbackAssignee 的值为有效用户 ID，并在运行时进行校验。","evidence":"runtime 配置中 fallbackAssignee 的值为 1，但未提供校验逻辑。"}]}`}}, nil
+	}
+
+	check, err := svc.RefreshPublishHealthCheck(service.ID)
+	if err != nil {
+		t.Fatalf("refresh health check: %v", err)
+	}
+	if check.Status != "pass" {
+		t.Fatalf("expected fallback validation guess to be filtered, got %+v", check)
+	}
+	if serviceHealthHasItem(check, "fallback_assignee", "fail") || serviceHealthHasItem(check, "health_engine", "fail") {
+		t.Fatalf("expected no fallback false positive or health engine failure, got %+v", check.Items)
+	}
+}
+
+func TestServiceDefServiceRefreshPublishHealthCheck_WarnsWhenFallbackAssigneeInvalid(t *testing.T) {
+	db := newTestDB(t)
+	svc := newServiceDefServiceForTest(t, db)
+	catSvc := newCatalogServiceForTest(t, db)
+
+	root, _ := catSvc.Create("Root", "root", "", "", nil, 10)
+	operator := createServiceHealthUser(t, db, "operator", true)
+	serviceAgent := createServiceHealthAgent(t, db, "service-agent", true)
+	decisionAgent := createServiceHealthAgent(t, db, "decision-agent", true)
+	setServiceHealthDecisionAgent(t, db, decisionAgent.ID)
+	seedServiceHealthPathEngine(t, db)
+	service, err := svc.Create(&ServiceDefinition{
+		Name:              "Smart",
+		Code:              "smart-health-invalid-fallback",
+		CatalogID:         root.ID,
+		EngineType:        "smart",
+		IntakeFormSchema:  serviceHealthIntakeFormSchema(),
+		CollaborationSpec: "submit request and end after processing",
+		AgentID:           &serviceAgent.ID,
+		WorkflowJSON:      JSONField(validServiceHealthWorkflow(operator.ID)),
+	})
+	if err != nil {
+		t.Fatalf("create service: %v", err)
+	}
+
+	svc.engineConfigSvc = fakePublishHealthConfigProvider{cfg: testPublishHealthRuntimeConfig(), fallbackAssigneeID: 999999}
+	check, err := svc.RefreshPublishHealthCheck(service.ID)
+	if err != nil {
+		t.Fatalf("refresh health check: %v", err)
+	}
+	if check.Status != "warn" {
+		t.Fatalf("expected invalid fallback to warn, got %+v", check)
+	}
+	if !serviceHealthHasItem(check, "fallback_assignee", "warn") {
+		t.Fatalf("expected deterministic fallback warning, got %+v", check.Items)
+	}
+}
+
+func TestServiceDefServiceRefreshPublishHealthCheck_ServerAccessRolesPassWithValidFallback(t *testing.T) {
+	db := newTestDB(t)
+	svc := newServiceDefServiceForTest(t, db)
+	catSvc := newCatalogServiceForTest(t, db)
+
+	root, _ := catSvc.Create("Root", "root", "", "", nil, 10)
+	fallback := createServiceHealthUser(t, db, "fallback_owner", true)
+	serviceAgent := createServiceHealthAgent(t, db, "service-agent", true)
+	decisionAgent := createServiceHealthAgent(t, db, "decision-agent", true)
+	setServiceHealthDecisionAgent(t, db, decisionAgent.ID)
+	seedServiceHealthPathEngine(t, db)
+	seedServerAccessParticipantOrgData(t, db)
+	service, err := svc.Create(&ServiceDefinition{
+		Name:              "生产服务器临时访问申请",
+		Code:              "server-access",
+		CatalogID:         root.ID,
+		EngineType:        "smart",
+		IntakeFormSchema:  serverAccessIntakeFormSchema(),
+		CollaborationSpec: "用户在 IT 服务台提交生产服务器临时访问申请。服务台需要收集访问服务器、访问时段、操作目的和访问原因。应用发布、进程排障、日志排查、磁盘清理、主机巡检或生产运维操作交给 it/ops_admin；网络抓包、连通性诊断、ACL 调整、负载均衡变更或防火墙策略调整交给 it/network_admin；安全审计、入侵排查、漏洞修复验证、取证分析或合规检查交给 it/security_admin。参与者类型必须使用 position_department。",
+		AgentID:           &serviceAgent.ID,
+		WorkflowJSON:      JSONField(serverAccessRolesWorkflow()),
+	})
+	if err != nil {
+		t.Fatalf("create service: %v", err)
+	}
+
+	svc.engineConfigSvc = fakePublishHealthConfigProvider{cfg: testPublishHealthRuntimeConfig(), fallbackAssigneeID: fallback.ID}
+	svc.llmClientFactory = func(string, string, string) (llm.Client, error) {
+		return fakePublishHealthLLMClient{resp: &llm.ChatResponse{Content: `{"status":"pass","items":[]}`}}, nil
+	}
+
+	check, err := svc.RefreshPublishHealthCheck(service.ID)
+	if err != nil {
+		t.Fatalf("refresh health check: %v", err)
+	}
+	if check.Status != "pass" {
+		t.Fatalf("expected valid server access role routing to pass, got %+v", check)
+	}
+	if serviceHealthHasItem(check, "fallback_assignee", "warn") || serviceHealthHasItem(check, "reference_path_participant", "fail") {
+		t.Fatalf("expected no fallback or participant issue, got %+v", check.Items)
+	}
+}
+
 func TestServiceDefServiceHealthCheck_RefreshesLatestSnapshot(t *testing.T) {
 	db := newTestDB(t)
 	svc := newServiceDefServiceForTest(t, db)
@@ -811,6 +938,27 @@ func workflowWithPositionDepartmentParticipant(positionCode, departmentCode stri
 	}`, positionCode, departmentCode)
 }
 
+func serverAccessRolesWorkflow() string {
+	return `{
+		"nodes": [
+			{"id":"start","type":"start","data":{"label":"开始"}},
+			{"id":"ops_process","type":"process","data":{"label":"运维管理员处理","participants":[{"type":"position_department","department_code":"it","position_code":"ops_admin"}]}},
+			{"id":"network_process","type":"process","data":{"label":"网络管理员处理","participants":[{"type":"position_department","department_code":"it","position_code":"network_admin"}]}},
+			{"id":"security_process","type":"process","data":{"label":"信息安全管理员处理","participants":[{"type":"position_department","department_code":"it","position_code":"security_admin"}]}},
+			{"id":"end","type":"end","data":{"label":"结束"}}
+		],
+		"edges": [
+			{"id":"e1","source":"start","target":"ops_process","data":{}},
+			{"id":"e2","source":"ops_process","target":"network_process","data":{"outcome":"approved"}},
+			{"id":"e3","source":"ops_process","target":"end","data":{"outcome":"rejected"}},
+			{"id":"e4","source":"network_process","target":"security_process","data":{"outcome":"approved"}},
+			{"id":"e5","source":"network_process","target":"end","data":{"outcome":"rejected"}},
+			{"id":"e6","source":"security_process","target":"end","data":{"outcome":"approved"}},
+			{"id":"e7","source":"security_process","target":"end","data":{"outcome":"rejected"}}
+		]
+	}`
+}
+
 func seedWorkflowParticipantOrgData(t *testing.T, db *gorm.DB, mode string) {
 	t.Helper()
 	dept := orgdomain.Department{Name: "IT", Code: "it", IsActive: true}
@@ -848,8 +996,43 @@ func seedWorkflowParticipantOrgData(t *testing.T, db *gorm.DB, mode string) {
 	}
 }
 
+func seedServerAccessParticipantOrgData(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	dept := orgdomain.Department{Name: "IT", Code: "it", IsActive: true}
+	if err := db.Create(&dept).Error; err != nil {
+		t.Fatalf("create department: %v", err)
+	}
+	positions := []struct {
+		code     string
+		username string
+	}{
+		{code: "ops_admin", username: "ops_admin_user"},
+		{code: "network_admin", username: "network_admin_user"},
+		{code: "security_admin", username: "security_admin_user"},
+	}
+	for _, item := range positions {
+		pos := orgdomain.Position{Name: item.code, Code: item.code, IsActive: true}
+		if err := db.Create(&pos).Error; err != nil {
+			t.Fatalf("create position %s: %v", item.code, err)
+		}
+		user := createServiceHealthUser(t, db, item.username, true)
+		if err := db.Create(&orgdomain.UserPosition{
+			UserID:       user.ID,
+			DepartmentID: dept.ID,
+			PositionID:   pos.ID,
+			IsPrimary:    true,
+		}).Error; err != nil {
+			t.Fatalf("create user position %s: %v", item.code, err)
+		}
+	}
+}
+
 func serviceHealthIntakeFormSchema() JSONField {
 	return JSONField(`{"version":1,"fields":[{"key":"summary","type":"text","label":"Summary","required":true}]}`)
+}
+
+func serverAccessIntakeFormSchema() JSONField {
+	return JSONField(`{"version":1,"fields":[{"key":"server","type":"text","label":"访问服务器","required":true},{"key":"access_time","type":"datetime_range","label":"访问时段","required":true},{"key":"purpose","type":"textarea","label":"操作目的","required":true},{"key":"reason","type":"textarea","label":"访问原因","required":true}]}`)
 }
 
 func serviceHealthHasItem(check *ServiceHealthCheck, key string, status string) bool {

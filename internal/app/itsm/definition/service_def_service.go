@@ -639,10 +639,9 @@ func (s *ServiceDefService) buildPublishHealthPayload(svc *ServiceDefinition) (m
 			"serviceAgentId":    svc.AgentID,
 		},
 		"runtime": map[string]any{
-			"decisionMode":     s.engineConfigSvc.DecisionMode(),
-			"decisionAgentId":  s.engineConfigSvc.DecisionAgentID(),
-			"fallbackAssignee": s.engineConfigSvc.FallbackAssigneeID(),
-			"auditLevel":       s.engineConfigSvc.AuditLevel(),
+			"decisionMode":    s.engineConfigSvc.DecisionMode(),
+			"decisionAgentId": s.engineConfigSvc.DecisionAgentID(),
+			"auditLevel":      s.engineConfigSvc.AuditLevel(),
 		},
 		"actions": actions,
 	}
@@ -651,8 +650,15 @@ func (s *ServiceDefService) buildPublishHealthPayload(svc *ServiceDefinition) (m
 
 func normalizePublishHealthCheck(serviceID uint, status string, items []ServiceHealthItem, ctx publishHealthValidationContext) *ServiceHealthCheck {
 	normalizedItems := make([]ServiceHealthItem, 0, len(items))
-	maxLevel := healthLevel(normalizePublishHealthStatus(status))
+	declaredStatus := normalizePublishHealthStatus(status)
+	maxLevel := healthLevel(declaredStatus)
+	skippedFallbackAssigneeIssue := false
+	invalidNonFallbackIssue := false
 	for idx, item := range items {
+		if isLLMFallbackAssigneeIssue(item) {
+			skippedFallbackAssigneeIssue = true
+			continue
+		}
 		itemStatus := normalizePublishHealthStatus(item.Status)
 		if itemStatus == "" {
 			itemStatus = "warn"
@@ -677,6 +683,7 @@ func normalizePublishHealthCheck(serviceID uint, status string, items []ServiceH
 			RefID: strings.TrimSpace(item.Location.RefID),
 		}
 		if !isValidHealthLocation(location, ctx) || recommendation == "" || evidence == "" {
+			invalidNonFallbackIssue = true
 			continue
 		}
 		if itemLevel := healthLevel(itemStatus); itemLevel > maxLevel {
@@ -694,7 +701,14 @@ func normalizePublishHealthCheck(serviceID uint, status string, items []ServiceH
 	}
 
 	finalStatus := levelStatus(maxLevel)
-	if finalStatus != "pass" && len(normalizedItems) == 0 {
+	if len(normalizedItems) == 0 && declaredStatus != "pass" {
+		if skippedFallbackAssigneeIssue && !invalidNonFallbackIssue && len(items) > 0 {
+			return &ServiceHealthCheck{
+				ServiceID: serviceID,
+				Status:    "pass",
+				Items:     []ServiceHealthItem{},
+			}
+		}
 		return newPublishHealthEngineFailureCheck(serviceID, "健康检查输出不合规，缺少可执行定位信息。")
 	}
 
@@ -703,6 +717,24 @@ func normalizePublishHealthCheck(serviceID uint, status string, items []ServiceH
 		Status:    finalStatus,
 		Items:     normalizedItems,
 	}
+}
+
+func isLLMFallbackAssigneeIssue(item ServiceHealthItem) bool {
+	key := strings.ToLower(strings.TrimSpace(item.Key))
+	path := strings.ToLower(strings.TrimSpace(item.Location.Path))
+	label := strings.ToLower(strings.TrimSpace(item.Label))
+	message := strings.ToLower(strings.TrimSpace(item.Message))
+	evidence := strings.ToLower(strings.TrimSpace(item.Evidence))
+	recommendation := strings.ToLower(strings.TrimSpace(item.Recommendation))
+
+	if key == "fallback_assignee" || key == "fallbackassignee" || key == "fallback_assignee_validation" {
+		return true
+	}
+	if path == "runtime.fallbackassignee" || path == "runtime.fallback_assignee" || strings.HasPrefix(path, "runtime.fallbackassignee.") || strings.HasPrefix(path, "runtime.fallback_assignee.") {
+		return true
+	}
+	text := label + " " + message + " " + evidence + " " + recommendation
+	return strings.Contains(text, "兜底处理人") && (strings.Contains(text, "校验") || strings.Contains(text, "验证"))
 }
 
 func newPublishHealthEngineFailureCheck(serviceID uint, message string) *ServiceHealthCheck {
