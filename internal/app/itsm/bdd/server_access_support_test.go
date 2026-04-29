@@ -11,6 +11,7 @@ import (
 	"fmt"
 	. "metis/internal/app/itsm/definition"
 	. "metis/internal/app/itsm/domain"
+	"sync"
 	"time"
 
 	ai "metis/internal/app/ai/runtime"
@@ -87,9 +88,23 @@ var serverAccessCasePayloads = map[string]serverAccessCasePayload{
 	},
 }
 
+var serverAccessWorkflowCache = struct {
+	sync.Mutex
+	byLLM map[string]json.RawMessage
+}{byLLM: map[string]json.RawMessage{}}
+
 // generateServerAccessWorkflow calls the LLM to generate a server access workflow JSON
 // from the collaboration spec. Same pattern as generateVPNWorkflow.
 func generateServerAccessWorkflow(cfg llmConfig) (json.RawMessage, error) {
+	cacheKey := cfg.baseURL + "\n" + cfg.model
+	serverAccessWorkflowCache.Lock()
+	if cached := serverAccessWorkflowCache.byLLM[cacheKey]; len(cached) > 0 {
+		out := append(json.RawMessage(nil), cached...)
+		serverAccessWorkflowCache.Unlock()
+		return out, nil
+	}
+	serverAccessWorkflowCache.Unlock()
+
 	client, err := llm.NewClient(llm.ProtocolOpenAI, cfg.baseURL, cfg.apiKey)
 	if err != nil {
 		return nil, fmt.Errorf("create LLM client: %w", err)
@@ -141,6 +156,9 @@ func generateServerAccessWorkflow(cfg llmConfig) (json.RawMessage, error) {
 		}
 
 		if len(blockingErrors) == 0 {
+			serverAccessWorkflowCache.Lock()
+			serverAccessWorkflowCache.byLLM[cacheKey] = append(json.RawMessage(nil), workflowJSON...)
+			serverAccessWorkflowCache.Unlock()
 			return workflowJSON, nil
 		}
 

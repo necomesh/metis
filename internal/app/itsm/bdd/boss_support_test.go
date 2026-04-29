@@ -26,8 +26,8 @@ const bossCollaborationSpec = `用户在 IT 服务台提交高风险变更协同
 回滚要求必须支持：需要(required)、不需要(not_required)。
 影响模块必须支持多选：网关(gateway)、支付(payment)、监控(monitoring)、订单(order)。
 变更明细表至少包含系统、资源、权限级别、生效时段、变更理由。权限级别必须支持：只读(read)、读写(read_write)。
-申请提交后，先交给指定用户 serial-reviewer 处理，处理参与者类型必须使用 user。首级处理完成后才能安排二级处理。
-serial-reviewer 处理完成后，再交给信息部的运维管理员岗位处理，处理参与者类型必须使用 position_department，部门编码使用 it，岗位编码使用 ops_admin。
+申请提交后，先交给总部处理人岗位处理，处理参与者类型必须使用 position_department，部门编码使用 headquarters，岗位编码使用 serial_reviewer。首级处理完成后才能安排二级处理。
+总部处理人完成处理后，再交给信息部的运维管理员岗位处理，处理参与者类型必须使用 position_department，部门编码使用 it，岗位编码使用 ops_admin。
 运维管理员处理完成后，流程必须立即结束，不再创建任何新的处理、处理或通知活动。不要生成取消分支。`
 
 // bossCasePayload defines test data for a single Boss BDD scenario.
@@ -42,26 +42,27 @@ var bossCasePayloads = map[string]bossCasePayload{
 		Summary: "生产变更申请 - 支付系统网关升级",
 		FormData: map[string]any{
 			"subject":              "支付系统网关升级",
-			"category":             "prod_change",
+			"request_category":     "prod_change",
 			"risk_level":           "high",
-			"expected_completion":  "2026-05-01",
-			"change_start":         "2026-04-30 22:00",
-			"change_end":           "2026-05-01 02:00",
+			"expected_finish_time": "2026-05-01 12:00",
+			"change_window":        []string{"2026-04-30 22:00", "2026-05-01 02:00"},
 			"impact_scope":         "支付业务全链路",
-			"rollback_requirement": "required",
-			"impact_module":        []string{"gateway", "payment"},
-			"resource_items": []map[string]any{
+			"rollback_required":    "required",
+			"impact_modules":       []string{"gateway", "payment"},
+			"change_items": []map[string]any{
 				{
-					"system_name":      "payment-gateway",
-					"resource_account": "pgw-admin",
+					"system":           "payment-gateway",
+					"resource":         "pgw-admin",
 					"permission_level": "read_write",
-					"target_operation": "升级网关核心路由规则",
+					"effective_range":  []string{"2026-04-30 22:00", "2026-05-01 02:00"},
+					"reason":           "升级网关核心路由规则",
 				},
 				{
-					"system_name":      "payment-core",
-					"resource_account": "pay-readonly",
+					"system":           "payment-core",
+					"resource":         "pay-readonly",
 					"permission_level": "read",
-					"target_operation": "只读查看支付日志验证切换结果",
+					"effective_range":  []string{"2026-04-30 22:00", "2026-05-01 02:00"},
+					"reason":           "只读查看支付日志验证切换结果",
 				},
 			},
 		},
@@ -70,20 +71,20 @@ var bossCasePayloads = map[string]bossCasePayload{
 		Summary: "生产变更申请 - 监控系统告警规则调整",
 		FormData: map[string]any{
 			"subject":              "监控系统告警规则调整",
-			"category":             "prod_change",
+			"request_category":     "prod_change",
 			"risk_level":           "high",
-			"expected_completion":  "2026-05-02",
-			"change_start":         "2026-05-01 20:00",
-			"change_end":           "2026-05-01 23:00",
+			"expected_finish_time": "2026-05-02 10:00",
+			"change_window":        []string{"2026-05-01 20:00", "2026-05-01 23:00"},
 			"impact_scope":         "监控告警全链路",
-			"rollback_requirement": "not_required",
-			"impact_module":        []string{"monitoring", "order"},
-			"resource_items": []map[string]any{
+			"rollback_required":    "not_required",
+			"impact_modules":       []string{"monitoring", "order"},
+			"change_items": []map[string]any{
 				{
-					"system_name":      "monitor-center",
-					"resource_account": "monitor-admin",
+					"system":           "monitor-center",
+					"resource":         "monitor-admin",
 					"permission_level": "read_write",
-					"target_operation": "调整P0级告警阈值和通知策略",
+					"effective_range":  []string{"2026-05-01 20:00", "2026-05-01 23:00"},
+					"reason":           "调整P0级告警阈值和通知策略",
 				},
 			},
 		},

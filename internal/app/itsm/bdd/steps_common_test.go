@@ -55,14 +55,23 @@ type bddContext struct {
 	fallbackUserID      uint               // fallback assignee for participant validation scenarios
 	slaAssuranceAgentID uint
 	toolCalls           []bddToolCall
+	toolResults         []bddToolResult
 	dialogState         dialogTestState           // dialog validation test state
 	actionReceiver      *LocalActionReceiver      // action HTTP test receiver (nil if not needed)
 	serviceActions      map[string]*ServiceAction // key = action code
+	activityCountMark   int64
+	actionRequestMark   int
 }
 
 type bddToolCall struct {
 	Name      string
 	Arguments string
+}
+
+type bddToolResult struct {
+	Name    string
+	Output  string
+	IsError bool
 }
 
 func newBDDContext() *bddContext {
@@ -95,8 +104,11 @@ func (bc *bddContext) reset() {
 	bc.fallbackUserID = 0
 	bc.slaAssuranceAgentID = 0
 	bc.toolCalls = nil
+	bc.toolResults = nil
 	bc.dialogState = dialogTestState{}
 	bc.serviceActions = make(map[string]*ServiceAction)
+	bc.activityCountMark = 0
+	bc.actionRequestMark = 0
 	if bc.actionReceiver != nil {
 		bc.actionReceiver.Clear()
 	}
@@ -161,7 +173,7 @@ func (bc *bddContext) reset() {
 	}
 
 	// Build SmartEngine with test dependencies.
-	executor := &testDecisionExecutor{db: db, llmCfg: bc.llmCfg, recordToolCall: bc.recordToolCall}
+	executor := &testDecisionExecutor{db: db, llmCfg: bc.llmCfg, recordToolCall: bc.recordToolCall, recordToolResult: bc.recordToolResult}
 	userProvider := &testUserProvider{db: db}
 	bc.smartEngine = engine.NewSmartEngine(executor, nil, userProvider, resolver, submitter, &bddConfigProvider{bc: bc})
 }
@@ -281,27 +293,44 @@ type ActionRecord struct {
 	Body   string
 }
 
+type actionResponder func(ActionRecord) (int, string)
+
 // LocalActionReceiver is an in-process HTTP server that records incoming requests.
 type LocalActionReceiver struct {
-	server  *httptest.Server
-	mu      sync.Mutex
-	records []ActionRecord
+	server     *httptest.Server
+	mu         sync.Mutex
+	records    []ActionRecord
+	responders map[string]actionResponder
 }
 
 // NewLocalActionReceiver creates and starts a new LocalActionReceiver.
 func NewLocalActionReceiver() *LocalActionReceiver {
-	r := &LocalActionReceiver{}
+	r := &LocalActionReceiver{responders: make(map[string]actionResponder)}
 	r.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		body, _ := io.ReadAll(io.LimitReader(req.Body, 64*1024))
-		r.mu.Lock()
-		r.records = append(r.records, ActionRecord{
+		rec := ActionRecord{
 			Path:   req.URL.Path,
 			Method: req.Method,
 			Body:   string(body),
-		})
+		}
+		r.mu.Lock()
+		r.records = append(r.records, rec)
+		responder := r.responders[rec.Path]
 		r.mu.Unlock()
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok"}`))
+
+		status := http.StatusOK
+		respBody := `{"status":"ok"}`
+		if responder != nil {
+			status, respBody = responder(rec)
+			if status == 0 {
+				status = http.StatusOK
+			}
+			if respBody == "" {
+				respBody = `{"status":"ok"}`
+			}
+		}
+		w.WriteHeader(status)
+		w.Write([]byte(respBody))
 	}))
 	return r
 }
@@ -330,6 +359,13 @@ func (r *LocalActionReceiver) Clear() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.records = nil
+	r.responders = make(map[string]actionResponder)
+}
+
+func (r *LocalActionReceiver) SetResponder(path string, responder actionResponder) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.responders[path] = responder
 }
 
 func (r *LocalActionReceiver) URL(path string) string {
@@ -398,9 +434,10 @@ var _ engine.TaskSubmitter = (*syncActionSubmitter)(nil)
 // testDecisionExecutor implements app.AIDecisionExecutor for BDD tests.
 // Reads Agent record from DB, combines with LLM config from env, and runs the ReAct loop.
 type testDecisionExecutor struct {
-	db             *gorm.DB
-	llmCfg         llmConfig
-	recordToolCall func(name string, args json.RawMessage)
+	db               *gorm.DB
+	llmCfg           llmConfig
+	recordToolCall   func(name string, args json.RawMessage)
+	recordToolResult func(name string, output json.RawMessage, isError bool)
 }
 
 func (e *testDecisionExecutor) Execute(ctx context.Context, agentID uint, req app.AIDecisionRequest) (*app.AIDecisionResponse, error) {
@@ -494,10 +531,18 @@ func (e *testDecisionExecutor) Execute(ctx context.Context, agentID uint, req ap
 			}
 			result, err := req.ToolHandler(tc.Name, json.RawMessage(tc.Arguments))
 			var content string
+			var resultPayload json.RawMessage
+			isError := false
 			if err != nil {
 				content = fmt.Sprintf(`{"error": "%s"}`, err.Error())
+				resultPayload = json.RawMessage(content)
+				isError = true
 			} else {
 				content = string(result)
+				resultPayload = result
+			}
+			if e.recordToolResult != nil {
+				e.recordToolResult(tc.Name, resultPayload, isError)
 			}
 			messages = append(messages, llm.Message{
 				Role:       llm.RoleTool,
@@ -514,6 +559,10 @@ var _ app.AIDecisionExecutor = (*testDecisionExecutor)(nil)
 
 func (bc *bddContext) recordToolCall(name string, args json.RawMessage) {
 	bc.toolCalls = append(bc.toolCalls, bddToolCall{Name: name, Arguments: string(args)})
+}
+
+func (bc *bddContext) recordToolResult(name string, output json.RawMessage, isError bool) {
+	bc.toolResults = append(bc.toolResults, bddToolResult{Name: name, Output: string(output), IsError: isError})
 }
 
 func (bc *bddContext) hasToolCall(name string) bool {

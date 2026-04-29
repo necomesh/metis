@@ -700,6 +700,16 @@ func toolExecuteAction() decisionToolDef {
 				return toolError("动作已停用")
 			}
 
+			if looksLikeDBBackupWhitelistSpec(ctx.collaborationSpec) && isDBBackupWhitelistActionCode(action.Code) {
+				ticket, err := ctx.data.GetTicketContext(ctx.ticketID)
+				if err != nil {
+					return toolError(fmt.Sprintf("读取工单上下文失败: %v", err))
+				}
+				if err := validateDBBackupWhitelistFormJSON(ticket.FormData); err != nil {
+					return toolError(err.Error())
+				}
+			}
+
 			// Idempotency: check if this action was already successfully executed for this ticket
 			execs, _ := ctx.data.GetExecutedActions(ctx.ticketID)
 			for _, e := range execs {

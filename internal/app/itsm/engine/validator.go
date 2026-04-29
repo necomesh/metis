@@ -619,8 +619,11 @@ func ValidateWorkflow(workflowJSON json.RawMessage) []ValidationError {
 func validateFormSchemaReferences(def *WorkflowDef, nodeMap map[string]*WFNode, inEdges map[string][]*WFEdge) []ValidationError {
 	var errs []ValidationError
 
-	// Collect formSchema keys from all form nodes: nodeID -> set of field keys
+	// Collect formSchema keys from all form nodes: nodeID -> set of field keys.
+	// The union is also the generated intake form contract used when a gateway
+	// references form.xxx before the intake form is directly upstream.
 	formFieldsByNode := make(map[string]map[string]bool)
+	allFormKeys := make(map[string]bool)
 	for i := range def.Nodes {
 		n := &def.Nodes[i]
 		if n.Type != NodeForm {
@@ -646,6 +649,9 @@ func validateFormSchemaReferences(def *WorkflowDef, nodeMap map[string]*WFNode, 
 		}
 		if len(keys) > 0 {
 			formFieldsByNode[n.ID] = keys
+			for key := range keys {
+				allFormKeys[key] = true
+			}
 		}
 	}
 
@@ -663,7 +669,7 @@ func validateFormSchemaReferences(def *WorkflowDef, nodeMap map[string]*WFNode, 
 		// BFS backwards to find upstream form nodes reachable from this gateway
 		upstreamKeys := collectUpstreamFormKeys(n.ID, nodeMap, inEdges, formFieldsByNode)
 		if len(upstreamKeys) == 0 {
-			continue // no upstream form nodes — can't validate
+			upstreamKeys = allFormKeys
 		}
 
 		// Check each outgoing edge's condition
@@ -722,7 +728,7 @@ func checkConditionFormRefs(cond GatewayCondition, nodeID, edgeID string, upstre
 				NodeID:  nodeID,
 				EdgeID:  edgeID,
 				Level:   "warning",
-				Message: fmt.Sprintf("排他网关 %s 的条件引用了 %s，但上游 form 节点的 formSchema 中未找到字段 %s", nodeID, cond.Field, key),
+				Message: fmt.Sprintf("排他网关 %s 的条件引用了 %s，但上游 form 节点或申请确认表单的 formSchema 中未找到字段 %s", nodeID, cond.Field, key),
 			})
 		}
 	}

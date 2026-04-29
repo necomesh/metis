@@ -470,6 +470,9 @@ func (e *SmartEngine) applyDeterministicServiceGuards(ctx context.Context, tx *g
 	if looksLikeDBBackupWhitelistSpec(svc.CollaborationSpec) {
 		return e.applyDBBackupWhitelistGuard(ctx, tx, ticketID, plan, svc.ID)
 	}
+	if looksLikeBossSerialChangeSpec(svc.CollaborationSpec) {
+		return e.applyBossSerialChangeGuard(tx, ticketID, plan)
+	}
 	expectedPosition, ok, err := collaborationSpecAccessPurposePosition(tx, ticketID, svc.CollaborationSpec)
 	if err != nil {
 		return err
@@ -490,7 +493,43 @@ func looksLikeDBBackupWhitelistSpec(spec string) bool {
 		strings.Contains(spec, "decision.execute_action")
 }
 
+func isDBBackupWhitelistActionCode(code string) bool {
+	return code == "db_backup_whitelist_precheck" || code == "db_backup_whitelist_apply"
+}
+
+func looksLikeBossSerialChangeSpec(spec string) bool {
+	return strings.Contains(spec, "高风险变更协同申请") &&
+		strings.Contains(spec, "headquarters") &&
+		strings.Contains(spec, "serial_reviewer") &&
+		strings.Contains(spec, "ops_admin")
+}
+
+func (e *SmartEngine) applyBossSerialChangeGuard(tx *gorm.DB, ticketID uint, plan *DecisionPlan) error {
+	headDone, err := ticketHasSatisfiedDepartmentPositionProcess(tx, ticketID, "headquarters", "serial_reviewer")
+	if err != nil {
+		return err
+	}
+	opsDone, err := ticketHasSatisfiedDepartmentPositionProcess(tx, ticketID, "it", "ops_admin")
+	if err != nil {
+		return err
+	}
+
+	switch {
+	case !headDone:
+		forceSingleDepartmentPositionProcessPlan(plan, "headquarters", "serial_reviewer", "协作规范要求先由总部处理人岗位处理，workflow_json 仅作辅助背景，不得跳过首级岗位或使用旧固定用户。")
+	case !opsDone:
+		forceSingleDepartmentPositionProcessPlan(plan, "it", "ops_admin", "总部处理人已完成，协作规范要求再由信息部运维管理员岗位处理。")
+	default:
+		forceCompletePlan(plan, "总部处理人和信息部运维管理员均已完成，按协作规范立即结束流程。")
+	}
+	return nil
+}
+
 func (e *SmartEngine) applyDBBackupWhitelistGuard(ctx context.Context, tx *gorm.DB, ticketID uint, plan *DecisionPlan, serviceID uint) error {
+	if err := validateDBBackupWhitelistFormData(tx, ticketID); err != nil {
+		return err
+	}
+
 	precheckDone, err := ticketActionSucceeded(tx, ticketID, "db_backup_whitelist_precheck")
 	if err != nil {
 		return err
@@ -499,7 +538,7 @@ func (e *SmartEngine) applyDBBackupWhitelistGuard(ctx context.Context, tx *gorm.
 	if err != nil {
 		return err
 	}
-	dbaDone, err := ticketHasCompletedPositionProcess(tx, ticketID, "db_admin")
+	dbaDone, err := ticketHasSatisfiedPositionProcess(tx, ticketID, "db_admin")
 	if err != nil {
 		return err
 	}
@@ -523,6 +562,57 @@ func (e *SmartEngine) applyDBBackupWhitelistGuard(ctx context.Context, tx *gorm.
 	return nil
 }
 
+func validateDBBackupWhitelistFormData(tx *gorm.DB, ticketID uint) error {
+	var ticket ticketModel
+	if err := tx.Select("id, form_data").First(&ticket, ticketID).Error; err != nil {
+		return fmt.Errorf("读取数据库备份白名单申请失败: %w", err)
+	}
+	return validateDBBackupWhitelistFormJSON(ticket.FormData)
+}
+
+func validateDBBackupWhitelistFormJSON(rawFormData string) error {
+	var formData map[string]any
+	if err := json.Unmarshal([]byte(rawFormData), &formData); err != nil {
+		return fmt.Errorf("数据库备份白名单申请表单不是有效 JSON: %w", err)
+	}
+
+	required := map[string]string{
+		"database_name":    "目标数据库",
+		"source_ip":        "来源 IP",
+		"whitelist_window": "放行时间窗",
+		"access_reason":    "申请原因",
+	}
+	for key, label := range required {
+		value := strings.TrimSpace(fmt.Sprint(formData[key]))
+		if value == "" || value == "<nil>" || strings.Contains(value, "{{ticket.form_data.") {
+			return fmt.Errorf("数据库备份白名单申请缺少%s；不得触发预检或放行动作", label)
+		}
+	}
+
+	window := strings.TrimSpace(fmt.Sprint(formData["whitelist_window"]))
+	if !isConcreteWhitelistWindow(window) {
+		return fmt.Errorf("数据库备份白名单放行时间窗不明确；必须包含明确的开始和结束时刻，不得用“明天晚上/今晚/维护窗口”等模糊时段触发预检或放行")
+	}
+
+	return nil
+}
+
+func isConcreteWhitelistWindow(window string) bool {
+	window = strings.TrimSpace(window)
+	if window == "" || strings.Contains(window, "{{ticket.form_data.") {
+		return false
+	}
+	clockCount := 0
+	for _, part := range strings.FieldsFunc(window, func(r rune) bool {
+		return r == ' ' || r == '~' || r == '～' || r == '-' || r == '到' || r == '至'
+	}) {
+		if strings.Contains(part, ":") || strings.Contains(part, "点") || strings.Contains(part, "时") {
+			clockCount++
+		}
+	}
+	return clockCount >= 2
+}
+
 func (e *SmartEngine) applySingleHumanRouteGuard(tx *gorm.DB, ticketID uint, plan *DecisionPlan, expectedPosition string, reason string) error {
 	completed, err := ticketHasCompletedPositionProcess(tx, ticketID, expectedPosition)
 	if err != nil {
@@ -537,12 +627,16 @@ func (e *SmartEngine) applySingleHumanRouteGuard(tx *gorm.DB, ticketID uint, pla
 }
 
 func forceSinglePositionProcessPlan(plan *DecisionPlan, positionCode string, reasoning string) {
+	forceSingleDepartmentPositionProcessPlan(plan, "it", positionCode, reasoning)
+}
+
+func forceSingleDepartmentPositionProcessPlan(plan *DecisionPlan, departmentCode, positionCode string, reasoning string) {
 	plan.NextStepType = NodeProcess
 	plan.ExecutionMode = "single"
 	plan.Activities = []DecisionActivity{{
 		Type:            NodeProcess,
 		ParticipantType: "position_department",
-		DepartmentCode:  "it",
+		DepartmentCode:  departmentCode,
 		PositionCode:    positionCode,
 		Instructions:    reasoning,
 	}}
@@ -594,6 +688,33 @@ func ticketHasCompletedPositionProcess(tx *gorm.DB, ticketID uint, positionCode 
 			ticketID, NodeProcess, CompletedActivityStatuses(), positionCode, "it").
 		Count(&count).Error
 	return count > 0, err
+}
+
+func ticketHasSatisfiedPositionProcess(tx *gorm.DB, ticketID uint, positionCode string) (bool, error) {
+	return ticketHasSatisfiedDepartmentPositionProcess(tx, ticketID, "it", positionCode)
+}
+
+func ticketHasSatisfiedDepartmentPositionProcess(tx *gorm.DB, ticketID uint, departmentCode, positionCode string) (bool, error) {
+	var rows []struct {
+		TransitionOutcome string
+	}
+	err := tx.Table("itsm_ticket_activities").
+		Joins("JOIN itsm_ticket_assignments ON itsm_ticket_assignments.activity_id = itsm_ticket_activities.id").
+		Joins("JOIN positions ON positions.id = itsm_ticket_assignments.position_id").
+		Joins("JOIN departments ON departments.id = itsm_ticket_assignments.department_id").
+		Where("itsm_ticket_activities.ticket_id = ? AND itsm_ticket_activities.activity_type = ? AND itsm_ticket_activities.status IN ? AND positions.code = ? AND departments.code = ?",
+			ticketID, NodeProcess, CompletedActivityStatuses(), positionCode, departmentCode).
+		Select("itsm_ticket_activities.transition_outcome").
+		Find(&rows).Error
+	if err != nil {
+		return false, err
+	}
+	for _, row := range rows {
+		if isPositiveActivityOutcome(row.TransitionOutcome) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (e *SmartEngine) executeServiceActionOnce(ctx context.Context, tx *gorm.DB, ticketID uint, serviceID uint, actionCode string) error {
@@ -1253,6 +1374,9 @@ func normalizePlanHumanParticipant(tx *gorm.DB, plan *DecisionPlan, expectedPosi
 		plan.Activities[i].ParticipantType = "position_department"
 		plan.Activities[i].DepartmentCode = "it"
 		plan.Activities[i].PositionCode = expectedPosition
+		if !strings.Contains(plan.Reasoning, "协作规范") {
+			plan.Reasoning = strings.TrimSpace(plan.Reasoning + "\n协作规范优先于 workflow_json：表单访问目的已命中协作规范岗位分支，已按协作规范校正处理岗位。")
+		}
 	}
 }
 
@@ -1321,17 +1445,11 @@ func collaborationSpecAccessPurposePosition(tx *gorm.DB, ticketID uint, spec str
 	if text == "" {
 		text = strings.TrimSpace(ticket.Title)
 	}
-	text = strings.ToLower(text)
-	switch {
-	case containsAnyText(text, "安全", "审计", "取证", "证据", "保全", "漏洞", "入侵", "合规", "高敏", "异常访问"):
-		return "security_admin", true, nil
-	case containsAnyText(text, "网络", "抓包", "链路", "acl", "负载均衡", "防火墙"):
-		return "network_admin", true, nil
-	case containsAnyText(text, "排障", "巡检", "日志", "进程", "磁盘", "运维", "应用"):
-		return "ops_admin", true, nil
-	default:
+	matches := serverAccessPurposeMatches(text)
+	if len(matches) != 1 {
 		return "", true, nil
 	}
+	return matches[0], true, nil
 }
 
 func looksLikeServerAccessPurposeSpec(spec string) bool {
@@ -1348,6 +1466,31 @@ func containsAnyText(text string, needles ...string) bool {
 		}
 	}
 	return false
+}
+
+func serverAccessPurposeMatches(text string) []string {
+	normalized := strings.ToLower(strings.TrimSpace(text))
+	if normalized == "" {
+		return nil
+	}
+
+	matches := make([]string, 0, 3)
+	if containsAnyText(normalized,
+		"安全审计", "取证", "证据", "保全", "漏洞", "入侵", "合规核查", "合规验证", "异常访问", "高敏访问", "安全取证", "安全核查",
+	) {
+		matches = append(matches, "security_admin")
+	}
+	if containsAnyText(normalized,
+		"抓包", "链路", "acl", "负载均衡", "防火墙", "网络侧", "网络访问路径", "连通性",
+	) {
+		matches = append(matches, "network_admin")
+	}
+	if containsAnyText(normalized,
+		"应用排障", "应用进程", "生产应用", "主机巡检", "日志查看", "查看应用日志", "进程处理", "磁盘清理", "运行状态", "一般生产运维",
+	) {
+		matches = append(matches, "ops_admin")
+	}
+	return matches
 }
 
 func decisionActivityTargetsPosition(tx *gorm.DB, da DecisionActivity, expectedPosition string) bool {
