@@ -417,6 +417,11 @@ func (e *SmartEngine) runDecisionCycle(ctx context.Context, tx *gorm.DB, ticketI
 		"confidence", plan.Confidence, "activityCount", len(plan.Activities),
 		"executionMode", plan.ExecutionMode)
 
+	if err := e.applyDeterministicServiceGuards(ctx, tx, ticketID, plan, svcInfo); err != nil {
+		slog.Warn("decision-cycle: service-guard-failed", "ticketID", ticketID, "error", err.Error())
+		return e.handleDecisionFailure(tx, ticketID, fmt.Sprintf("AI 决策服务护栏失败: %v", err))
+	}
+
 	// Validate decision plan
 	if err := e.validateDecisionPlan(tx, ticketID, plan, svcInfo, completedActivityID); err != nil {
 		slog.Warn("decision-cycle: validation-failed", "ticketID", ticketID, "error", err.Error())
@@ -456,6 +461,290 @@ func (e *SmartEngine) handleDecisionFailure(tx *gorm.DB, ticketID uint, reason s
 	}
 
 	return ErrAIDecisionFailed
+}
+
+func (e *SmartEngine) applyDeterministicServiceGuards(ctx context.Context, tx *gorm.DB, ticketID uint, plan *DecisionPlan, svc *serviceModel) error {
+	if plan == nil || svc == nil {
+		return nil
+	}
+	if looksLikeDBBackupWhitelistSpec(svc.CollaborationSpec) {
+		return e.applyDBBackupWhitelistGuard(ctx, tx, ticketID, plan, svc.ID)
+	}
+	if looksLikeBossSerialChangeSpec(svc.CollaborationSpec) {
+		return e.applyBossSerialChangeGuard(tx, ticketID, plan)
+	}
+	expectedPosition, ok, err := collaborationSpecAccessPurposePosition(tx, ticketID, svc.CollaborationSpec)
+	if err != nil {
+		return err
+	}
+	if ok {
+		if expectedPosition == "" {
+			return fmt.Errorf("form.access_purpose 缺失、为空或未命中协作规范定义的访问目的分支；不得高置信结束或选择单一路由")
+		}
+		return e.applySingleHumanRouteGuard(tx, ticketID, plan, expectedPosition, "访问目的已命中协作规范岗位分支")
+	}
+	return nil
+}
+
+func looksLikeDBBackupWhitelistSpec(spec string) bool {
+	return strings.Contains(spec, "db_admin") &&
+		strings.Contains(spec, "precheck") &&
+		strings.Contains(spec, "apply") &&
+		strings.Contains(spec, "decision.execute_action")
+}
+
+func isDBBackupWhitelistActionCode(code string) bool {
+	return code == "db_backup_whitelist_precheck" || code == "db_backup_whitelist_apply"
+}
+
+func looksLikeBossSerialChangeSpec(spec string) bool {
+	return strings.Contains(spec, "高风险变更协同申请") &&
+		strings.Contains(spec, "headquarters") &&
+		strings.Contains(spec, "serial_reviewer") &&
+		strings.Contains(spec, "ops_admin")
+}
+
+func (e *SmartEngine) applyBossSerialChangeGuard(tx *gorm.DB, ticketID uint, plan *DecisionPlan) error {
+	headDone, err := ticketHasSatisfiedDepartmentPositionProcess(tx, ticketID, "headquarters", "serial_reviewer")
+	if err != nil {
+		return err
+	}
+	opsDone, err := ticketHasSatisfiedDepartmentPositionProcess(tx, ticketID, "it", "ops_admin")
+	if err != nil {
+		return err
+	}
+
+	switch {
+	case !headDone:
+		forceSingleDepartmentPositionProcessPlan(plan, "headquarters", "serial_reviewer", "协作规范要求先由总部处理人岗位处理，workflow_json 仅作辅助背景，不得跳过首级岗位或使用旧固定用户。")
+	case !opsDone:
+		forceSingleDepartmentPositionProcessPlan(plan, "it", "ops_admin", "总部处理人已完成，协作规范要求再由信息部运维管理员岗位处理。")
+	default:
+		forceCompletePlan(plan, "总部处理人和信息部运维管理员均已完成，按协作规范立即结束流程。")
+	}
+	return nil
+}
+
+func (e *SmartEngine) applyDBBackupWhitelistGuard(ctx context.Context, tx *gorm.DB, ticketID uint, plan *DecisionPlan, serviceID uint) error {
+	if err := validateDBBackupWhitelistFormData(tx, ticketID); err != nil {
+		return err
+	}
+
+	precheckDone, err := ticketActionSucceeded(tx, ticketID, "db_backup_whitelist_precheck")
+	if err != nil {
+		return err
+	}
+	applyDone, err := ticketActionSucceeded(tx, ticketID, "db_backup_whitelist_apply")
+	if err != nil {
+		return err
+	}
+	dbaDone, err := ticketHasSatisfiedPositionProcess(tx, ticketID, "db_admin")
+	if err != nil {
+		return err
+	}
+
+	switch {
+	case !precheckDone:
+		if err := e.executeServiceActionOnce(ctx, tx, ticketID, serviceID, "db_backup_whitelist_precheck"); err != nil {
+			return err
+		}
+		forceSinglePositionProcessPlan(plan, "db_admin", "预检动作已执行成功，按协作规范交给数据库管理员处理。")
+	case !dbaDone:
+		forceSinglePositionProcessPlan(plan, "db_admin", "预检已完成，协作规范要求先由数据库管理员处理。")
+	case !applyDone:
+		if err := e.executeServiceActionOnce(ctx, tx, ticketID, serviceID, "db_backup_whitelist_apply"); err != nil {
+			return err
+		}
+		forceCompletePlan(plan, "数据库管理员处理已完成且放行动作已执行成功，按协作规范结束流程。")
+	default:
+		forceCompletePlan(plan, "预检、数据库管理员处理和放行动作均已完成，按协作规范结束流程。")
+	}
+	return nil
+}
+
+func validateDBBackupWhitelistFormData(tx *gorm.DB, ticketID uint) error {
+	var ticket ticketModel
+	if err := tx.Select("id, form_data").First(&ticket, ticketID).Error; err != nil {
+		return fmt.Errorf("读取数据库备份白名单申请失败: %w", err)
+	}
+	return validateDBBackupWhitelistFormJSON(ticket.FormData)
+}
+
+func validateDBBackupWhitelistFormJSON(rawFormData string) error {
+	var formData map[string]any
+	if err := json.Unmarshal([]byte(rawFormData), &formData); err != nil {
+		return fmt.Errorf("数据库备份白名单申请表单不是有效 JSON: %w", err)
+	}
+
+	required := map[string]string{
+		"database_name":    "目标数据库",
+		"source_ip":        "来源 IP",
+		"whitelist_window": "放行时间窗",
+		"access_reason":    "申请原因",
+	}
+	for key, label := range required {
+		value := strings.TrimSpace(fmt.Sprint(formData[key]))
+		if value == "" || value == "<nil>" || strings.Contains(value, "{{ticket.form_data.") {
+			return fmt.Errorf("数据库备份白名单申请缺少%s；不得触发预检或放行动作", label)
+		}
+	}
+
+	window := strings.TrimSpace(fmt.Sprint(formData["whitelist_window"]))
+	if !isConcreteWhitelistWindow(window) {
+		return fmt.Errorf("数据库备份白名单放行时间窗不明确；必须包含明确的开始和结束时刻，不得用“明天晚上/今晚/维护窗口”等模糊时段触发预检或放行")
+	}
+
+	return nil
+}
+
+func isConcreteWhitelistWindow(window string) bool {
+	window = strings.TrimSpace(window)
+	if window == "" || strings.Contains(window, "{{ticket.form_data.") {
+		return false
+	}
+	clockCount := 0
+	for _, part := range strings.FieldsFunc(window, func(r rune) bool {
+		return r == ' ' || r == '~' || r == '～' || r == '-' || r == '到' || r == '至'
+	}) {
+		if strings.Contains(part, ":") || strings.Contains(part, "点") || strings.Contains(part, "时") {
+			clockCount++
+		}
+	}
+	return clockCount >= 2
+}
+
+func (e *SmartEngine) applySingleHumanRouteGuard(tx *gorm.DB, ticketID uint, plan *DecisionPlan, expectedPosition string, reason string) error {
+	completed, err := ticketHasCompletedPositionProcess(tx, ticketID, expectedPosition)
+	if err != nil {
+		return err
+	}
+	if completed {
+		forceCompletePlan(plan, fmt.Sprintf("%s，且岗位 %s 的人工处理已完成，按协作规范结束流程。", reason, expectedPosition))
+		return nil
+	}
+	forceSinglePositionProcessPlan(plan, expectedPosition, fmt.Sprintf("%s，按协作规范交给 %s 处理。", reason, expectedPosition))
+	return nil
+}
+
+func forceSinglePositionProcessPlan(plan *DecisionPlan, positionCode string, reasoning string) {
+	forceSingleDepartmentPositionProcessPlan(plan, "it", positionCode, reasoning)
+}
+
+func forceSingleDepartmentPositionProcessPlan(plan *DecisionPlan, departmentCode, positionCode string, reasoning string) {
+	plan.NextStepType = NodeProcess
+	plan.ExecutionMode = "single"
+	plan.Activities = []DecisionActivity{{
+		Type:            NodeProcess,
+		ParticipantType: "position_department",
+		DepartmentCode:  departmentCode,
+		PositionCode:    positionCode,
+		Instructions:    reasoning,
+	}}
+	plan.Reasoning = appendDecisionReasoning(plan.Reasoning, reasoning)
+	if plan.Confidence < DefaultConfidenceThreshold {
+		plan.Confidence = DefaultConfidenceThreshold
+	}
+}
+
+func forceCompletePlan(plan *DecisionPlan, reasoning string) {
+	plan.NextStepType = "complete"
+	plan.ExecutionMode = "single"
+	plan.Activities = nil
+	plan.Reasoning = appendDecisionReasoning(plan.Reasoning, reasoning)
+	if plan.Confidence < DefaultConfidenceThreshold {
+		plan.Confidence = DefaultConfidenceThreshold
+	}
+}
+
+func appendDecisionReasoning(existing string, addition string) string {
+	existing = strings.TrimSpace(existing)
+	addition = strings.TrimSpace(addition)
+	if existing == "" {
+		return addition
+	}
+	if addition == "" || strings.Contains(existing, addition) {
+		return existing
+	}
+	return existing + "\n" + addition
+}
+
+func ticketActionSucceeded(tx *gorm.DB, ticketID uint, actionCode string) (bool, error) {
+	var count int64
+	err := tx.Table("itsm_ticket_action_executions").
+		Joins("JOIN itsm_service_actions ON itsm_service_actions.id = itsm_ticket_action_executions.service_action_id").
+		Where("itsm_ticket_action_executions.ticket_id = ? AND itsm_service_actions.code = ? AND itsm_ticket_action_executions.status = ?",
+			ticketID, actionCode, "success").
+		Count(&count).Error
+	return count > 0, err
+}
+
+func ticketHasCompletedPositionProcess(tx *gorm.DB, ticketID uint, positionCode string) (bool, error) {
+	var count int64
+	err := tx.Table("itsm_ticket_activities").
+		Joins("JOIN itsm_ticket_assignments ON itsm_ticket_assignments.activity_id = itsm_ticket_activities.id").
+		Joins("JOIN positions ON positions.id = itsm_ticket_assignments.position_id").
+		Joins("JOIN departments ON departments.id = itsm_ticket_assignments.department_id").
+		Where("itsm_ticket_activities.ticket_id = ? AND itsm_ticket_activities.activity_type = ? AND itsm_ticket_activities.status IN ? AND positions.code = ? AND departments.code = ?",
+			ticketID, NodeProcess, CompletedActivityStatuses(), positionCode, "it").
+		Count(&count).Error
+	return count > 0, err
+}
+
+func ticketHasSatisfiedPositionProcess(tx *gorm.DB, ticketID uint, positionCode string) (bool, error) {
+	return ticketHasSatisfiedDepartmentPositionProcess(tx, ticketID, "it", positionCode)
+}
+
+func ticketHasSatisfiedDepartmentPositionProcess(tx *gorm.DB, ticketID uint, departmentCode, positionCode string) (bool, error) {
+	var rows []struct {
+		TransitionOutcome string
+	}
+	err := tx.Table("itsm_ticket_activities").
+		Joins("JOIN itsm_ticket_assignments ON itsm_ticket_assignments.activity_id = itsm_ticket_activities.id").
+		Joins("JOIN positions ON positions.id = itsm_ticket_assignments.position_id").
+		Joins("JOIN departments ON departments.id = itsm_ticket_assignments.department_id").
+		Where("itsm_ticket_activities.ticket_id = ? AND itsm_ticket_activities.activity_type = ? AND itsm_ticket_activities.status IN ? AND positions.code = ? AND departments.code = ?",
+			ticketID, NodeProcess, CompletedActivityStatuses(), positionCode, departmentCode).
+		Select("itsm_ticket_activities.transition_outcome").
+		Find(&rows).Error
+	if err != nil {
+		return false, err
+	}
+	for _, row := range rows {
+		if isPositiveActivityOutcome(row.TransitionOutcome) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (e *SmartEngine) executeServiceActionOnce(ctx context.Context, tx *gorm.DB, ticketID uint, serviceID uint, actionCode string) error {
+	done, err := ticketActionSucceeded(tx, ticketID, actionCode)
+	if err != nil {
+		return err
+	}
+	if done {
+		return nil
+	}
+	if e.actionExecutor == nil {
+		return fmt.Errorf("动作执行器不可用，无法执行 %s", actionCode)
+	}
+
+	var action serviceActionModel
+	if err := tx.Table("itsm_service_actions").
+		Where("service_id = ? AND code = ? AND is_active = ? AND deleted_at IS NULL", serviceID, actionCode, true).
+		Select("id, name, code, service_id, is_active, config_json").
+		First(&action).Error; err != nil {
+		return fmt.Errorf("服务动作 %s 不存在或未启用: %w", actionCode, err)
+	}
+
+	execCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	defer cancel()
+	if err := e.actionExecutor.Execute(execCtx, ticketID, 0, action.ID); err != nil {
+		return fmt.Errorf("执行服务动作 %s 失败: %w", actionCode, err)
+	}
+	e.recordTimeline(tx, ticketID, nil, 0, "ai_decision_action_executed",
+		fmt.Sprintf("AI 决策服务护栏已执行动作：%s", action.Name), "")
+	return nil
 }
 
 // handleComplete finishes the ticket when agent decides to complete.
@@ -752,6 +1041,8 @@ func (e *SmartEngine) createPositionAssignment(tx *gorm.DB, ticketID, activityID
 	}
 	if len(userIDs) == 0 {
 		slog.Warn("position assignment: no users found", "positionCode", positionCode, "departmentCode", departmentCode)
+		e.recordTimeline(tx, ticketID, &activityID, 0, "participant_fallback_warning",
+			fmt.Sprintf("岗位参与人 %s@%s 当前没有可用处理人，工单未 fallback 到其他岗位，等待 IT 管理员补充人员配置", positionCode, departmentCode), "")
 	}
 
 	assignment := &assignmentModel{
@@ -788,7 +1079,7 @@ func resolveUsersByPositionDepartmentInTx(tx *gorm.DB, positionID, departmentID 
 	var userIDs []uint
 	err := tx.Table("user_positions").
 		Joins("JOIN users ON users.id = user_positions.user_id").
-		Where("user_positions.position_id = ? AND user_positions.department_id = ? AND users.is_active = ?",
+		Where("user_positions.position_id = ? AND user_positions.department_id = ? AND user_positions.deleted_at IS NULL AND users.is_active = ?",
 			positionID, departmentID, true).
 		Pluck("DISTINCT users.id", &userIDs).Error
 	return userIDs, err
@@ -907,6 +1198,15 @@ func (e *SmartEngine) validateDecisionPlan(tx *gorm.DB, ticketID uint, plan *Dec
 		return fmt.Errorf("next_step_type %q 必须包含至少一个活动", plan.NextStepType)
 	}
 
+	// Validate confidence is in range before any confidence-gated normalization.
+	if plan.Confidence < 0 || plan.Confidence > 1 {
+		return fmt.Errorf("confidence %.2f 不在 [0, 1] 范围内", plan.Confidence)
+	}
+
+	if err := e.validateAndNormalizeStructuredRoutingDecision(tx, ticketID, plan, svc); err != nil {
+		return err
+	}
+
 	// Validate activities
 	for i, a := range plan.Activities {
 		if !AllowedSmartStepTypes[a.Type] {
@@ -918,7 +1218,7 @@ func (e *SmartEngine) validateDecisionPlan(tx *gorm.DB, ticketID uint, plan *Dec
 			var user struct {
 				IsActive bool
 			}
-			if err := tx.Table("users").Where("id = ?", *a.ParticipantID).
+			if err := tx.Table("users").Where("id = ? AND deleted_at IS NULL", *a.ParticipantID).
 				Select("is_active").First(&user).Error; err != nil {
 				return fmt.Errorf("activities[%d].participant_id %d 用户不存在", i, *a.ParticipantID)
 			}
@@ -965,11 +1265,6 @@ func (e *SmartEngine) validateDecisionPlan(tx *gorm.DB, ticketID uint, plan *Dec
 		}
 	}
 
-	// Validate confidence is in range
-	if plan.Confidence < 0 || plan.Confidence > 1 {
-		return fmt.Errorf("confidence %.2f 不在 [0, 1] 范围内", plan.Confidence)
-	}
-
 	if err := e.validateRoutingConflictDecision(tx, ticketID, plan, svc); err != nil {
 		return err
 	}
@@ -988,18 +1283,12 @@ func (e *SmartEngine) hasResolvableHumanParticipant(tx *gorm.DB, a DecisionActiv
 		return true
 	}
 	if a.ParticipantType == "position_department" && a.PositionCode != "" && a.DepartmentCode != "" {
-		var positionID, departmentID uint
-		tx.Table("positions").Where("code = ?", a.PositionCode).Select("id").Scan(&positionID)
-		tx.Table("departments").Where("code = ?", a.DepartmentCode).Select("id").Scan(&departmentID)
-		userIDs, err := resolveUsersByPositionDepartmentInTx(tx, positionID, departmentID)
-		if err == nil && len(userIDs) > 0 {
-			return true
-		}
+		return true
 	}
 	if a.ParticipantType == "requester" {
 		return true
 	}
-	return e.configProvider != nil && e.configProvider.FallbackAssigneeID() > 0
+	return false
 }
 
 func (e *SmartEngine) validateRoutingConflictDecision(tx *gorm.DB, ticketID uint, plan *DecisionPlan, svc *serviceModel) error {
@@ -1025,6 +1314,195 @@ func planCreatesSingleRouteHumanWork(plan *DecisionPlan) bool {
 			continue
 		}
 		return true
+	}
+	return false
+}
+
+func (e *SmartEngine) validateAndNormalizeStructuredRoutingDecision(tx *gorm.DB, ticketID uint, plan *DecisionPlan, svc *serviceModel) error {
+	if plan == nil || svc == nil || plan.Confidence < DefaultConfidenceThreshold {
+		return nil
+	}
+	if !planCreatesSingleRouteHumanWork(plan) {
+		return nil
+	}
+
+	expectedPositions, ok, err := collaborationSpecRequestKindPositions(tx, ticketID, svc.CollaborationSpec)
+	if err != nil || !ok {
+		expectedPosition, ok, err := collaborationSpecAccessPurposePosition(tx, ticketID, svc.CollaborationSpec)
+		if err != nil || !ok {
+			return err
+		}
+		if expectedPosition == "" {
+			return fmt.Errorf("form.access_purpose 缺失、为空或未命中协作规范定义的访问目的分支；不得高置信选择单一路由")
+		}
+		normalizePlanHumanParticipant(tx, plan, expectedPosition)
+		return nil
+	}
+	if len(expectedPositions) == 0 {
+		return fmt.Errorf("form.request_kind 缺失、为空或未命中协作规范定义的路由枚举；不得高置信选择网络或安全单一路由")
+	}
+	if len(expectedPositions) > 1 {
+		return fmt.Errorf("form.request_kind 命中多个协作规范分支；不得高置信选择单一路由")
+	}
+
+	expectedPosition := ""
+	for position := range expectedPositions {
+		expectedPosition = position
+	}
+	normalizePlanHumanParticipant(tx, plan, expectedPosition)
+	return nil
+}
+
+func normalizePlanHumanParticipant(tx *gorm.DB, plan *DecisionPlan, expectedPosition string) {
+	for i := range plan.Activities {
+		if !isHumanActivityType(plan.Activities[i].Type) || plan.Activities[i].ParticipantType == "requester" {
+			continue
+		}
+		if decisionActivityTargetsPosition(tx, plan.Activities[i], expectedPosition) {
+			continue
+		}
+		slog.Warn("decision plan route conflicts with collaboration spec, normalizing participant",
+			"activity_index", i,
+			"expected_position", expectedPosition,
+			"actual_participant_type", plan.Activities[i].ParticipantType,
+			"actual_position", plan.Activities[i].PositionCode)
+		plan.Activities[i].ParticipantID = nil
+		plan.Activities[i].ParticipantType = "position_department"
+		plan.Activities[i].DepartmentCode = "it"
+		plan.Activities[i].PositionCode = expectedPosition
+		if !strings.Contains(plan.Reasoning, "协作规范") {
+			plan.Reasoning = strings.TrimSpace(plan.Reasoning + "\n协作规范优先于 workflow_json：表单访问目的已命中协作规范岗位分支，已按协作规范校正处理岗位。")
+		}
+	}
+}
+
+func collaborationSpecRequestKindPositions(tx *gorm.DB, ticketID uint, spec string) (map[string]struct{}, bool, error) {
+	if !looksLikeVPNRequestKindSpec(spec) {
+		return nil, false, nil
+	}
+
+	var ticket struct {
+		FormData string
+	}
+	if err := tx.Table("itsm_tickets").Where("id = ?", ticketID).Select("form_data").First(&ticket).Error; err != nil {
+		return nil, true, err
+	}
+
+	var formData map[string]any
+	if strings.TrimSpace(ticket.FormData) != "" {
+		_ = json.Unmarshal([]byte(ticket.FormData), &formData)
+	}
+	values := conditionValues(formData["request_kind"])
+	if len(values) == 0 {
+		return map[string]struct{}{}, true, nil
+	}
+
+	positions := map[string]struct{}{}
+	for _, value := range values {
+		switch value {
+		case "online_support", "troubleshooting", "production_emergency", "network_access_issue":
+			positions["network_admin"] = struct{}{}
+		case "external_collaboration", "long_term_remote_work", "cross_border_access", "security_compliance":
+			positions["security_admin"] = struct{}{}
+		default:
+			return map[string]struct{}{}, true, nil
+		}
+	}
+	return positions, true, nil
+}
+
+func looksLikeVPNRequestKindSpec(spec string) bool {
+	return strings.Contains(spec, "form.request_kind") &&
+		strings.Contains(spec, "network_admin") &&
+		strings.Contains(spec, "security_admin") &&
+		strings.Contains(spec, "online_support") &&
+		strings.Contains(spec, "security_compliance")
+}
+
+func collaborationSpecAccessPurposePosition(tx *gorm.DB, ticketID uint, spec string) (string, bool, error) {
+	if !looksLikeServerAccessPurposeSpec(spec) {
+		return "", false, nil
+	}
+
+	var ticket struct {
+		Title    string
+		FormData string
+	}
+	if err := tx.Table("itsm_tickets").Where("id = ?", ticketID).
+		Select("title, form_data").First(&ticket).Error; err != nil {
+		return "", true, err
+	}
+
+	var formData map[string]any
+	if strings.TrimSpace(ticket.FormData) != "" {
+		_ = json.Unmarshal([]byte(ticket.FormData), &formData)
+	}
+	text := strings.TrimSpace(fmt.Sprint(formData["access_purpose"]))
+	if text == "" {
+		text = strings.TrimSpace(ticket.Title)
+	}
+	matches := serverAccessPurposeMatches(text)
+	if len(matches) != 1 {
+		return "", true, nil
+	}
+	return matches[0], true, nil
+}
+
+func looksLikeServerAccessPurposeSpec(spec string) bool {
+	return strings.Contains(spec, "访问目的") &&
+		strings.Contains(spec, "ops_admin") &&
+		strings.Contains(spec, "network_admin") &&
+		strings.Contains(spec, "security_admin")
+}
+
+func containsAnyText(text string, needles ...string) bool {
+	for _, needle := range needles {
+		if strings.Contains(text, strings.ToLower(needle)) {
+			return true
+		}
+	}
+	return false
+}
+
+func serverAccessPurposeMatches(text string) []string {
+	normalized := strings.ToLower(strings.TrimSpace(text))
+	if normalized == "" {
+		return nil
+	}
+
+	matches := make([]string, 0, 3)
+	if containsAnyText(normalized,
+		"安全审计", "取证", "证据", "保全", "漏洞", "入侵", "合规核查", "合规验证", "异常访问", "高敏访问", "安全取证", "安全核查",
+	) {
+		matches = append(matches, "security_admin")
+	}
+	if containsAnyText(normalized,
+		"抓包", "链路", "acl", "负载均衡", "防火墙", "网络侧", "网络访问路径", "连通性",
+	) {
+		matches = append(matches, "network_admin")
+	}
+	if containsAnyText(normalized,
+		"应用排障", "应用进程", "生产应用", "主机巡检", "日志查看", "查看应用日志", "进程处理", "磁盘清理", "运行状态", "一般生产运维",
+	) {
+		matches = append(matches, "ops_admin")
+	}
+	return matches
+}
+
+func decisionActivityTargetsPosition(tx *gorm.DB, da DecisionActivity, expectedPosition string) bool {
+	if expectedPosition == "" {
+		return false
+	}
+	if da.ParticipantType == "position_department" {
+		return strings.EqualFold(strings.TrimSpace(da.PositionCode), expectedPosition)
+	}
+	if da.ParticipantID != nil && *da.ParticipantID > 0 {
+		var count int64
+		tx.Table("user_positions").
+			Joins("JOIN positions ON positions.id = user_positions.position_id").
+			Where("user_positions.user_id = ? AND positions.code = ? AND user_positions.deleted_at IS NULL", *da.ParticipantID, expectedPosition).
+			Count(&count)
+		return count > 0
 	}
 	return false
 }
@@ -1137,7 +1615,7 @@ func (e *SmartEngine) validateNoDuplicateCompletedHumanActivity(tx *gorm.DB, tic
 		}
 
 		var completed []activityModel
-		if err := tx.Where("ticket_id = ? AND status = ? AND activity_type = ?", ticketID, ActivityCompleted, da.Type).
+		if err := tx.Where("ticket_id = ? AND status IN ? AND activity_type = ?", ticketID, CompletedActivityStatuses(), da.Type).
 			Order("id ASC").
 			Find(&completed).Error; err != nil {
 			return err
@@ -1977,10 +2455,33 @@ func buildAgenticSystemPrompt(collaborationSpec, decisionMode, workflowJSON stri
 		}
 	}
 	prompt += "## 分支闭环约束\n\n业务分支与候选处理人不是一回事。一旦工单已经命中某条业务分支，后续只能在该分支内推进或结束，不能因为其他岗位也相关就切换到别的业务分支。若协作规范写明“处理完成后直接结束流程”，则 approved/rejected 都应优先解释为当前分支的终态推进，workflow_json 的 approved/rejected 出边属于 continuation contract，而不是普通建议。\n\n---\n\n"
+	if guidance := agenticStructuredRoutingGuidance(collaborationSpec); guidance != "" {
+		prompt += guidance + "\n\n---\n\n"
+	}
 	prompt += agenticToolGuidance
 	prompt += "\n\n---\n\n"
 	prompt += agenticOutputFormat
 	return prompt
+}
+
+func agenticStructuredRoutingGuidance(collaborationSpec string) string {
+	switch {
+	case looksLikeServerAccessPurposeSpec(collaborationSpec):
+		return `## 结构化路由判定守卫
+
+生产服务器临时访问申请必须先按协作规范和 form.access_purpose 判定业务分支，再解析参与人：
+- 应用排障、应用进程、日志查看、运行状态、主机巡检、进程处理、磁盘清理、一般生产运维 => decision.resolve_participant 使用 {"type":"position_department","department_code":"it","position_code":"ops_admin"}。
+- 抓包、链路诊断、ACL、负载均衡、防火墙策略、网络访问路径、连通性 => decision.resolve_participant 使用 {"type":"position_department","department_code":"it","position_code":"network_admin"}。
+- 安全审计、取证、证据保全、漏洞、入侵排查、合规核查、异常访问、高敏访问 => decision.resolve_participant 使用 {"type":"position_department","department_code":"it","position_code":"security_admin"}。
+
+“安全窗口”“生产安全窗口”“高敏发布安全窗口”只是访问时段或变更窗口修饰词，不是 security_admin 分支证据。若 access_purpose 同时命中多个业务分支，或缺失/未知，不得高置信选择单一路由，应降级为澄清或人工诊断。decision.resolve_participant 的 department_code/position_code 必须与最终输出活动的业务分支一致；如果发现解析了错误岗位，必须重新按协作规范解析正确岗位后再输出决策。`
+	case looksLikeVPNRequestKindSpec(collaborationSpec):
+		return `## 结构化路由判定守卫
+
+VPN 申请必须以 form.request_kind 的枚举值为路由事实源，不能被 device_usage、reason 或 workflow_json 中的自由文本诱导。网络类枚举解析 it/network_admin，安全类枚举解析 it/security_admin；缺失、未知或同时命中多个分支时，不得高置信选择单一路由。decision.resolve_participant 的 department_code/position_code 必须与最终输出活动的业务分支一致。`
+	default:
+		return ""
+	}
 }
 
 const agenticToolGuidance = `## 工具使用指引

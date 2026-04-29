@@ -117,7 +117,7 @@ func toolTicketContext() decisionToolDef {
 				assignments, _ := ctx.data.GetActivityAssignments(a.ID)
 				entry := activityFactMap(&a, assignments)
 				history = append(history, entry)
-				if a.Status == ActivityCompleted && isHumanActivityType(a.ActivityType) {
+				if IsCompletedActivityStatus(a.Status) && isHumanActivityType(a.ActivityType) {
 					satisfied := isPositiveActivityOutcome(a.TransitionOutcome)
 					completedRequirements = append(completedRequirements, map[string]any{
 						"type":                       a.ActivityType,
@@ -249,7 +249,7 @@ func activityFactMap(a *activityModel, assignments []ActivityAssignmentInfo) map
 	if a.FinishedAt != nil {
 		entry["completed_at"] = a.FinishedAt.Format(time.RFC3339)
 	}
-	if a.Status == ActivityCompleted && isHumanActivityType(a.ActivityType) {
+	if IsCompletedActivityStatus(a.Status) && isHumanActivityType(a.ActivityType) {
 		satisfied := isPositiveActivityOutcome(a.TransitionOutcome)
 		entry["satisfied"] = satisfied
 		if !satisfied {
@@ -698,6 +698,16 @@ func toolExecuteAction() decisionToolDef {
 			}
 			if !action.IsActive {
 				return toolError("动作已停用")
+			}
+
+			if looksLikeDBBackupWhitelistSpec(ctx.collaborationSpec) && isDBBackupWhitelistActionCode(action.Code) {
+				ticket, err := ctx.data.GetTicketContext(ctx.ticketID)
+				if err != nil {
+					return toolError(fmt.Sprintf("读取工单上下文失败: %v", err))
+				}
+				if err := validateDBBackupWhitelistFormJSON(ticket.FormData); err != nil {
+					return toolError(err.Error())
+				}
 			}
 
 			// Idempotency: check if this action was already successfully executed for this ticket

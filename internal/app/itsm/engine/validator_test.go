@@ -290,6 +290,63 @@ func TestValidateFormSchemaReferences(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("falls back to generated intake form schema", func(t *testing.T) {
+		wf := json.RawMessage(`{
+			"nodes": [
+				{"id":"start","type":"start","data":{"label":"开始"}},
+				{"id":"gw","type":"exclusive","data":{"label":"分支"}},
+				{"id":"form1","type":"form","data":{"label":"申请表","participants":[{"type":"requester"}],"formSchema":{"fields":[{"key":"request_kind","type":"select","label":"类型"}]}}},
+				{"id":"p1","type":"process","data":{"label":"A","participants":[{"type":"requester"}]}},
+				{"id":"end","type":"end","data":{"label":"结束"}}
+			],
+			"edges": [
+				{"id":"e1","source":"start","target":"gw","data":{}},
+				{"id":"e2","source":"gw","target":"form1","data":{"condition":{"field":"form.request_kind","operator":"equals","value":"vpn"}}},
+				{"id":"e3","source":"gw","target":"p1","data":{"default":true}},
+				{"id":"e4","source":"form1","target":"end","data":{}},
+				{"id":"e5","source":"p1","target":"end","data":{"outcome":"approved"}},
+				{"id":"e5r","source":"p1","target":"end","data":{"outcome":"rejected"}}
+			]
+		}`)
+		errs := ValidateWorkflow(wf)
+		for _, e := range errs {
+			if e.IsWarning() && strings.Contains(e.Message, "formSchema") {
+				t.Fatalf("unexpected formSchema warning when intake schema has field: %s", e.Message)
+			}
+		}
+	})
+
+	t.Run("warns when generated intake form schema misses field", func(t *testing.T) {
+		wf := json.RawMessage(`{
+			"nodes": [
+				{"id":"start","type":"start","data":{"label":"开始"}},
+				{"id":"gw","type":"exclusive","data":{"label":"分支"}},
+				{"id":"form1","type":"form","data":{"label":"申请表","participants":[{"type":"requester"}],"formSchema":{"fields":[{"key":"request_kind","type":"select","label":"类型"}]}}},
+				{"id":"p1","type":"process","data":{"label":"A","participants":[{"type":"requester"}]}},
+				{"id":"end","type":"end","data":{"label":"结束"}}
+			],
+			"edges": [
+				{"id":"e1","source":"start","target":"gw","data":{}},
+				{"id":"e2","source":"gw","target":"form1","data":{"condition":{"field":"form.urgency","operator":"equals","value":"high"}}},
+				{"id":"e3","source":"gw","target":"p1","data":{"default":true}},
+				{"id":"e4","source":"form1","target":"end","data":{}},
+				{"id":"e5","source":"p1","target":"end","data":{"outcome":"approved"}},
+				{"id":"e5r","source":"p1","target":"end","data":{"outcome":"rejected"}}
+			]
+		}`)
+		errs := ValidateWorkflow(wf)
+		var found bool
+		for _, e := range errs {
+			if e.IsWarning() && strings.Contains(e.Message, "form.urgency") && strings.Contains(e.Message, "申请确认表单") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected missing intake schema field warning, got %+v", errs)
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------

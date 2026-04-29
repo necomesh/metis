@@ -16,13 +16,26 @@ import (
 func registerDbBackupSteps(sc *godog.ScenarioContext, bc *bddContext) {
 	sc.Given(`^已定义数据库备份白名单临时放行协作规范$`, bc.givenDbBackupCollaborationSpec)
 	sc.Given(`^已基于协作规范发布数据库备份白名单放行服务（智能引擎）$`, bc.givenDbBackupSmartServicePublished)
+	sc.Given(`^放行接收端临时失败$`, bc.givenApplyReceiverTemporarilyFails)
 	sc.Given(`^"([^"]*)" 已创建数据库备份白名单放行工单，场景为 "([^"]*)"$`, bc.givenDbBackupTicketCreated)
 	sc.Given(`^"([^"]*)" 已创建数据库备份白名单放行工单 "([^"]*)"，场景为 "([^"]*)"$`, bc.givenDbBackupTicketCreatedWithAlias)
 
 	sc.Then(`^预检动作已为当前工单触发$`, bc.thenPrecheckActionTriggered)
+	sc.Then(`^预检动作未为当前工单触发$`, bc.thenPrecheckActionNotTriggered)
+	sc.Then(`^预检动作请求包含完整风险上下文$`, bc.thenPrecheckPayloadContainsRiskContext)
 	sc.Then(`^放行动作已为当前工单触发$`, bc.thenApplyActionTriggered)
+	sc.Then(`^放行动作请求包含完整放行上下文$`, bc.thenApplyPayloadContainsReleaseContext)
 	sc.Then(`^放行动作未为当前工单触发$`, bc.thenApplyActionNotTriggered)
+	sc.Then(`^放行动作执行失败$`, bc.thenApplyActionFailed)
+	sc.Then(`^放行动作成功记录数为 (\d+)$`, bc.thenApplyActionSuccessCountIs)
+	sc.Then(`^放行动作失败记录数为 (\d+)$`, bc.thenApplyActionFailureCountIs)
+	sc.Then(`^放行动作失败记录数至少为 (\d+)$`, bc.thenApplyActionFailureCountAtLeast)
+	sc.Then(`^当前工单未完成且未履约$`, bc.thenTicketNotCompletedNorFulfilled)
 	sc.Then(`^工单 "([^"]*)" 的动作记录与工单 "([^"]*)" 完全隔离$`, bc.thenActionRecordsIsolated)
+	sc.Then(`^记录当前工单活动数与动作请求数$`, bc.thenMarkCurrentActivityAndActionRequestCounts)
+	sc.Then(`^当前工单活动数与动作请求数保持不变$`, bc.thenCurrentActivityAndActionRequestCountsUnchanged)
+
+	sc.When(`^放行接收端恢复成功$`, bc.whenApplyReceiverRecovers)
 }
 
 // --- Given steps ---
@@ -36,6 +49,16 @@ func (bc *bddContext) givenDbBackupSmartServicePublished() error {
 	return publishDbBackupSmartService(bc)
 }
 
+func (bc *bddContext) givenApplyReceiverTemporarilyFails() error {
+	if bc.actionReceiver == nil {
+		return fmt.Errorf("action receiver not initialized")
+	}
+	bc.actionReceiver.SetResponder("/apply", func(ActionRecord) (int, string) {
+		return 500, `{"status":"error","message":"temporary apply failure"}`
+	})
+	return nil
+}
+
 func (bc *bddContext) givenDbBackupTicketCreated(username, caseKey string) error {
 	user, ok := bc.usersByName[username]
 	if !ok {
@@ -44,7 +67,7 @@ func (bc *bddContext) givenDbBackupTicketCreated(username, caseKey string) error
 
 	payload, ok := dbBackupCasePayloads[caseKey]
 	if !ok {
-		return fmt.Errorf("unknown case key %q, expected one of: requester-1, requester-2", caseKey)
+		return fmt.Errorf("unknown case key %q", caseKey)
 	}
 
 	formJSON, _ := json.Marshal(payload.FormData)
@@ -105,12 +128,99 @@ func (bc *bddContext) thenPrecheckActionTriggered() error {
 	return bc.assertActionTriggered("db_backup_whitelist_precheck", "/precheck")
 }
 
+func (bc *bddContext) thenPrecheckActionNotTriggered() error {
+	return bc.assertActionNotTriggered("db_backup_whitelist_precheck", "/precheck")
+}
+
+func (bc *bddContext) thenPrecheckPayloadContainsRiskContext() error {
+	return bc.assertLatestActionPayloadContains("db_backup_whitelist_precheck", "/precheck", []string{
+		"ticket_code", "database_name", "source_ip", "whitelist_window", "access_reason",
+	})
+}
+
 func (bc *bddContext) thenApplyActionTriggered() error {
 	return bc.assertActionTriggered("db_backup_whitelist_apply", "/apply")
 }
 
+func (bc *bddContext) thenApplyPayloadContainsReleaseContext() error {
+	return bc.assertLatestActionPayloadContains("db_backup_whitelist_apply", "/apply", []string{
+		"ticket_code", "database_name", "source_ip", "whitelist_window",
+	})
+}
+
 func (bc *bddContext) thenApplyActionNotTriggered() error {
 	return bc.assertActionNotTriggered("db_backup_whitelist_apply", "/apply")
+}
+
+func (bc *bddContext) thenApplyActionFailed() error {
+	return bc.assertActionExecutionCountAtLeast("db_backup_whitelist_apply", "failed", 1)
+}
+
+func (bc *bddContext) thenApplyActionSuccessCountIs(want int) error {
+	return bc.assertActionExecutionCount("db_backup_whitelist_apply", "success", want)
+}
+
+func (bc *bddContext) thenApplyActionFailureCountIs(want int) error {
+	return bc.assertActionExecutionCount("db_backup_whitelist_apply", "failed", want)
+}
+
+func (bc *bddContext) thenApplyActionFailureCountAtLeast(want int) error {
+	return bc.assertActionExecutionCountAtLeast("db_backup_whitelist_apply", "failed", want)
+}
+
+func (bc *bddContext) thenTicketNotCompletedNorFulfilled() error {
+	if bc.ticket == nil {
+		return fmt.Errorf("no ticket in context")
+	}
+	if err := bc.db.First(bc.ticket, bc.ticket.ID).Error; err != nil {
+		return fmt.Errorf("refresh ticket: %w", err)
+	}
+	if bc.ticket.Status == "completed" {
+		return fmt.Errorf("ticket status is completed, expected non-completed")
+	}
+	if bc.ticket.Outcome == "fulfilled" {
+		return fmt.Errorf("ticket outcome is fulfilled, expected non-fulfilled")
+	}
+	return nil
+}
+
+func (bc *bddContext) thenMarkCurrentActivityAndActionRequestCounts() error {
+	if bc.ticket == nil {
+		return fmt.Errorf("no ticket in context")
+	}
+	if err := bc.db.Model(&TicketActivity{}).Where("ticket_id = ?", bc.ticket.ID).Count(&bc.activityCountMark).Error; err != nil {
+		return fmt.Errorf("count activities: %w", err)
+	}
+	bc.actionRequestMark = bc.actionRequestCountForCurrentTicket()
+	return nil
+}
+
+func (bc *bddContext) thenCurrentActivityAndActionRequestCountsUnchanged() error {
+	if bc.ticket == nil {
+		return fmt.Errorf("no ticket in context")
+	}
+	var gotActivities int64
+	if err := bc.db.Model(&TicketActivity{}).Where("ticket_id = ?", bc.ticket.ID).Count(&gotActivities).Error; err != nil {
+		return fmt.Errorf("count activities: %w", err)
+	}
+	if gotActivities != bc.activityCountMark {
+		return fmt.Errorf("activity count changed: got %d, want %d", gotActivities, bc.activityCountMark)
+	}
+	gotRequests := bc.actionRequestCountForCurrentTicket()
+	if gotRequests != bc.actionRequestMark {
+		return fmt.Errorf("action request count changed: got %d, want %d", gotRequests, bc.actionRequestMark)
+	}
+	return nil
+}
+
+func (bc *bddContext) whenApplyReceiverRecovers() error {
+	if bc.actionReceiver == nil {
+		return fmt.Errorf("action receiver not initialized")
+	}
+	bc.actionReceiver.SetResponder("/apply", func(ActionRecord) (int, string) {
+		return 200, `{"status":"ok"}`
+	})
+	return nil
 }
 
 func (bc *bddContext) assertActionTriggered(actionCode, receiverPath string) error {
@@ -188,6 +298,141 @@ func (bc *bddContext) assertActionNotTriggered(actionCode, receiverPath string) 
 	}
 
 	return nil
+}
+
+func (bc *bddContext) assertLatestActionPayloadContains(actionCode, receiverPath string, keys []string) error {
+	if bc.ticket == nil {
+		return fmt.Errorf("no ticket in context")
+	}
+	action, ok := bc.serviceActions[actionCode]
+	if !ok {
+		return fmt.Errorf("service action %q not found in context", actionCode)
+	}
+
+	var exec TicketActionExecution
+	if err := bc.db.Where("ticket_id = ? AND service_action_id = ?", bc.ticket.ID, action.ID).
+		Order("id DESC").First(&exec).Error; err != nil {
+		return fmt.Errorf("query latest execution for action %q: %w", actionCode, err)
+	}
+	if err := bc.assertPayloadKeysMatchTicket(string(exec.RequestPayload), keys); err != nil {
+		return fmt.Errorf("execution request payload mismatch: %w", err)
+	}
+
+	var matchedReceiverBody string
+	for _, rec := range bc.actionReceiver.RecordsByPath(receiverPath) {
+		if strings.Contains(rec.Body, bc.ticket.Code) {
+			matchedReceiverBody = rec.Body
+		}
+	}
+	if matchedReceiverBody == "" {
+		return fmt.Errorf("receiver path %q has no request for ticket code %q", receiverPath, bc.ticket.Code)
+	}
+	if err := bc.assertPayloadKeysMatchTicket(matchedReceiverBody, keys); err != nil {
+		return fmt.Errorf("receiver request payload mismatch: %w", err)
+	}
+	return nil
+}
+
+func (bc *bddContext) assertPayloadKeysMatchTicket(raw string, keys []string) error {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return fmt.Errorf("parse payload JSON: %w; raw=%s", err, raw)
+	}
+	formData := map[string]any{}
+	if len(bc.ticket.FormData) > 0 {
+		if err := json.Unmarshal([]byte(bc.ticket.FormData), &formData); err != nil {
+			return fmt.Errorf("parse ticket form_data: %w", err)
+		}
+	}
+
+	for _, key := range keys {
+		got, exists := payload[key]
+		if !exists {
+			return fmt.Errorf("payload missing key %q: %v", key, payload)
+		}
+		gotText := strings.TrimSpace(fmt.Sprint(got))
+		if gotText == "" {
+			return fmt.Errorf("payload key %q is empty: %v", key, payload)
+		}
+		if strings.Contains(gotText, "{{ticket.form_data.") {
+			return fmt.Errorf("payload key %q contains unresolved template value %q", key, gotText)
+		}
+
+		wantText := ""
+		switch key {
+		case "ticket_code":
+			wantText = bc.ticket.Code
+		default:
+			want, ok := formData[key]
+			if !ok {
+				return fmt.Errorf("ticket form_data missing expected key %q", key)
+			}
+			wantText = strings.TrimSpace(fmt.Sprint(want))
+		}
+		if gotText != wantText {
+			return fmt.Errorf("payload key %q = %q, want %q", key, gotText, wantText)
+		}
+	}
+	return nil
+}
+
+func (bc *bddContext) assertActionExecutionCount(actionCode, status string, want int) error {
+	if bc.ticket == nil {
+		return fmt.Errorf("no ticket in context")
+	}
+	action, ok := bc.serviceActions[actionCode]
+	if !ok {
+		return fmt.Errorf("service action %q not found in context", actionCode)
+	}
+	var count int64
+	query := bc.db.Model(&TicketActionExecution{}).
+		Where("ticket_id = ? AND service_action_id = ?", bc.ticket.ID, action.ID)
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	if err := query.Count(&count).Error; err != nil {
+		return fmt.Errorf("query action execution count: %w", err)
+	}
+	if count != int64(want) {
+		return fmt.Errorf("action %q status %q count = %d, want %d", actionCode, status, count, want)
+	}
+	return nil
+}
+
+func (bc *bddContext) assertActionExecutionCountAtLeast(actionCode, status string, want int) error {
+	if bc.ticket == nil {
+		return fmt.Errorf("no ticket in context")
+	}
+	action, ok := bc.serviceActions[actionCode]
+	if !ok {
+		return fmt.Errorf("service action %q not found in context", actionCode)
+	}
+	var count int64
+	query := bc.db.Model(&TicketActionExecution{}).
+		Where("ticket_id = ? AND service_action_id = ?", bc.ticket.ID, action.ID)
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	if err := query.Count(&count).Error; err != nil {
+		return fmt.Errorf("query action execution count: %w", err)
+	}
+	if count < int64(want) {
+		return fmt.Errorf("action %q status %q count = %d, want at least %d", actionCode, status, count, want)
+	}
+	return nil
+}
+
+func (bc *bddContext) actionRequestCountForCurrentTicket() int {
+	if bc.actionReceiver == nil || bc.ticket == nil {
+		return 0
+	}
+	count := 0
+	for _, rec := range bc.actionReceiver.Records() {
+		if strings.Contains(rec.Body, bc.ticket.Code) {
+			count++
+		}
+	}
+	return count
 }
 
 func (bc *bddContext) thenActionRecordsIsolated(ticketRefA, ticketRefB string) error {

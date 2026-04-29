@@ -56,6 +56,32 @@ var dbBackupCasePayloads = map[string]dbBackupCasePayload{
 			"access_reason":    "跳板机发起增量备份，需要临时放行白名单。",
 		},
 	},
+	"missing-window": {
+		Summary: "数据库备份白名单临时放行申请：缺少放行窗口。",
+		FormData: map[string]any{
+			"database_name": "prod-mysql-01",
+			"source_ip":     "10.20.30.52",
+			"access_reason": "生产数据库备份任务需要临时放行白名单，但申请未给出放行时间窗。",
+		},
+	},
+	"ambiguous-window": {
+		Summary: "数据库备份白名单临时放行申请：放行窗口过于模糊。",
+		FormData: map[string]any{
+			"database_name":    "prod-mysql-02",
+			"source_ip":        "10.20.30.53",
+			"whitelist_window": "明天晚上",
+			"access_reason":    "生产数据库备份任务需要临时放行白名单，但只给了模糊时段。",
+		},
+	},
+	"apply-failure": {
+		Summary: "数据库备份白名单临时放行申请：放行动作失败后恢复。",
+		FormData: map[string]any{
+			"database_name":    "prod-oracle-01",
+			"source_ip":        "10.20.30.54",
+			"whitelist_window": "2026-05-01 22:00:00 ~ 2026-05-01 23:00:00",
+			"access_reason":    "生产数据库备份任务需要临时放行白名单，并验证失败后恢复重试。",
+		},
+	},
 }
 
 // generateDbBackupWorkflow calls the LLM to generate a db backup whitelist workflow JSON
@@ -200,7 +226,7 @@ func publishDbBackupSmartService(bc *bddContext) error {
 	precheckConfig, _ := json.Marshal(engine.ActionConfig{
 		URL:     bc.actionReceiver.URL("/precheck"),
 		Method:  "POST",
-		Body:    `{"ticket_code":"{{ticket.code}}","database":"{{ticket.form_data.database_name}}","source_ip":"{{ticket.form_data.source_ip}}"}`,
+		Body:    `{"ticket_code":"{{ticket.code}}","database_name":"{{ticket.form_data.database_name}}","source_ip":"{{ticket.form_data.source_ip}}","whitelist_window":"{{ticket.form_data.whitelist_window}}","access_reason":"{{ticket.form_data.access_reason}}"}`,
 		Timeout: 10,
 		Retries: 0, // no retries in test
 	})
@@ -221,7 +247,7 @@ func publishDbBackupSmartService(bc *bddContext) error {
 	applyConfig, _ := json.Marshal(engine.ActionConfig{
 		URL:     bc.actionReceiver.URL("/apply"),
 		Method:  "POST",
-		Body:    `{"ticket_code":"{{ticket.code}}","database":"{{ticket.form_data.database_name}}","whitelist_window":"{{ticket.form_data.whitelist_window}}"}`,
+		Body:    `{"ticket_code":"{{ticket.code}}","database_name":"{{ticket.form_data.database_name}}","source_ip":"{{ticket.form_data.source_ip}}","whitelist_window":"{{ticket.form_data.whitelist_window}}"}`,
 		Timeout: 10,
 		Retries: 0,
 	})
@@ -244,7 +270,7 @@ func publishDbBackupSmartService(bc *bddContext) error {
 	resolver := engine.NewParticipantResolver(orgSvc)
 	bc.engine = engine.NewClassicEngine(resolver, &noopSubmitter{}, nil)
 	submitter := &syncActionSubmitter{db: bc.db, classicEngine: bc.engine}
-	executor := &testDecisionExecutor{db: bc.db, llmCfg: bc.llmCfg, recordToolCall: bc.recordToolCall}
+	executor := &testDecisionExecutor{db: bc.db, llmCfg: bc.llmCfg, recordToolCall: bc.recordToolCall, recordToolResult: bc.recordToolResult}
 	userProvider := &testUserProvider{db: bc.db}
 	bc.smartEngine = engine.NewSmartEngine(executor, nil, userProvider, resolver, submitter, &bddConfigProvider{bc: bc})
 	bc.smartEngine.SetActionExecutor(engine.NewActionExecutor(bc.db))

@@ -301,6 +301,23 @@ func TestServiceLoad_ReturnsMissingFieldsAndRecommendedStep(t *testing.T) {
 	}
 }
 
+func TestServiceLoad_RejectsHallucinatedServiceIDBeforeMatch(t *testing.T) {
+	store := newMemStateStore()
+	op := &stubOperator{details: map[uint]*ServiceDetail{5: vpnServiceDetail(5)}}
+	ctx := context.WithValue(context.Background(), app.SessionIDKey, uint(1))
+
+	_, err := serviceLoadHandler(op, store)(ctx, 1, []byte(`{"service_id":5}`))
+	if err == nil {
+		t.Fatal("expected service_load to reject direct loading before service_match")
+	}
+	if !strings.Contains(err.Error(), "service_match") {
+		t.Fatalf("expected service_match guidance, got %v", err)
+	}
+	if _, ok := store.states[1]; ok {
+		t.Fatalf("service_load should not persist state when service_id is hallucinated, got %+v", store.states[1])
+	}
+}
+
 func TestServiceMatch_ShortConfirmationReusesLoadedServiceWithoutClearingPrefill(t *testing.T) {
 	store := newMemStateStore()
 	op := &stubOperator{
@@ -439,6 +456,56 @@ func TestDraftPrepare_UsesPrefillSuggestionsBeforeRequiredValidation(t *testing.
 		resp.FormData["device_usage"] != "线上支持用" ||
 		resp.FormData["request_kind"] != "online_support" {
 		t.Fatalf("expected complete form data from prefill, got %+v", resp.FormData)
+	}
+}
+
+func TestDraftPrepare_BlocksSmartServiceWithoutGeneratedFormSchemaWithReadableGuidance(t *testing.T) {
+	store := newMemStateStore()
+	op := &stubOperator{detail: &ServiceDetail{
+		ServiceID:  5,
+		Name:       "未生成参考路径的智能服务",
+		EngineType: "smart",
+		FieldsHash: "empty-form-schema",
+		FormFields: nil,
+		FormSchema: nil,
+	}}
+	store.states[1] = &ServiceDeskState{
+		Stage:           "service_loaded",
+		LoadedServiceID: 5,
+		FieldsHash:      "empty-form-schema",
+	}
+	ctx := context.WithValue(context.Background(), app.SessionIDKey, uint(1))
+
+	result, err := draftPrepareHandler(op, store)(ctx, 1, []byte(`{"summary":"申请","form_data":{}}`))
+	if err != nil {
+		t.Fatalf("prepare draft: %v", err)
+	}
+
+	var resp struct {
+		OK                   bool   `json:"ok"`
+		ReadyForConfirmation bool   `json:"ready_for_confirmation"`
+		NextRequiredTool     string `json:"next_required_tool"`
+		RecommendedNextStep  string `json:"recommended_next_step"`
+		Warnings             []struct {
+			Type    string `json:"type"`
+			Field   string `json:"field"`
+			Message string `json:"message"`
+		} `json:"warnings"`
+	}
+	if err := json.Unmarshal(result, &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.OK || resp.ReadyForConfirmation {
+		t.Fatalf("expected missing generated form schema to block draft, got %s", string(result))
+	}
+	if resp.NextRequiredTool != "generate_reference_path" || resp.RecommendedNextStep != "generate_reference_path" {
+		t.Fatalf("expected reference path guidance, got %+v", resp)
+	}
+	if len(resp.Warnings) != 1 || resp.Warnings[0].Type != "missing_form_schema" || resp.Warnings[0].Field != "intake_form_schema" {
+		t.Fatalf("expected missing_form_schema warning, got %+v", resp.Warnings)
+	}
+	if strings.Contains(resp.Warnings[0].Message, "ç") || !strings.Contains(resp.Warnings[0].Message, "申请确认表单未生成") {
+		t.Fatalf("expected readable Chinese warning, got %q", resp.Warnings[0].Message)
 	}
 }
 

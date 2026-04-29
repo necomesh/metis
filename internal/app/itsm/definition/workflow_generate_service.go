@@ -171,7 +171,7 @@ func (s *WorkflowGenerateService) Generate(ctx context.Context, req *GenerateReq
 		}
 
 		if len(formErrors) > 0 {
-			return nil, fmt.Errorf("%w: å‚è€ƒè·¯å¾„æœªç”Ÿæˆå¯ç”¨çš„ç”³è¯·ç¡®è®¤è¡¨å•", ErrWorkflowGeneration)
+			return nil, fmt.Errorf("%w: 参考路径未生成可用的申请确认表单", ErrWorkflowGeneration)
 		}
 
 		// Return the last parsable draft with validation issues. The draft is
@@ -242,7 +242,7 @@ func (s *WorkflowGenerateService) buildGenerateResponse(req *GenerateRequest, wo
 		var formErrors []engine.ValidationError
 		intakeFormSchema, formErrors = extractGeneratedIntakeFormSchema(workflowJSON)
 		if len(formErrors) > 0 {
-			return nil, fmt.Errorf("%w: å‚è€ƒè·¯å¾„æœªç”Ÿæˆå¯ç”¨çš„ç”³è¯·ç¡®è®¤è¡¨å•", ErrWorkflowGeneration)
+			return nil, fmt.Errorf("%w: 参考路径未生成可用的申请确认表单", ErrWorkflowGeneration)
 		}
 	}
 
@@ -278,7 +278,7 @@ func extractGeneratedIntakeFormSchema(workflowJSON json.RawMessage) (json.RawMes
 		} `json:"nodes"`
 	}
 	if err := json.Unmarshal(workflowJSON, &workflow); err != nil {
-		return nil, []engine.ValidationError{{Level: "blocking", Message: fmt.Sprintf("å‚è€ƒè·¯å¾„ JSON è§£æžå¤±è´¥ï¼š%v", err)}}
+		return nil, []engine.ValidationError{{Level: "blocking", Message: fmt.Sprintf("参考路径 JSON 解析失败：%v", err)}}
 	}
 
 	for _, node := range workflow.Nodes {
@@ -289,7 +289,7 @@ func extractGeneratedIntakeFormSchema(workflowJSON json.RawMessage) (json.RawMes
 			FormSchema json.RawMessage `json:"formSchema"`
 		}
 		if err := json.Unmarshal(node.Data, &data); err != nil {
-			return nil, []engine.ValidationError{{Level: "blocking", NodeID: node.ID, Message: fmt.Sprintf("è¡¨å•èŠ‚ç‚¹æ— æ³•è§£æžï¼š%v", err)}}
+			return nil, []engine.ValidationError{{Level: "blocking", NodeID: node.ID, Message: fmt.Sprintf("表单节点无法解析：%v", err)}}
 		}
 		if len(data.FormSchema) == 0 || string(data.FormSchema) == "null" {
 			continue
@@ -297,20 +297,20 @@ func extractGeneratedIntakeFormSchema(workflowJSON json.RawMessage) (json.RawMes
 		return normalizeGeneratedFormSchema(node.ID, data.FormSchema)
 	}
 
-	return nil, []engine.ValidationError{{Level: "blocking", Message: "å‚è€ƒè·¯å¾„ç¼ºå°‘ requester è¡¨å•èŠ‚ç‚¹çš„ formSchemaï¼Œæ— æ³•ç”Ÿæˆç”³è¯·ç¡®è®¤è¡¨å•"}}
+	return nil, []engine.ValidationError{{Level: "blocking", Message: "参考路径缺少 requester 表单节点的 formSchema，无法生成申请确认表单"}}
 }
 
 func normalizeGeneratedFormSchema(nodeID string, raw json.RawMessage) (json.RawMessage, []engine.ValidationError) {
 	var schemaMap map[string]any
 	if err := json.Unmarshal(raw, &schemaMap); err != nil {
-		return nil, []engine.ValidationError{{Level: "blocking", NodeID: nodeID, Message: fmt.Sprintf("formSchema ä¸æ˜¯æœ‰æ•ˆ JSONï¼š%v", err)}}
+		return nil, []engine.ValidationError{{Level: "blocking", NodeID: nodeID, Message: fmt.Sprintf("formSchema 不是有效 JSON：%v", err)}}
 	}
 	if schemaMap["version"] == nil {
 		schemaMap["version"] = float64(1)
 	}
 	fields, ok := schemaMap["fields"].([]any)
 	if !ok || len(fields) == 0 {
-		return nil, []engine.ValidationError{{Level: "blocking", NodeID: nodeID, Message: "formSchema.fields ä¸èƒ½ä¸ºç©º"}}
+		return nil, []engine.ValidationError{{Level: "blocking", NodeID: nodeID, Message: "formSchema.fields 不能为空"}}
 	}
 	for _, rawField := range fields {
 		field, ok := rawField.(map[string]any)
@@ -323,15 +323,16 @@ func normalizeGeneratedFormSchema(nodeID string, raw json.RawMessage) (json.RawM
 		if normalized := normalizeGeneratedOptions(field["options"]); normalized != nil {
 			field["options"] = normalized
 		}
+		normalizeGeneratedTableColumns(field)
 	}
 
 	normalized, err := json.Marshal(schemaMap)
 	if err != nil {
-		return nil, []engine.ValidationError{{Level: "blocking", NodeID: nodeID, Message: fmt.Sprintf("formSchema è§„èŒƒåŒ–å¤±è´¥ï¼š%v", err)}}
+		return nil, []engine.ValidationError{{Level: "blocking", NodeID: nodeID, Message: fmt.Sprintf("formSchema 规范化失败：%v", err)}}
 	}
 	var schema form.FormSchema
 	if err := json.Unmarshal(normalized, &schema); err != nil {
-		return nil, []engine.ValidationError{{Level: "blocking", NodeID: nodeID, Message: fmt.Sprintf("formSchema ç»“æž„æ— æ•ˆï¼š%v", err)}}
+		return nil, []engine.ValidationError{{Level: "blocking", NodeID: nodeID, Message: fmt.Sprintf("formSchema 结构无效：%v", err)}}
 	}
 	if errs := form.ValidateSchema(schema); len(errs) > 0 {
 		validationErrors := make([]engine.ValidationError, 0, len(errs))
@@ -342,7 +343,7 @@ func normalizeGeneratedFormSchema(nodeID string, raw json.RawMessage) (json.RawM
 	}
 	canonical, err := json.Marshal(schema)
 	if err != nil {
-		return nil, []engine.ValidationError{{Level: "blocking", NodeID: nodeID, Message: fmt.Sprintf("formSchema åºåˆ—åŒ–å¤±è´¥ï¼š%v", err)}}
+		return nil, []engine.ValidationError{{Level: "blocking", NodeID: nodeID, Message: fmt.Sprintf("formSchema 序列化失败：%v", err)}}
 	}
 	return canonical, nil
 }
@@ -371,6 +372,32 @@ func normalizeGeneratedOptions(raw any) any {
 		}
 	}
 	return normalized
+}
+
+func normalizeGeneratedTableColumns(field map[string]any) {
+	if field["type"] != form.FieldTable {
+		return
+	}
+	props, ok := field["props"].(map[string]any)
+	if !ok {
+		return
+	}
+	columns, ok := props["columns"].([]any)
+	if !ok {
+		return
+	}
+	for _, rawColumn := range columns {
+		column, ok := rawColumn.(map[string]any)
+		if !ok {
+			continue
+		}
+		if required, ok := column["required"].(bool); !ok || !required {
+			column["required"] = true
+		}
+		if normalized := normalizeGeneratedOptions(column["options"]); normalized != nil {
+			column["options"] = normalized
+		}
+	}
 }
 
 // hasBlockingErrors returns true if any validation error has Level "blocking".

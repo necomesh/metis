@@ -1409,6 +1409,9 @@ func serviceLoadHandler(op ServiceDeskOperator, store StateStore) ToolHandler {
 		if state == nil {
 			state = defaultState()
 		}
+		if len(state.CandidateServiceIDs) == 0 && state.ConfirmedServiceID == 0 && state.LoadedServiceID == 0 {
+			return nil, fmt.Errorf("请先调用 service_match 匹配服务，不能凭空加载服务")
+		}
 
 		// If confirmation was required but not yet given, block.
 		if state.ConfirmationRequired && state.ConfirmedServiceID == 0 {
@@ -1523,7 +1526,7 @@ func draftPrepareHandler(op ServiceDeskOperator, store StateStore) ToolHandler {
 				"warnings": []DraftWarning{{
 					Type:    "missing_form_schema",
 					Field:   "intake_form_schema",
-					Message: "ç”³è¯·ç¡®è®¤è¡¨å•æœªç”Ÿæˆï¼Œè¯·ç”±ç®¡ç†å‘˜å…ˆç”Ÿæˆå‚è€ƒè·¯å¾„",
+					Message: "申请确认表单未生成，请由管理员先生成参考路径",
 				}},
 			}), nil
 		}

@@ -868,7 +868,7 @@ func (bc *bddContext) thenNoHighConfidenceSingleRouteChoice() error {
 			return err
 		}
 		for _, assignment := range assignments {
-			for _, code := range []string{"network_admin", "security_admin"} {
+			for _, code := range []string{"ops_admin", "network_admin", "security_admin"} {
 				if bc.assignmentTargetsPosition(assignment, code) {
 					return fmt.Errorf("high-confidence conflict decision chose single route %q via activity %d", code, activity.ID)
 				}

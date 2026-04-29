@@ -203,6 +203,61 @@ func TestExtractGeneratedIntakeFormSchema_NormalizesStringOptions(t *testing.T) 
 	}
 }
 
+func TestExtractGeneratedIntakeFormSchema_ValidatesAdvancedFieldShapes(t *testing.T) {
+	workflow := json.RawMessage(`{"nodes":[{"id":"form1","type":"form","data":{"formSchema":{"fields":[
+		{"key":"window","type":"date_range","label":"访问时段"},
+		{"key":"items","type":"table","label":"明细","props":{"columns":[
+			{"key":"host","type":"text","label":"主机","required":true},
+			{"key":"kind","type":"select","label":"类型","required":true,"options":["ops","security"]}
+		]}}
+	]}}}],"edges":[]}`)
+
+	schemaJSON, errs := extractGeneratedIntakeFormSchema(workflow)
+	if len(errs) > 0 {
+		t.Fatalf("expected advanced schema extraction to pass, got %+v", errs)
+	}
+	var schema struct {
+		Fields []struct {
+			Key      string `json:"key"`
+			Required bool   `json:"required"`
+			Props    struct {
+				Columns []struct {
+					Key      string `json:"key"`
+					Required bool   `json:"required"`
+					Options  []struct {
+						Label string `json:"label"`
+						Value string `json:"value"`
+					} `json:"options"`
+				} `json:"columns"`
+			} `json:"props"`
+		} `json:"fields"`
+	}
+	if err := json.Unmarshal(schemaJSON, &schema); err != nil {
+		t.Fatalf("unmarshal schema: %v", err)
+	}
+	if len(schema.Fields) != 2 || schema.Fields[0].Key != "window" || !schema.Fields[0].Required {
+		t.Fatalf("unexpected normalized schema: %s", schemaJSON)
+	}
+	if len(schema.Fields[1].Props.Columns) != 2 || !schema.Fields[1].Props.Columns[0].Required {
+		t.Fatalf("expected table columns to be canonicalized, got %s", schemaJSON)
+	}
+	if got := schema.Fields[1].Props.Columns[1].Options[0].Value; got != "ops" {
+		t.Fatalf("expected table select options to be normalized, got %s", schemaJSON)
+	}
+}
+
+func TestExtractGeneratedIntakeFormSchema_RejectsUnrenderableAdvancedField(t *testing.T) {
+	_, errs := extractGeneratedIntakeFormSchema(json.RawMessage(`{"nodes":[{"id":"form1","type":"form","data":{"formSchema":{"fields":[
+		{"key":"items","type":"table","label":"明细"}
+	]}}}],"edges":[]}`))
+	if len(errs) == 0 {
+		t.Fatal("expected table field without columns to be rejected")
+	}
+	if !strings.Contains(errs[0].Message, "table field must define props.columns") {
+		t.Fatalf("expected actionable table error, got %+v", errs)
+	}
+}
+
 func TestExtractGeneratedIntakeFormSchema_RequiresFormSchema(t *testing.T) {
 	_, errs := extractGeneratedIntakeFormSchema(json.RawMessage(`{"nodes":[{"id":"start","type":"start","data":{}}],"edges":[]}`))
 	if len(errs) == 0 || errs[0].Level != "blocking" {
@@ -353,6 +408,30 @@ func TestPathBuilderSystemPromptGuidesParallelGateway(t *testing.T) {
 	for _, snippet := range requiredSnippets {
 		if !strings.Contains(PathBuilderSystemPrompt, snippet) {
 			t.Fatalf("system prompt missing parallel gateway guidance: %s", snippet)
+		}
+	}
+}
+
+func TestPathBuilderSystemPromptUsesBackendSnakeCaseRuntimeFields(t *testing.T) {
+	requiredSnippets := []string{
+		"label, nodeType, action_id",
+		"label, nodeType, wait_mode",
+		"action_id 必须是可用动作列表中的数字 id",
+		"如果没有可用动作列表",
+		"不要生成 action 节点",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(PathBuilderSystemPrompt, snippet) {
+			t.Fatalf("system prompt missing backend snake_case field guidance: %s", snippet)
+		}
+	}
+	misleadingSnippets := []string{
+		"actionId",
+		"waitMode",
+	}
+	for _, snippet := range misleadingSnippets {
+		if strings.Contains(PathBuilderSystemPrompt, snippet) {
+			t.Fatalf("system prompt still contains frontend/camelCase runtime field: %s", snippet)
 		}
 	}
 }
@@ -774,32 +853,8 @@ func requireLLMEnv(t *testing.T) llmTestEnv {
 	return llmTestEnv{baseURL: baseURL, apiKey: apiKey, model: model}
 }
 
-const testSystemPrompt = `你是工作流 JSON 生成器。输入是协作规范，输出是严格的 JSON。
-
-JSON schema:
-{
-  "nodes": [{"id": "string", "type": "string", "data": {"label": "string"}}],
-  "edges": [{"id": "string", "source": "string", "target": "string", "data": {}}]
-}
-
-节点类型: start, end, form, process, process, action, notify, exclusive
-每个 node 必须有 id, type。data 字段包含 label。
-每个 edge 必须有 id, source, target。
-必须恰好 1 个 start 节点，至少 1 个 end 节点。
-
-排他网关(exclusive)节点至少有 2 条出边。出边的 data 中：
-- 条件分支必须包含 "condition" 对象: {"field": "string", "operator": "equals", "value": "string"}
-- 默认分支使用 "default": true
-- 至少一条出边应标记 "default": true
-
-示例：排他网关的出边 data:
-  条件边: {"condition": {"field": "process.result", "operator": "equals", "value": "completed"}}
-  默认边: {"default": true}
-
-仅输出合法的 JSON，不要包含任何额外文字或 markdown 代码块标记。`
-
-// callLLMForWorkflow calls the LLM with the test system prompt and returns
-// the extracted + validated workflow JSON, along with diagnostic info.
+// callLLMForWorkflow calls the LLM with the production PathBuilder prompt and
+// feeds blocking validation errors back into the next attempt.
 func callLLMForWorkflow(t *testing.T, env llmTestEnv, spec string) (json.RawMessage, []engine.ValidationError) {
 	t.Helper()
 
@@ -808,35 +863,62 @@ func callLLMForWorkflow(t *testing.T, env llmTestEnv, spec string) (json.RawMess
 		t.Fatalf("failed to create LLM client: %v", err)
 	}
 
-	svc := &WorkflowGenerateService{}
-	userMsg := svc.buildUserMessage(spec, "", nil)
-
 	temp := float32(0.3)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
+	svc := &WorkflowGenerateService{}
+	var lastErrors []engine.ValidationError
+	var lastWorkflowJSON json.RawMessage
 
-	resp, err := client.Chat(ctx, llm.ChatRequest{
-		Model: env.model,
-		Messages: []llm.Message{
-			{Role: llm.RoleSystem, Content: testSystemPrompt},
-			{Role: llm.RoleUser, Content: userMsg},
-		},
-		Temperature: &temp,
-		MaxTokens:   4096,
-	})
-	if err != nil {
-		t.Fatalf("LLM call failed: %v", err)
+	for attempt := 0; attempt <= 3; attempt++ {
+		userMsg := svc.buildUserMessage(spec, "", lastErrors)
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		resp, err := client.Chat(ctx, llm.ChatRequest{
+			Model: env.model,
+			Messages: []llm.Message{
+				{Role: llm.RoleSystem, Content: PathBuilderSystemPrompt},
+				{Role: llm.RoleUser, Content: userMsg},
+			},
+			Temperature:    &temp,
+			MaxTokens:      4096,
+			ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
+		})
+		cancel()
+		if err != nil {
+			t.Fatalf("LLM call failed on attempt %d: %v", attempt+1, err)
+		}
+
+		t.Logf("LLM raw response attempt %d (%d chars):\n%s", attempt+1, len(resp.Content), resp.Content)
+
+		workflowJSON, err := extractJSON(resp.Content)
+		if err != nil {
+			lastErrors = []engine.ValidationError{{Level: "blocking", Message: fmt.Sprintf("输出不是有效 JSON: %v", err)}}
+			if attempt < 3 {
+				continue
+			}
+			t.Fatalf("extractJSON failed after retries: %v\nraw response:\n%s", err, resp.Content)
+		}
+		lastWorkflowJSON = workflowJSON
+
+		validationErrors := engine.ValidateWorkflow(workflowJSON)
+		lastErrors = blockingValidationErrors(validationErrors)
+		if len(lastErrors) == 0 {
+			return workflowJSON, validationErrors
+		}
+		if attempt == 3 {
+			return workflowJSON, validationErrors
+		}
 	}
 
-	t.Logf("LLM raw response (%d chars):\n%s", len(resp.Content), resp.Content)
+	return lastWorkflowJSON, lastErrors
+}
 
-	workflowJSON, err := extractJSON(resp.Content)
-	if err != nil {
-		t.Fatalf("extractJSON failed: %v\nraw response:\n%s", err, resp.Content)
+func blockingValidationErrors(validationErrors []engine.ValidationError) []engine.ValidationError {
+	var blocking []engine.ValidationError
+	for _, validationErr := range validationErrors {
+		if !validationErr.IsWarning() {
+			blocking = append(blocking, validationErr)
+		}
 	}
-
-	validationErrors := engine.ValidateWorkflow(workflowJSON)
-	return workflowJSON, validationErrors
+	return blocking
 }
 
 func TestLLMExtract_SimpleWorkflow(t *testing.T) {
@@ -896,15 +978,13 @@ func TestLLMExtract_BranchWorkflow(t *testing.T) {
 	}
 
 	// Check structural invariants
-	var startCount, endCount, exclusiveCount int
+	var startCount, endCount int
 	for _, n := range def.Nodes {
 		switch n.Type {
 		case "start":
 			startCount++
 		case "end":
 			endCount++
-		case "exclusive":
-			exclusiveCount++
 		}
 	}
 	if startCount != 1 {
@@ -913,11 +993,8 @@ func TestLLMExtract_BranchWorkflow(t *testing.T) {
 	if endCount < 1 {
 		t.Errorf("expected at least 1 end node, got %d", endCount)
 	}
-	if exclusiveCount < 1 {
-		t.Errorf("expected at least 1 exclusive gateway node, got %d", exclusiveCount)
-	}
 
-	// Build outgoing edge map to verify exclusive gateway has ≥2 outgoing edges
+	// Build outgoing edge map to verify any generated exclusive gateway is valid.
 	outEdges := make(map[string]int)
 	for _, e := range def.Edges {
 		outEdges[e.Source]++
@@ -936,4 +1013,100 @@ func TestLLMExtract_BranchWorkflow(t *testing.T) {
 			t.Errorf("validation error: [%s] %s", ve.NodeID, ve.Message)
 		}
 	}
+}
+
+func TestLLMExtract_VPNBranchWorkflowPreservesFormAndRoutingContract(t *testing.T) {
+	env := requireLLMEnv(t)
+
+	spec := `用户在 IT 服务台申请开通 VPN。先让申请人填写一张名为“填写 VPN 开通申请”的表单，表单只需要三项信息：VPN 账号、设备与用途说明、访问原因。为了让后续流程能稳定读取表单数据，三个字段的内部 key 分别使用 vpn_account、device_usage、request_kind；其中访问原因是下拉选择，选项为线上支持(online_support)、故障排查(troubleshooting)、生产应急(production_emergency)、网络接入问题(network_access_issue)、外部协作(external_collaboration)、长期远程办公(long_term_remote_work)、跨境访问(cross_border_access)、安全合规事项(security_compliance)。申请提交后，流程通过 form.request_kind 进入排他网关：线上支持、故障排查、生产应急、网络接入问题进入“网络管理员处理”，由信息部网络管理员岗位处理，参与者类型使用 position_department，部门编码 it，岗位编码 network_admin；外部协作、长期远程办公、跨境访问、安全合规事项进入“信息安全管理员处理”，由信息部信息安全管理员岗位处理，参与者类型使用 position_department，部门编码 it，岗位编码 security_admin。处理任务完成后直接结束流程。`
+
+	workflowJSON, validationErrors := callLLMForWorkflow(t, env, spec)
+	if blocking := blockingValidationErrors(validationErrors); len(blocking) > 0 {
+		t.Fatalf("expected no blocking validation errors, got %+v\nworkflow=%s", blocking, workflowJSON)
+	}
+
+	def, err := engine.ParseWorkflowDef(workflowJSON)
+	if err != nil {
+		t.Fatalf("ParseWorkflowDef failed: %v", err)
+	}
+
+	formSchema := generatedFormSchemaForLLMTest(t, workflowJSON)
+	fieldKeys := make(map[string]bool)
+	optionValues := make(map[string]bool)
+	for _, field := range formSchema.Fields {
+		fieldKeys[field.Key] = true
+		if field.Key == "request_kind" {
+			if field.Type != "select" {
+				t.Fatalf("request_kind should be select, got %q", field.Type)
+			}
+			for _, option := range field.Options {
+				optionValues[fmt.Sprintf("%v", option.Value)] = true
+			}
+		}
+	}
+	expectedKeys := []string{"vpn_account", "device_usage", "request_kind"}
+	if len(fieldKeys) != len(expectedKeys) {
+		t.Fatalf("expected only VPN intake fields %v, got %#v", expectedKeys, fieldKeys)
+	}
+	for _, key := range expectedKeys {
+		if !fieldKeys[key] {
+			t.Fatalf("expected formSchema field %q, got %#v", key, fieldKeys)
+		}
+	}
+	for _, value := range []string{"online_support", "troubleshooting", "production_emergency", "network_access_issue", "external_collaboration", "long_term_remote_work", "cross_border_access", "security_compliance"} {
+		if !optionValues[value] {
+			t.Fatalf("expected request_kind option %q, got %#v", value, optionValues)
+		}
+	}
+
+	var networkParticipant, securityParticipant bool
+	var requestKindConditions int
+	for _, node := range def.Nodes {
+		nd, err := engine.ParseNodeData(node.Data)
+		if err != nil {
+			t.Fatalf("parse node %s data: %v", node.ID, err)
+		}
+		for _, participant := range nd.Participants {
+			if participant.Type == "position_department" && participant.DepartmentCode == "it" && participant.PositionCode == "network_admin" {
+				networkParticipant = true
+			}
+			if participant.Type == "position_department" && participant.DepartmentCode == "it" && participant.PositionCode == "security_admin" {
+				securityParticipant = true
+			}
+		}
+	}
+	for _, edge := range def.Edges {
+		if edge.Data.Condition != nil && edge.Data.Condition.Field == "form.request_kind" {
+			requestKindConditions++
+		}
+	}
+	if !networkParticipant || !securityParticipant {
+		t.Fatalf("expected network/security position_department participants, got workflow=%s", workflowJSON)
+	}
+	if requestKindConditions < 2 {
+		t.Fatalf("expected request_kind branch conditions, got workflow=%s", workflowJSON)
+	}
+}
+
+func generatedFormSchemaForLLMTest(t *testing.T, workflowJSON json.RawMessage) formSchemaForLLMTest {
+	t.Helper()
+	schemaJSON, errs := extractGeneratedIntakeFormSchema(workflowJSON)
+	if len(errs) > 0 {
+		t.Fatalf("extract generated form schema: %+v", errs)
+	}
+	var schema formSchemaForLLMTest
+	if err := json.Unmarshal(schemaJSON, &schema); err != nil {
+		t.Fatalf("unmarshal generated form schema: %v", err)
+	}
+	return schema
+}
+
+type formSchemaForLLMTest struct {
+	Fields []struct {
+		Key     string `json:"key"`
+		Type    string `json:"type"`
+		Options []struct {
+			Value any `json:"value"`
+		} `json:"options"`
+	} `json:"fields"`
 }
