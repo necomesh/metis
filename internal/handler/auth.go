@@ -510,6 +510,10 @@ func (h *AuthHandler) BindCallback(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "invalid bind state")
 		return
 	}
+	if meta.Provider != req.Provider {
+		Fail(c, http.StatusBadRequest, "invalid bind state")
+		return
+	}
 
 	h.handleBindCallback(c, meta, req)
 }

@@ -248,6 +248,10 @@ func (h *UserHandler) ResetPassword(c *gin.Context) {
 			Fail(c, http.StatusNotFound, "user not found")
 			return
 		}
+		if errors.Is(err, service.ErrPasswordViolation) {
+			Fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
 		Fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}

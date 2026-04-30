@@ -30,7 +30,7 @@ func (h *Handler) UpdateSecuritySettings(c *gin.Context) {
 	c.Set("audit_action", "settings.update")
 	c.Set("audit_resource", "settings")
 	c.Set("audit_summary", "更新安全设置")
-	OK(c, req)
+	OK(c, h.settingsSvc.GetSecuritySettings())
 }
 
 func (h *Handler) GetSchedulerSettings(c *gin.Context) {
@@ -63,5 +63,5 @@ func (h *Handler) UpdateSchedulerSettings(c *gin.Context) {
 	c.Set("audit_action", "settings.update")
 	c.Set("audit_resource", "settings")
 	c.Set("audit_summary", "更新自动清理设置")
-	OK(c, req)
+	OK(c, h.settingsSvc.GetSchedulerSettings())
 }

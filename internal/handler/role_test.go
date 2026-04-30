@@ -339,3 +339,86 @@ func TestRoleHandlerUpdateDataScope_RejectsInvalidScope(t *testing.T) {
 		t.Fatalf("expected invalid data scope message, got %s", w.Body.String())
 	}
 }
+
+func TestRoleHandlerGet_ReturnsCustomDeptScope(t *testing.T) {
+	db := newTestDBForRoleHandler(t)
+	h, _, _ := newRoleHandlerForTest(t, db)
+	r := setupRoleRouter(h)
+	role := seedRoleForRoleHandler(t, db, "Editor", "editor", false)
+	role.DataScope = model.DataScopeCustom
+	if err := db.Save(role).Error; err != nil {
+		t.Fatalf("save role scope: %v", err)
+	}
+	if err := db.Create([]model.RoleDeptScope{{RoleID: role.ID, DepartmentID: 20}, {RoleID: role.ID, DepartmentID: 10}}).Error; err != nil {
+		t.Fatalf("seed role dept scopes: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/roles/%d", role.ID), nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Code int `json:"code"`
+		Data struct {
+			ID        uint             `json:"id"`
+			DataScope model.DataScope  `json:"dataScope"`
+			DeptIDs   []uint           `json:"deptIds"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.Data.ID != role.ID {
+		t.Fatalf("expected role id %d, got %d", role.ID, resp.Data.ID)
+	}
+	if resp.Data.DataScope != model.DataScopeCustom {
+		t.Fatalf("expected custom data scope, got %s", resp.Data.DataScope)
+	}
+	if len(resp.Data.DeptIDs) != 2 || resp.Data.DeptIDs[0] != 10 || resp.Data.DeptIDs[1] != 20 {
+		t.Fatalf("expected dept ids [10 20], got %+v", resp.Data.DeptIDs)
+	}
+}
+
+func TestRoleHandlerUpdate_RejectsSystemRoleCodeChange(t *testing.T) {
+	db := newTestDBForRoleHandler(t)
+	h, _, _ := newRoleHandlerForTest(t, db)
+	r := setupRoleRouter(h)
+	role := seedRoleForRoleHandler(t, db, "Admin", "admin", true)
+
+	req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/v1/roles/%d", role.ID), bytes.NewBufferString(`{"code":"super-admin"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRoleHandlerSetPermissions_RejectsSystemAdmin(t *testing.T) {
+	db := newTestDBForRoleHandler(t)
+	h, _, casbinSvc := newRoleHandlerForTest(t, db)
+	r := setupRoleRouter(h)
+	role := seedRoleForRoleHandler(t, db, "Admin", "admin", true)
+	if err := casbinSvc.SetPoliciesForRole(role.Code, [][]string{{role.Code, "/api/v1/users", "GET"}}); err != nil {
+		t.Fatalf("seed policies: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/v1/roles/%d/permissions", role.ID), bytes.NewBufferString(`{"apiPolicies":[{"path":"/api/v1/roles","method":"POST"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	policies := casbinSvc.GetPoliciesForRole(role.Code)
+	if len(policies) != 1 || policies[0][1] != "/api/v1/users" || policies[0][2] != "GET" {
+		t.Fatalf("expected original policies unchanged, got %+v", policies)
+	}
+}

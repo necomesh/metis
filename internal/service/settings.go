@@ -75,6 +75,9 @@ func (s *SettingsService) GetSecuritySettings() SecuritySettings {
 
 func (s *SettingsService) UpdateSecuritySettings(settings SecuritySettings) error {
 	// Validation
+	if settings.MaxConcurrentSessions < 0 {
+		settings.MaxConcurrentSessions = 0
+	}
 	if settings.PasswordMinLength < 1 {
 		settings.PasswordMinLength = 1
 	}
@@ -131,6 +134,16 @@ func (s *SettingsService) GetSchedulerSettings() SchedulerSettings {
 }
 
 func (s *SettingsService) UpdateSchedulerSettings(settings SchedulerSettings) error {
+	if settings.HistoryRetentionDays < 0 {
+		settings.HistoryRetentionDays = 0
+	}
+	if settings.AuditRetentionDaysAuth < 0 {
+		settings.AuditRetentionDaysAuth = 0
+	}
+	if settings.AuditRetentionDaysOperation < 0 {
+		settings.AuditRetentionDaysOperation = 0
+	}
+
 	configs := []model.SystemConfig{
 		{Key: "scheduler.history_retention_days", Value: strconv.Itoa(settings.HistoryRetentionDays), Remark: "任务执行历史保留天数，0 表示永不清理"},
 		{Key: "audit.retention_days_auth", Value: strconv.Itoa(settings.AuditRetentionDaysAuth), Remark: "登录活动日志保留天数，0 表示永不清理"},

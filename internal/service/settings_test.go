@@ -144,6 +144,23 @@ func TestSettingsServiceUpdateSecuritySettings_Validation(t *testing.T) {
 	}
 }
 
+func TestSettingsServiceUpdateSecuritySettings_NormalizesNegativeMaxConcurrentSessions(t *testing.T) {
+	db := newTestDBForSettings(t)
+	svc := newSettingsServiceForTest(t, db)
+
+	req := SecuritySettings{
+		MaxConcurrentSessions: -3,
+	}
+	if err := svc.UpdateSecuritySettings(req); err != nil {
+		t.Fatalf("update security settings: %v", err)
+	}
+
+	s := svc.GetSecuritySettings()
+	if s.MaxConcurrentSessions != 0 {
+		t.Fatalf("expected MaxConcurrentSessions=0 after validation, got %d", s.MaxConcurrentSessions)
+	}
+}
+
 func TestSettingsServiceUpdateSecuritySettings_PersistsAllFields(t *testing.T) {
 	db := newTestDBForSettings(t)
 	svc := newSettingsServiceForTest(t, db)
@@ -244,6 +261,31 @@ func TestSettingsServiceUpdateSchedulerSettings_PersistsFields(t *testing.T) {
 	}
 	if s.AuditRetentionDaysOperation != 180 {
 		t.Fatalf("expected AuditRetentionDaysOperation=180, got %d", s.AuditRetentionDaysOperation)
+	}
+}
+
+func TestSettingsServiceUpdateSchedulerSettings_NormalizesNegativeRetentions(t *testing.T) {
+	db := newTestDBForSettings(t)
+	svc := newSettingsServiceForTest(t, db)
+
+	req := SchedulerSettings{
+		HistoryRetentionDays:        -7,
+		AuditRetentionDaysAuth:      -30,
+		AuditRetentionDaysOperation: -180,
+	}
+	if err := svc.UpdateSchedulerSettings(req); err != nil {
+		t.Fatalf("update scheduler settings: %v", err)
+	}
+
+	s := svc.GetSchedulerSettings()
+	if s.HistoryRetentionDays != 0 {
+		t.Fatalf("expected HistoryRetentionDays=0 after validation, got %d", s.HistoryRetentionDays)
+	}
+	if s.AuditRetentionDaysAuth != 0 {
+		t.Fatalf("expected AuditRetentionDaysAuth=0 after validation, got %d", s.AuditRetentionDaysAuth)
+	}
+	if s.AuditRetentionDaysOperation != 0 {
+		t.Fatalf("expected AuditRetentionDaysOperation=0 after validation, got %d", s.AuditRetentionDaysOperation)
 	}
 }
 

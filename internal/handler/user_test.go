@@ -61,12 +61,24 @@ func setupUserRouter(h *UserHandler) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
-		c.Set("userId", uint(9999))
+		userID := uint(9999)
+		if raw := c.GetHeader("X-Test-User-ID"); raw != "" {
+			if parsed, err := strconv.ParseUint(raw, 10, 64); err == nil {
+				userID = uint(parsed)
+			}
+		}
+		c.Set("userId", userID)
 		c.Next()
 	})
 	r.GET("/api/v1/users", h.List)
 	r.POST("/api/v1/users", h.Create)
+	r.GET("/api/v1/users/:id", h.Get)
 	r.PUT("/api/v1/users/:id", h.Update)
+	r.POST("/api/v1/users/:id/activate", h.Activate)
+	r.POST("/api/v1/users/:id/deactivate", h.Deactivate)
+	r.POST("/api/v1/users/:id/unlock", h.Unlock)
+	r.GET("/api/v1/users/:id/manager-chain", h.GetManagerChain)
+	r.POST("/api/v1/users/:id/reset-password", h.ResetPassword)
 	return r
 }
 
@@ -246,5 +258,99 @@ func TestUserHandlerList_ReturnsManagerAndPagination(t *testing.T) {
 	}
 	if !resp.Data.Items[0].HasPassword {
 		t.Fatal("expected hasPassword=true for created user")
+	}
+}
+
+func TestUserHandlerResetPassword_ReturnsBadRequestOnPasswordPolicyViolation(t *testing.T) {
+	db := newTestDBForUserHandler(t)
+	h, userSvc := newUserHandlerForTest(t, db)
+	r := setupUserRouter(h)
+	role := seedRoleForUserHandler(t, db, "test-role")
+	user, err := userSvc.Create("alice", "Password123!", "alice@example.com", "", role.ID)
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	setPasswordPolicyForUserHandler(t, db, 16, true, true, true, true)
+
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/users/%d/reset-password", user.ID), bytes.NewBufferString(`{"password":"short"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestUserHandlerGetManagerChain_ReturnsOrderedManagers(t *testing.T) {
+	db := newTestDBForUserHandler(t)
+	h, userSvc := newUserHandlerForTest(t, db)
+	r := setupUserRouter(h)
+	role := seedRoleForUserHandler(t, db, "test-role")
+	root, err := userSvc.Create("root-manager", "Password123!", "root@example.com", "", role.ID)
+	if err != nil {
+		t.Fatalf("create root manager: %v", err)
+	}
+	middle, err := userSvc.CreateWithParams(service.CreateUserParams{
+		Username:  "middle-manager",
+		Password:  "Password123!",
+		Email:     "middle@example.com",
+		RoleID:    role.ID,
+		ManagerID: &root.ID,
+	})
+	if err != nil {
+		t.Fatalf("create middle manager: %v", err)
+	}
+	user, err := userSvc.CreateWithParams(service.CreateUserParams{
+		Username:  "alice",
+		Password:  "Password123!",
+		Email:     "alice@example.com",
+		RoleID:    role.ID,
+		ManagerID: &middle.ID,
+	})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/users/%d/manager-chain", user.ID), nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Code int                  `json:"code"`
+		Data []model.UserResponse `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(resp.Data) != 2 {
+		t.Fatalf("expected 2 managers, got %d", len(resp.Data))
+	}
+	if resp.Data[0].ID != middle.ID || resp.Data[1].ID != root.ID {
+		t.Fatalf("expected ordered chain [%d %d], got [%d %d]", middle.ID, root.ID, resp.Data[0].ID, resp.Data[1].ID)
+	}
+}
+
+func TestUserHandlerDeactivate_ReturnsBadRequestOnSelfDeactivation(t *testing.T) {
+	db := newTestDBForUserHandler(t)
+	h, userSvc := newUserHandlerForTest(t, db)
+	r := setupUserRouter(h)
+	role := seedRoleForUserHandler(t, db, "test-role")
+	user, err := userSvc.Create("alice", "Password123!", "alice@example.com", "", role.ID)
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/users/%d/deactivate", user.ID), nil)
+	req.Header.Set("X-Test-User-ID", strconv.FormatUint(uint64(user.ID), 10))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
