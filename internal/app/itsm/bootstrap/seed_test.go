@@ -34,7 +34,7 @@ func TestSeedCatalogs_CreatesExpectedRootsAndChildren(t *testing.T) {
 	}
 }
 
-func TestSeedServiceDefinitions_ServerAccessHasIntakeFormSchema(t *testing.T) {
+func TestSeedServiceDefinitions_ServerAccessUsesNaturalSpecAndPreservesStructuredContract(t *testing.T) {
 	db := newTestDB(t)
 
 	if err := seedCatalogs(db); err != nil {
@@ -50,6 +50,24 @@ func TestSeedServiceDefinitions_ServerAccessHasIntakeFormSchema(t *testing.T) {
 	var service ServiceDefinition
 	if err := db.Where("code = ?", "prod-server-temporary-access").First(&service).Error; err != nil {
 		t.Fatalf("find server access service: %v", err)
+	}
+
+	for _, forbidden := range []string{
+		"target_servers",
+		"access_window",
+		"operation_purpose",
+		"access_reason",
+		"form.access_reason",
+		"position_department",
+		"department_code",
+		"position_code",
+		"ops_admin",
+		"network_admin",
+		"security_admin",
+	} {
+		if strings.Contains(service.CollaborationSpec, forbidden) {
+			t.Fatalf("server access collaboration spec should be natural text, found machine token %q in %q", forbidden, service.CollaborationSpec)
+		}
 	}
 
 	var schema struct {
@@ -99,6 +117,13 @@ func TestSeedServiceDefinitions_ServerAccessHasIntakeFormSchema(t *testing.T) {
 	}
 	if detail.RoutingFieldHint != nil {
 		t.Fatalf("expected textarea routing field to be ignored, got %+v", detail.RoutingFieldHint)
+	}
+
+	workflow := string(service.WorkflowJSON)
+	for _, required := range []string{"form.access_reason", "it", "ops_admin", "network_admin", "security_admin"} {
+		if !strings.Contains(workflow, required) {
+			t.Fatalf("expected server access workflow to preserve structured token %q, got %s", required, workflow)
+		}
 	}
 }
 

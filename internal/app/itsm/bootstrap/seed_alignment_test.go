@@ -153,11 +153,11 @@ func TestBuiltInSmartSeedsAlignParticipantsAndInstallAdminIdentity(t *testing.T)
 		wanted := map[string][]string{
 			"boss-serial-change-request":      {"headquarters", "serial_reviewer", "ops_admin"},
 			"db-backup-whitelist-action-flow": {"db_admin"},
-			"prod-server-temporary-access":    {"ops_admin", "network_admin", "security_admin"},
 			"copilot-account-request":         {"IT管理员"},
 		}
 		workflowWanted := map[string][]string{
-			"vpn-access-request": {"vpn_account", "device_usage", "request_kind", "network_admin", "security_admin"},
+			"prod-server-temporary-access": {"target_servers", "access_window", "operation_purpose", "access_reason", "ops_admin", "network_admin", "security_admin"},
+			"vpn-access-request":           {"vpn_account", "device_usage", "request_kind", "network_admin", "security_admin"},
 		}
 		for _, svc := range services {
 			if needles, ok := wanted[svc.Code]; ok {
