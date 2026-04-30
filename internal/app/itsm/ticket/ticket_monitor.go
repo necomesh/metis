@@ -288,14 +288,6 @@ func EvaluateTicketMonitorRules(ticket *Ticket, fact ticketMonitorFact, now time
 			"current_activity_id": monitorOptionalUint(ticket.CurrentActivityID),
 		})
 	}
-	if ticket.CurrentActivityID == nil && now.Sub(ticket.UpdatedAt) >= monitorNoActivityBlockAfter {
-		addReason("blocked_total", "no_current_activity", "blocked", "活跃工单超过 5 分钟没有当前活动", map[string]any{
-			"current_activity_id": "nil",
-			"ticket_updated_at":   ticket.UpdatedAt.Format(time.RFC3339),
-			"waiting_minutes":     float64(elapsedMinutes(now, ticket.UpdatedAt)),
-			"threshold_minutes":   float64(monitorNoActivityBlockAfter / time.Minute),
-		})
-	}
 	activityFacts := fact.ActivityFacts
 	if len(activityFacts) == 0 && fact.Activity != nil {
 		activityFacts = []ticketMonitorActivityFact{{
@@ -306,6 +298,14 @@ func EvaluateTicketMonitorRules(ticket *Ticket, fact ticketMonitorFact, now time
 			OwnerName:             fact.OwnerName,
 			ActionFailed:          fact.ActionFailed,
 		}}
+	}
+	if len(activityFacts) == 0 && ticket.CurrentActivityID == nil && now.Sub(ticket.UpdatedAt) >= monitorNoActivityBlockAfter {
+		addReason("blocked_total", "no_current_activity", "blocked", "活跃工单超过 5 分钟没有当前活动", map[string]any{
+			"current_activity_id": "nil",
+			"ticket_updated_at":   ticket.UpdatedAt.Format(time.RFC3339),
+			"waiting_minutes":     float64(elapsedMinutes(now, ticket.UpdatedAt)),
+			"threshold_minutes":   float64(monitorNoActivityBlockAfter / time.Minute),
+		})
 	}
 	for _, activityFact := range activityFacts {
 		activity := activityFact.Activity
