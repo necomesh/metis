@@ -504,6 +504,11 @@ func isDBBackupWhitelistActionCode(code string) bool {
 }
 
 func looksLikeBossSerialChangeSpec(spec string) bool {
+	if strings.Contains(spec, "高风险变更协同申请") &&
+		strings.Contains(spec, "总部处理人") &&
+		strings.Contains(spec, "运维管理员") {
+		return true
+	}
 	return strings.Contains(spec, "高风险变更协同申请") &&
 		strings.Contains(spec, "headquarters") &&
 		strings.Contains(spec, "serial_reviewer") &&

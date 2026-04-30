@@ -207,6 +207,137 @@ func TestSeedServiceDefinitions_DBBackupUsesNaturalSpecAndPreservesStructuredCon
 	}
 }
 
+func TestSeedServiceDefinitions_BossUsesNaturalSpecAndPreservesStructuredContract(t *testing.T) {
+	db := newTestDB(t)
+
+	if err := seedCatalogs(db); err != nil {
+		t.Fatalf("seed catalogs: %v", err)
+	}
+	if err := seedSLATemplates(db); err != nil {
+		t.Fatalf("seed SLA templates: %v", err)
+	}
+	if err := seedServiceDefinitions(db); err != nil {
+		t.Fatalf("seed service definitions: %v", err)
+	}
+
+	var service ServiceDefinition
+	if err := db.Where("code = ?", "boss-serial-change-request").First(&service).Error; err != nil {
+		t.Fatalf("find boss service: %v", err)
+	}
+
+	for _, forbidden := range []string{
+		"subject",
+		"request_category",
+		"prod_change",
+		"risk_level",
+		"rollback_required",
+		"impact_modules",
+		"gateway",
+		"change_items",
+		"position_department",
+		"department_code",
+		"position_code",
+		"headquarters",
+		"serial_reviewer",
+		"ops_admin",
+	} {
+		if strings.Contains(service.CollaborationSpec, forbidden) {
+			t.Fatalf("boss collaboration spec should be natural text, found machine token %q in %q", forbidden, service.CollaborationSpec)
+		}
+	}
+	if strings.Contains(service.CollaborationSpec, "\n\n") {
+		t.Fatalf("boss collaboration spec should use single line breaks, got %q", service.CollaborationSpec)
+	}
+
+	var schema struct {
+		Fields []struct {
+			Key     string `json:"key"`
+			Type    string `json:"type"`
+			Options []struct {
+				Value string `json:"value"`
+			} `json:"options"`
+			Props struct {
+				Columns []struct {
+					Key     string `json:"key"`
+					Type    string `json:"type"`
+					Options []struct {
+						Value string `json:"value"`
+					} `json:"options"`
+				} `json:"columns"`
+			} `json:"props"`
+		} `json:"fields"`
+	}
+	if err := json.Unmarshal([]byte(service.IntakeFormSchema), &schema); err != nil {
+		t.Fatalf("unmarshal boss intake form schema: %v", err)
+	}
+
+	wantFields := []struct {
+		key string
+		typ string
+	}{
+		{"subject", "text"},
+		{"request_category", "select"},
+		{"risk_level", "radio"},
+		{"expected_finish_time", "datetime"},
+		{"change_window", "date_range"},
+		{"impact_scope", "textarea"},
+		{"rollback_required", "select"},
+		{"impact_modules", "multi_select"},
+		{"change_items", "table"},
+	}
+	if len(schema.Fields) != len(wantFields) {
+		t.Fatalf("expected boss field keys %v, got %+v", wantFields, schema.Fields)
+	}
+	fieldByKey := map[string]int{}
+	for i, field := range schema.Fields {
+		if field.Key != wantFields[i].key || field.Type != wantFields[i].typ {
+			t.Fatalf("expected field %d to be %s/%s, got %s/%s", i, wantFields[i].key, wantFields[i].typ, field.Key, field.Type)
+		}
+		fieldByKey[field.Key] = i
+	}
+	assertOptionValues := func(key string, want []string) {
+		t.Helper()
+		field := schema.Fields[fieldByKey[key]]
+		got := make([]string, 0, len(field.Options))
+		for _, opt := range field.Options {
+			got = append(got, opt.Value)
+		}
+		if len(got) != len(want) {
+			t.Fatalf("expected %s options %v, got %v", key, want, got)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("expected %s options %v, got %v", key, want, got)
+			}
+		}
+	}
+	assertOptionValues("request_category", []string{"prod_change", "access_grant", "emergency_support"})
+	assertOptionValues("risk_level", []string{"low", "medium", "high"})
+	assertOptionValues("rollback_required", []string{"required", "not_required"})
+	assertOptionValues("impact_modules", []string{"gateway", "payment", "monitoring", "order"})
+
+	changeItems := schema.Fields[fieldByKey["change_items"]]
+	wantColumns := []string{"system", "resource", "permission_level", "effective_range", "reason"}
+	if len(changeItems.Props.Columns) != len(wantColumns) {
+		t.Fatalf("expected change_items columns %v, got %+v", wantColumns, changeItems.Props.Columns)
+	}
+	for i, column := range changeItems.Props.Columns {
+		if column.Key != wantColumns[i] {
+			t.Fatalf("expected change_items columns %v, got %+v", wantColumns, changeItems.Props.Columns)
+		}
+		if column.Key == "permission_level" {
+			got := make([]string, 0, len(column.Options))
+			for _, opt := range column.Options {
+				got = append(got, opt.Value)
+			}
+			want := []string{"read", "read_write"}
+			if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+				t.Fatalf("expected permission_level options %v, got %v", want, got)
+			}
+		}
+	}
+}
+
 func TestSeedServiceDefinitions_DBBackupMigratesLegacyActionCodes(t *testing.T) {
 	db := newTestDB(t)
 

@@ -151,10 +151,10 @@ func TestBuiltInSmartSeedsAlignParticipantsAndInstallAdminIdentity(t *testing.T)
 			t.Fatalf("load smart services: %v", err)
 		}
 		wanted := map[string][]string{
-			"boss-serial-change-request": {"headquarters", "serial_reviewer", "ops_admin"},
-			"copilot-account-request":    {"IT管理员"},
+			"copilot-account-request": {"IT管理员"},
 		}
 		workflowWanted := map[string][]string{
+			"boss-serial-change-request":      {"subject", "request_category", "prod_change", "risk_level", "rollback_required", "impact_modules", "gateway", "change_items", "permission_level", "read_write"},
 			"db-backup-whitelist-action-flow": {"database_name", "source_ip", "whitelist_window", "access_reason", "db_backup_whitelist_precheck", "db_backup_whitelist_apply"},
 			"prod-server-temporary-access":    {"target_servers", "access_window", "operation_purpose", "access_reason", "ops_admin", "network_admin", "security_admin"},
 			"vpn-access-request":              {"vpn_account", "device_usage", "request_kind", "network_admin", "security_admin"},

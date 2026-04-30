@@ -152,6 +152,21 @@ form 节点必须包含 formSchema，描述该节点需要收集的字段：
 
 该服务的预检和放行动作由智能引擎运行时执行；参考路径 workflow_json 不生成 type="action" 节点，应使用申请人表单、数据库管理员人工处理和结束节点表达路径。
 
+### 高风险变更协同申请（Boss）表单字段
+
+当协作规范描述“高风险变更协同申请（Boss）”，并要求收集申请主题、申请类别、风险等级、期望完成时间、变更窗口、影响范围、回滚要求、影响模块和变更明细时，申请表单字段 key 必须稳定为：
+- subject：申请主题
+- request_category：申请类别；选项值为 prod_change、access_grant、emergency_support
+- risk_level：风险等级；选项值为 low、medium、high
+- expected_finish_time：期望完成时间
+- change_window：变更窗口
+- impact_scope：影响范围
+- rollback_required：回滚要求；选项值为 required、not_required
+- impact_modules：影响模块；选项值为 gateway、payment、monitoring、order
+- change_items：变更明细表；表格列为 system、resource、permission_level、effective_range、reason，其中 permission_level 选项值为 read、read_write
+
+该服务是两级串行人工处理：先总部处理人，再信息部运维管理员；参考路径应使用两个 process 节点和公共结束节点表达。
+
 ## 排他网关（exclusive）条件格式
 
 排他网关的路由条件配置在**出边的 data.condition** 中（不是节点上）：

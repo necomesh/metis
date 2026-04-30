@@ -544,7 +544,44 @@ func (s *WorkflowGenerateService) buildFormContractContext(raw JSONField) string
 				}
 			}
 		}
+		if field.Type == form.FieldTable {
+			sb.WriteString(formatWorkflowTableColumns(field))
+		}
 		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+func formatWorkflowTableColumns(field form.FormField) string {
+	columns, err := form.TableColumns(field)
+	if err != nil || len(columns) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString(", columns=")
+	for i, column := range columns {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		label := strings.TrimSpace(column.Label)
+		if label == "" {
+			label = column.Key
+		}
+		sb.WriteString(fmt.Sprintf("`%s`（%s/%s", column.Key, label, column.Type))
+		if len(column.Options) > 0 {
+			sb.WriteString(", options=")
+			for j, option := range column.Options {
+				if j > 0 {
+					sb.WriteString(", ")
+				}
+				sb.WriteString(fmt.Sprintf("`%v`", option.Value))
+				if option.Label != "" {
+					sb.WriteString(fmt.Sprintf("（%s）", option.Label))
+				}
+			}
+		}
+		sb.WriteString("）")
 	}
 	return sb.String()
 }

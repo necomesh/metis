@@ -93,6 +93,10 @@ func validDBBackupWorkflowJSONForGenerateTest() string {
 	return `{"nodes":[{"id":"start","type":"start","data":{"label":"开始"}},{"id":"request","type":"form","data":{"label":"填写数据库备份白名单临时放行申请","participants":[{"type":"requester"}],"formSchema":{"fields":[{"key":"database_name","type":"text","label":"目标数据库"},{"key":"source_ip","type":"text","label":"来源 IP"},{"key":"whitelist_window","type":"text","label":"白名单放行时间窗"},{"key":"access_reason","type":"textarea","label":"申请原因"}]}}},{"id":"db_process","type":"process","data":{"label":"数据库管理员处理","participants":[{"type":"position_department","department_code":"it","position_code":"db_admin"}]}},{"id":"end","type":"end","data":{"label":"结束"}}],"edges":[{"id":"edge_start_request","source":"start","target":"request","data":{}},{"id":"edge_request_db","source":"request","target":"db_process","data":{"outcome":"submitted"}},{"id":"edge_db_end_ok","source":"db_process","target":"end","data":{"outcome":"approved"}},{"id":"edge_db_end_reject","source":"db_process","target":"end","data":{"outcome":"rejected"}}]}`
 }
 
+func validBossWorkflowJSONForGenerateTest() string {
+	return `{"nodes":[{"id":"start","type":"start","data":{"label":"开始"}},{"id":"request","type":"form","data":{"label":"填写高风险变更协同申请","participants":[{"type":"requester"}],"formSchema":{"fields":[{"key":"subject","type":"text","label":"申请主题"},{"key":"request_category","type":"select","label":"申请类别","options":["prod_change","access_grant","emergency_support"]},{"key":"risk_level","type":"radio","label":"风险等级","options":["low","medium","high"]},{"key":"expected_finish_time","type":"datetime","label":"期望完成时间"},{"key":"change_window","type":"date_range","label":"变更窗口"},{"key":"impact_scope","type":"textarea","label":"影响范围"},{"key":"rollback_required","type":"select","label":"回滚要求","options":["required","not_required"]},{"key":"impact_modules","type":"multi_select","label":"影响模块","options":["gateway","payment","monitoring","order"]},{"key":"change_items","type":"table","label":"变更明细表","props":{"columns":[{"key":"system","type":"text","label":"系统"},{"key":"resource","type":"text","label":"资源"},{"key":"permission_level","type":"select","label":"权限级别","options":["read","read_write"]},{"key":"effective_range","type":"date_range","label":"生效时段"},{"key":"reason","type":"text","label":"变更理由"}]}}]}}},{"id":"head_process","type":"process","data":{"label":"总部处理人处理","participants":[{"type":"position_department","department_code":"headquarters","position_code":"serial_reviewer"}]}},{"id":"ops_process","type":"process","data":{"label":"运维管理员处理","participants":[{"type":"position_department","department_code":"it","position_code":"ops_admin"}]}},{"id":"end","type":"end","data":{"label":"结束"}}],"edges":[{"id":"edge_start_request","source":"start","target":"request","data":{}},{"id":"edge_request_head","source":"request","target":"head_process","data":{"outcome":"submitted"}},{"id":"edge_head_ops_ok","source":"head_process","target":"ops_process","data":{"outcome":"approved"}},{"id":"edge_head_end_reject","source":"head_process","target":"end","data":{"outcome":"rejected"}},{"id":"edge_ops_end_ok","source":"ops_process","target":"end","data":{"outcome":"approved"}},{"id":"edge_ops_end_reject","source":"ops_process","target":"end","data":{"outcome":"rejected"}}]}`
+}
+
 func workflowWithBlockingIssueForGenerateTest(userID uint) string {
 	return fmt.Sprintf(`{
 		"nodes": [
@@ -532,6 +536,29 @@ func TestPathBuilderSystemPromptGuidesServerAccessFieldKeysAndRouting(t *testing
 	}
 }
 
+func TestPathBuilderSystemPromptGuidesBossFieldKeys(t *testing.T) {
+	requiredSnippets := []string{
+		"高风险变更协同申请（Boss）",
+		"subject：申请主题",
+		"request_category：申请类别",
+		"prod_change、access_grant、emergency_support",
+		"risk_level：风险等级",
+		"low、medium、high",
+		"rollback_required：回滚要求",
+		"impact_modules：影响模块",
+		"gateway、payment、monitoring、order",
+		"change_items：变更明细表",
+		"system、resource、permission_level、effective_range、reason",
+		"read、read_write",
+		"先总部处理人，再信息部运维管理员",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(PathBuilderSystemPrompt, snippet) {
+			t.Fatalf("system prompt missing boss field guidance: %s", snippet)
+		}
+	}
+}
+
 func TestWorkflowValidationMessageGuidesParticipantRepair(t *testing.T) {
 	errs := engine.ValidateWorkflow(json.RawMessage(`{
 		"nodes": [
@@ -847,6 +874,44 @@ func (dbBackupWorkflowGenerateOrgStructureResolver) ResolveOrgParticipant(depart
 	}, nil
 }
 
+type bossWorkflowGenerateOrgStructureResolver struct{}
+
+func (bossWorkflowGenerateOrgStructureResolver) SearchOrgStructure(query string, kinds []string, limit int) (*appcore.OrgStructureSearchResult, error) {
+	return &appcore.OrgStructureSearchResult{
+		Departments: []appcore.OrgContextDepartment{
+			{Code: "headquarters", Name: "总部", IsActive: true},
+			{Code: "it", Name: "信息部", IsActive: true},
+		},
+		Positions: []appcore.OrgContextPosition{
+			{Code: "serial_reviewer", Name: "总部处理人", IsActive: true},
+			{Code: "ops_admin", Name: "运维管理员", IsActive: true},
+		},
+		Summary: "测试组织结构搜索: " + query,
+	}, nil
+}
+
+func (bossWorkflowGenerateOrgStructureResolver) ResolveOrgParticipant(departmentHint, positionHint string, limit int) (*appcore.OrgParticipantResolveResult, error) {
+	candidate := appcore.OrgParticipantCandidate{
+		Type:           "position_department",
+		CandidateCount: 1,
+	}
+	if strings.Contains(departmentHint, "总部") || strings.Contains(positionHint, "总部") {
+		candidate.DepartmentCode = "headquarters"
+		candidate.DepartmentName = "总部"
+		candidate.PositionCode = "serial_reviewer"
+		candidate.PositionName = "总部处理人"
+	} else {
+		candidate.DepartmentCode = "it"
+		candidate.DepartmentName = "信息部"
+		candidate.PositionCode = "ops_admin"
+		candidate.PositionName = "运维管理员"
+	}
+	return &appcore.OrgParticipantResolveResult{
+		Candidates: []appcore.OrgParticipantCandidate{candidate},
+		Summary:    "测试参与人解析",
+	}, nil
+}
+
 func TestGenerate_WithServiceIDUsesOrgToolPreflightForVPNContext(t *testing.T) {
 	db := newTestDB(t)
 	catSvc := newCatalogServiceForTest(t, db)
@@ -1074,6 +1139,86 @@ func TestGenerate_WithServiceIDUsesOrgToolPreflightForDBBackupContext(t *testing
 	}
 	if strings.Contains(workflowText, `"type":"action"`) {
 		t.Fatalf("db backup reference workflow must not contain action nodes, got %s", workflowText)
+	}
+}
+
+func TestGenerate_WithServiceIDUsesOrgToolPreflightForBossContext(t *testing.T) {
+	db := newTestDB(t)
+	catSvc := newCatalogServiceForTest(t, db)
+	root, _ := catSvc.Create("Root", "root", "", "", nil, 10)
+
+	bossSchema := JSONField(`{"version":1,"fields":[{"key":"subject","type":"text","label":"申请主题"},{"key":"request_category","type":"select","label":"申请类别","options":[{"label":"生产变更","value":"prod_change"},{"label":"访问授权","value":"access_grant"},{"label":"应急支持","value":"emergency_support"}]},{"key":"risk_level","type":"radio","label":"风险等级","options":[{"label":"低","value":"low"},{"label":"中","value":"medium"},{"label":"高","value":"high"}]},{"key":"expected_finish_time","type":"datetime","label":"期望完成时间"},{"key":"change_window","type":"date_range","label":"变更窗口"},{"key":"impact_scope","type":"textarea","label":"影响范围"},{"key":"rollback_required","type":"select","label":"回滚要求","options":[{"label":"需要","value":"required"},{"label":"不需要","value":"not_required"}]},{"key":"impact_modules","type":"multi_select","label":"影响模块","options":[{"label":"网关","value":"gateway"},{"label":"支付","value":"payment"},{"label":"监控","value":"monitoring"},{"label":"订单","value":"order"}]},{"key":"change_items","type":"table","label":"变更明细表","props":{"columns":[{"key":"system","type":"text","label":"系统"},{"key":"resource","type":"text","label":"资源"},{"key":"permission_level","type":"select","label":"权限级别","options":[{"label":"只读","value":"read"},{"label":"读写","value":"read_write"}]},{"key":"effective_range","type":"date_range","label":"生效时段"},{"key":"reason","type":"text","label":"变更理由"}]}}]}`)
+	service := ServiceDefinition{
+		Name:             "高风险变更协同申请（Boss）",
+		Code:             "boss-serial-change-request",
+		CatalogID:        root.ID,
+		EngineType:       "smart",
+		IntakeFormSchema: bossSchema,
+		IsActive:         true,
+	}
+	if err := db.Create(&service).Error; err != nil {
+		t.Fatalf("create boss service: %v", err)
+	}
+
+	client := &fakeWorkflowLLMClient{
+		responses: []llm.ChatResponse{
+			{ToolCalls: []llm.ToolCall{
+				{ID: "call_head", Name: "workflow.org_resolve_participant", Arguments: `{"department_hint":"总部","position_hint":"总部处理人","limit":10}`},
+				{ID: "call_ops", Name: "workflow.org_resolve_participant", Arguments: `{"department_hint":"信息部","position_hint":"运维管理员","limit":10}`},
+			}},
+			{Content: "组织上下文已收集"},
+			{Content: validBossWorkflowJSONForGenerateTest()},
+		},
+	}
+	svc := newWorkflowGenerateServiceForRetryTest(client, 0)
+	svc.serviceDefSvc = newServiceDefServiceForTest(t, db)
+	svc.orgStructureResolver = bossWorkflowGenerateOrgStructureResolver{}
+
+	naturalSpec := `员工在 IT 服务台提交高风险变更协同申请时，服务台需要确认申请主题、申请类别、风险等级、期望完成时间、变更窗口、影响范围、回滚要求、影响模块，以及每一项变更明细。
+申请类别包括生产变更、访问授权和应急支持；风险等级包括低、中、高；回滚要求包括需要和不需要；影响模块可选择网关、支付、监控和订单。变更明细需要说明系统、资源、权限级别、生效时段和变更理由，权限级别包括只读和读写。
+申请提交后，先交给总部处理人处理；总部处理人完成后，再交给信息部运维管理员处理。运维管理员完成处理后流程结束。`
+	resp, err := svc.Generate(context.Background(), &GenerateRequest{ServiceID: service.ID, CollaborationSpec: naturalSpec})
+	if err != nil {
+		t.Fatalf("generate workflow: %v", err)
+	}
+	if len(client.requests) != 3 {
+		t.Fatalf("expected org preflight two-turn exchange plus final JSON generation, got %d requests", len(client.requests))
+	}
+	userPrompt := client.requests[2].Messages[1].Content
+	for _, snippet := range []string{
+		naturalSpec,
+		"已有申请表单契约",
+		"subject",
+		"request_category",
+		"prod_change",
+		"risk_level",
+		"rollback_required",
+		"impact_modules",
+		"change_items",
+		"permission_level",
+		"read_write",
+		"按需查询到的组织上下文",
+		"总部",
+		"headquarters",
+		"总部处理人",
+		"serial_reviewer",
+		"信息部",
+		"it",
+		"运维管理员",
+		"ops_admin",
+	} {
+		if !strings.Contains(userPrompt, snippet) {
+			t.Fatalf("expected generated prompt to contain %q, got %s", snippet, userPrompt)
+		}
+	}
+	workflowText := string(resp.WorkflowJSON)
+	for _, snippet := range []string{"subject", "request_category", "change_items", "headquarters", "serial_reviewer", "it", "ops_admin"} {
+		if !strings.Contains(workflowText, snippet) {
+			t.Fatalf("expected generated workflow to contain %q, got %s", snippet, workflowText)
+		}
+	}
+	if strings.Contains(workflowText, "serial-reviewer") {
+		t.Fatalf("boss reference workflow must not contain legacy fixed user, got %s", workflowText)
 	}
 }
 

@@ -868,13 +868,15 @@ func seedServiceDefinitions(db *gorm.DB) error {
 			CollaborationSpec: "收集提单用户的 Github 账号信息和申请理由（可选），交给信息部 IT管理员处理。处理任务完成后结束流程。",
 		},
 		{
-			Name:              "高风险变更协同申请（Boss）",
-			Code:              "boss-serial-change-request",
-			Description:       "用于在系统内直接查看复杂表单、表格明细与两级串行处理流程图的 Boss 级内置服务。",
-			CatalogCode:       "application-platform:release",
-			SLACode:           "infra-change",
-			IntakeFormSchema:  bossSerialChangeFormSchema,
-			CollaborationSpec: `用户在 IT 服务台提交高风险变更协同申请。服务台需要收集申请主题、申请类别、风险等级、期望完成时间、变更开始时间、变更结束时间、影响范围、回滚要求、影响模块以及变更明细表。申请类别必须支持：生产变更(prod_change)、访问授权(access_grant)、应急支持(emergency_support)。风险等级必须支持：低(low)、中(medium)、高(high)。回滚要求必须支持：需要(required)、不需要(not_required)。影响模块必须支持多选：网关(gateway)、支付(payment)、监控(monitoring)、订单(order)。变更明细表至少包含系统、资源、权限级别、生效时段、变更理由。权限级别必须支持：只读(read)、读写(read_write)。申请提交后，先交给总部处理人岗位处理，参与者类型必须使用 position_department，部门编码使用 headquarters，岗位编码使用 serial_reviewer。总部处理人完成处理后，再交给信息部运维管理员岗位处理，参与者类型必须使用 position_department，部门编码使用 it，岗位编码使用 ops_admin。运维管理员完成处理后直接结束流程。`,
+			Name:             "高风险变更协同申请（Boss）",
+			Code:             "boss-serial-change-request",
+			Description:      "用于在系统内直接查看复杂表单、表格明细与两级串行处理流程图的 Boss 级内置服务。",
+			CatalogCode:      "application-platform:release",
+			SLACode:          "infra-change",
+			IntakeFormSchema: bossSerialChangeFormSchema,
+			CollaborationSpec: `员工在 IT 服务台提交高风险变更协同申请时，服务台需要确认申请主题、申请类别、风险等级、期望完成时间、变更窗口、影响范围、回滚要求、影响模块，以及每一项变更明细。
+申请类别包括生产变更、访问授权和应急支持；风险等级包括低、中、高；回滚要求包括需要和不需要；影响模块可选择网关、支付、监控和订单。变更明细需要说明系统、资源、权限级别、生效时段和变更理由，权限级别包括只读和读写。
+申请提交后，先交给总部处理人处理；总部处理人完成后，再交给信息部运维管理员处理。运维管理员完成处理后流程结束。`,
 		},
 		{
 			Name:             "生产数据库备份白名单临时放行申请",

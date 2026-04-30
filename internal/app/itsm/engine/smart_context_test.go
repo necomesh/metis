@@ -89,6 +89,16 @@ func TestLooksLikeDBBackupWhitelistSpecMatchesNaturalSpec(t *testing.T) {
 	}
 }
 
+func TestLooksLikeBossSerialChangeSpecMatchesNaturalSpec(t *testing.T) {
+	spec := `员工在 IT 服务台提交高风险变更协同申请时，服务台需要确认申请主题、申请类别、风险等级、期望完成时间、变更窗口、影响范围、回滚要求、影响模块，以及每一项变更明细。
+申请类别包括生产变更、访问授权和应急支持；风险等级包括低、中、高；回滚要求包括需要和不需要；影响模块可选择网关、支付、监控和订单。变更明细需要说明系统、资源、权限级别、生效时段和变更理由，权限级别包括只读和读写。
+申请提交后，先交给总部处理人处理；总部处理人完成后，再交给信息部运维管理员处理。运维管理员完成处理后流程结束。`
+
+	if !looksLikeBossSerialChangeSpec(spec) {
+		t.Fatalf("expected natural boss serial change spec to enable deterministic guard")
+	}
+}
+
 func TestTicketActionSucceededAcceptsLegacyDBBackupActionCode(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
