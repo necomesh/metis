@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	. "metis/internal/app/itsm/domain"
 	itsmtools "metis/internal/app/itsm/tools"
+	"strings"
 	"testing"
 
 	"metis/internal/model"
@@ -98,6 +99,92 @@ func TestSeedServiceDefinitions_ServerAccessHasIntakeFormSchema(t *testing.T) {
 	}
 	if detail.RoutingFieldHint != nil {
 		t.Fatalf("expected textarea routing field to be ignored, got %+v", detail.RoutingFieldHint)
+	}
+}
+
+func TestSeedServiceDefinitions_VPNUsesNaturalSpecAndPreservesStructuredContract(t *testing.T) {
+	db := newTestDB(t)
+
+	if err := seedCatalogs(db); err != nil {
+		t.Fatalf("seed catalogs: %v", err)
+	}
+	if err := seedSLATemplates(db); err != nil {
+		t.Fatalf("seed SLA templates: %v", err)
+	}
+	if err := seedServiceDefinitions(db); err != nil {
+		t.Fatalf("seed service definitions: %v", err)
+	}
+
+	var service ServiceDefinition
+	if err := db.Where("code = ?", "vpn-access-request").First(&service).Error; err != nil {
+		t.Fatalf("find vpn service: %v", err)
+	}
+
+	for _, forbidden := range []string{
+		"vpn_account",
+		"device_usage",
+		"request_kind",
+		"form.request_kind",
+		"position_department",
+		"department_code",
+		"position_code",
+		"network_admin",
+		"security_admin",
+		"online_support",
+		"troubleshooting",
+		"production_emergency",
+		"network_access_issue",
+		"external_collaboration",
+		"long_term_remote_work",
+		"cross_border_access",
+		"security_compliance",
+	} {
+		if strings.Contains(service.CollaborationSpec, forbidden) {
+			t.Fatalf("vpn collaboration spec should be natural text, found machine token %q in %q", forbidden, service.CollaborationSpec)
+		}
+	}
+
+	var schema struct {
+		Fields []struct {
+			Key     string `json:"key"`
+			Type    string `json:"type"`
+			Options []struct {
+				Value string `json:"value"`
+			} `json:"options"`
+		} `json:"fields"`
+	}
+	if err := json.Unmarshal([]byte(service.IntakeFormSchema), &schema); err != nil {
+		t.Fatalf("unmarshal vpn intake form schema: %v", err)
+	}
+	fieldTypes := map[string]string{}
+	optionValues := map[string]bool{}
+	for _, field := range schema.Fields {
+		fieldTypes[field.Key] = field.Type
+		for _, option := range field.Options {
+			optionValues[option.Value] = true
+		}
+	}
+	expectedFields := map[string]string{
+		"vpn_account":  "text",
+		"device_usage": "textarea",
+		"request_kind": "select",
+	}
+	for key, typ := range expectedFields {
+		if fieldTypes[key] != typ {
+			t.Fatalf("expected vpn field %s type %s, got fields=%v", key, typ, fieldTypes)
+		}
+	}
+	for _, value := range []string{"online_support", "troubleshooting", "production_emergency", "network_access_issue", "external_collaboration", "long_term_remote_work", "cross_border_access", "security_compliance"} {
+		if !optionValues[value] {
+			t.Fatalf("expected request_kind option %q, got %#v", value, optionValues)
+		}
+	}
+
+	workflow := string(service.WorkflowJSON)
+	for _, required := range []string{"form.request_kind", "it", "network_admin", "security_admin"} {
+		if !strings.Contains(workflow, required) {
+			t.Fatalf("expected vpn workflow json to preserve %q, got %s", required, workflow)
+		}
 	}
 }
 

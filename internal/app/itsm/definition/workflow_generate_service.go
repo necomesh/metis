@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	appcore "metis/internal/app"
 	. "metis/internal/app/itsm/config"
 	. "metis/internal/app/itsm/domain"
 	"metis/internal/app/itsm/form"
@@ -37,14 +38,17 @@ type WorkflowGenerateService struct {
 	actionRepo       *ServiceActionRepo
 	serviceDefSvc    *ServiceDefService
 	llmClientFactory workflowLLMClientFactory
+	orgResolver      appcore.OrgResolver
 }
 
 func NewWorkflowGenerateService(i do.Injector) (*WorkflowGenerateService, error) {
+	orgResolver, _ := do.InvokeAs[appcore.OrgResolver](i)
 	return &WorkflowGenerateService{
 		engineConfigSvc:  do.MustInvoke[*EngineConfigService](i),
 		actionRepo:       do.MustInvoke[*ServiceActionRepo](i),
 		serviceDefSvc:    do.MustInvoke[*ServiceDefService](i),
 		llmClientFactory: llm.NewClient,
+		orgResolver:      orgResolver,
 	}, nil
 }
 
@@ -90,14 +94,24 @@ func (s *WorkflowGenerateService) Generate(ctx context.Context, req *GenerateReq
 		return nil, fmt.Errorf("LLM 客户端创建失败: %w", err)
 	}
 
-	// 3. Load available actions for context
-	var actionsContext string
+	// 3. Load structured service context for prompt grounding
+	promptCtx := workflowPromptContext{}
 	if req.ServiceID > 0 {
-		actions, err := s.actionRepo.ListByService(req.ServiceID)
-		if err == nil && len(actions) > 0 {
-			actionsContext = s.buildActionsContext(actions)
+		if s.actionRepo != nil {
+			actions, err := s.actionRepo.ListByService(req.ServiceID)
+			if err == nil && len(actions) > 0 {
+				promptCtx.ActionsContext = s.buildActionsContext(actions)
+			}
+		}
+		if s.serviceDefSvc != nil {
+			if serviceDef, err := s.serviceDefSvc.Get(req.ServiceID); err == nil {
+				promptCtx.FormContractContext = s.buildFormContractContext(serviceDef.IntakeFormSchema)
+			} else {
+				slog.Warn("workflow generate: failed to load service definition for prompt context", "serviceID", req.ServiceID, "error", err)
+			}
 		}
 	}
+	promptCtx.OrgContext = s.buildOrgContext()
 
 	// 4. Build prompt and call LLM with retry
 	maxRetries := engineCfg.MaxRetries
@@ -108,7 +122,7 @@ func (s *WorkflowGenerateService) Generate(ctx context.Context, req *GenerateReq
 	var lastErrors []engine.ValidationError
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		userMsg := s.buildUserMessage(req.CollaborationSpec, actionsContext, lastErrors)
+		userMsg := s.buildUserMessage(req.CollaborationSpec, promptCtx, lastErrors)
 
 		messages := []llm.Message{
 			{Role: llm.RoleSystem, Content: systemPrompt},
@@ -485,15 +499,105 @@ func (s *WorkflowGenerateService) buildActionsContext(actions []ServiceAction) s
 	return sb.String()
 }
 
+type workflowPromptContext struct {
+	ActionsContext      string
+	FormContractContext string
+	OrgContext          string
+}
+
+func (s *WorkflowGenerateService) buildFormContractContext(raw JSONField) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	schema, err := form.ParseSchema(json.RawMessage(raw))
+	if err != nil || schema == nil || len(schema.Fields) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("\n\n## 已有申请表单契约\n")
+	sb.WriteString("该服务已经配置申请确认表单。生成参考路径时必须复用这些字段 key、类型和选项值；排他网关条件引用表单字段时必须使用 form.<key>。\n\n")
+	for _, field := range schema.Fields {
+		label := strings.TrimSpace(field.Label)
+		if label == "" {
+			label = field.Key
+		}
+		sb.WriteString(fmt.Sprintf("- %s: key=`%s`, type=`%s`", label, field.Key, field.Type))
+		if len(field.Options) > 0 {
+			sb.WriteString(", options=")
+			for i, option := range field.Options {
+				if i > 0 {
+					sb.WriteString(", ")
+				}
+				sb.WriteString(fmt.Sprintf("`%v`", option.Value))
+				if option.Label != "" {
+					sb.WriteString(fmt.Sprintf("（%s）", option.Label))
+				}
+			}
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+func (s *WorkflowGenerateService) buildOrgContext() string {
+	if s.orgResolver == nil {
+		return ""
+	}
+	ctx, err := s.orgResolver.QueryContext("", "", "", false)
+	if err != nil || ctx == nil || (len(ctx.Departments) == 0 && len(ctx.Positions) == 0) {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("\n\n## 组织架构上下文\n")
+	sb.WriteString("生成人工处理节点参与人时，优先按以下组织名称与 code 映射；特定部门中的特定岗位使用 position_department，并填入 department_code 与 position_code。\n\n")
+	wroteItem := false
+	for _, dept := range ctx.Departments {
+		if !dept.IsActive || strings.TrimSpace(dept.Code) == "" {
+			continue
+		}
+		name := strings.TrimSpace(dept.Name)
+		if name == "" {
+			name = dept.Code
+		}
+		sb.WriteString(fmt.Sprintf("- 部门：%s（code: `%s`）\n", name, dept.Code))
+		wroteItem = true
+	}
+	for _, pos := range ctx.Positions {
+		if !pos.IsActive || strings.TrimSpace(pos.Code) == "" {
+			continue
+		}
+		name := strings.TrimSpace(pos.Name)
+		if name == "" {
+			name = pos.Code
+		}
+		sb.WriteString(fmt.Sprintf("- 岗位：%s（code: `%s`）\n", name, pos.Code))
+		wroteItem = true
+	}
+	if !wroteItem {
+		return ""
+	}
+	return sb.String()
+}
+
 // buildUserMessage constructs the user-facing prompt, optionally injecting previous validation errors.
-func (s *WorkflowGenerateService) buildUserMessage(spec string, actionsCtx string, prevErrors []engine.ValidationError) string {
+func (s *WorkflowGenerateService) buildUserMessage(spec string, promptCtx workflowPromptContext, prevErrors []engine.ValidationError) string {
 	var sb strings.Builder
 	sb.WriteString("请根据以下协作规范生成工作流 JSON。\n\n")
 	sb.WriteString("## 协作规范\n\n")
 	sb.WriteString(spec)
 
-	if actionsCtx != "" {
-		sb.WriteString(actionsCtx)
+	if promptCtx.FormContractContext != "" {
+		sb.WriteString(promptCtx.FormContractContext)
+	}
+
+	if promptCtx.OrgContext != "" {
+		sb.WriteString(promptCtx.OrgContext)
+	}
+
+	if promptCtx.ActionsContext != "" {
+		sb.WriteString(promptCtx.ActionsContext)
 	}
 
 	if len(prevErrors) > 0 {
@@ -546,7 +650,7 @@ func (s *WorkflowGenerateService) buildUserMessage(spec string, actionsCtx strin
 }
 
 func (s *WorkflowGenerateService) BuildUserMessage(spec string, actionsCtx string, prevErrors []engine.ValidationError) string {
-	return s.buildUserMessage(spec, actionsCtx, prevErrors)
+	return s.buildUserMessage(spec, workflowPromptContext{ActionsContext: actionsCtx}, prevErrors)
 }
 
 func validationErrorsRequireParticipantRepair(validationErrors []engine.ValidationError) bool {

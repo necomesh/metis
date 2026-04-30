@@ -84,6 +84,7 @@ func (r *OrgResolverImpl) QueryContext(username, deptCode, positionCode string, 
 		Departments: []app.OrgContextDepartment{},
 		Positions:   []app.OrgContextPosition{},
 	}
+	noFilters := username == "" && deptCode == "" && positionCode == ""
 
 	// Query by username
 	if username != "" {
@@ -149,6 +150,51 @@ func (r *OrgResolverImpl) QueryContext(username, deptCode, positionCode string, 
 			q = q.Where("is_active = ?", true)
 		}
 		if err := q.Limit(20).Find(&positions).Error; err != nil {
+			return nil, fmt.Errorf("query positions: %w", err)
+		}
+		for _, p := range positions {
+			result.Positions = append(result.Positions, app.OrgContextPosition{
+				ID:       p.ID,
+				Code:     p.Code,
+				Name:     p.Name,
+				IsActive: p.IsActive,
+			})
+		}
+	}
+
+	// No-filter org context is used by prompt builders. Return the org vocabulary
+	// only; users are intentionally excluded to avoid unnecessary personal data.
+	if noFilters {
+		var depts []domain.Department
+		deptQ := r.db.Order("sort ASC, id ASC")
+		if !includeInactive {
+			deptQ = deptQ.Where("is_active = ?", true)
+		}
+		if err := deptQ.Limit(50).Find(&depts).Error; err != nil {
+			return nil, fmt.Errorf("query departments: %w", err)
+		}
+		for _, d := range depts {
+			cd := app.OrgContextDepartment{
+				ID:       d.ID,
+				Code:     d.Code,
+				Name:     d.Name,
+				IsActive: d.IsActive,
+			}
+			if d.ParentID != nil {
+				var parent domain.Department
+				if err := r.db.Select("code").First(&parent, *d.ParentID).Error; err == nil {
+					cd.ParentCode = parent.Code
+				}
+			}
+			result.Departments = append(result.Departments, cd)
+		}
+
+		var positions []domain.Position
+		posQ := r.db.Order("sort ASC, id ASC")
+		if !includeInactive {
+			posQ = posQ.Where("is_active = ?", true)
+		}
+		if err := posQ.Limit(50).Find(&positions).Error; err != nil {
 			return nil, fmt.Errorf("query positions: %w", err)
 		}
 		for _, p := range positions {

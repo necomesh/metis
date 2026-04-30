@@ -98,3 +98,30 @@ func TestOrgResolverImpl_GetUserDepartmentIDs(t *testing.T) {
 		t.Fatalf("expected 2 department ids, got %d", len(ids))
 	}
 }
+
+func TestOrgResolverImpl_QueryContextWithoutFiltersReturnsOrgVocabularyOnly(t *testing.T) {
+	db := testutil.NewOrgTestDB(t)
+	resolver := newResolverForTest(db)
+
+	role := testutil.SeedRole(t, db, "user")
+	dept := testutil.SeedDepartment(t, db, "信息部", "it", nil, nil, true)
+	_ = testutil.SeedDepartment(t, db, "停用部门", "inactive_dept", nil, nil, false)
+	pos := testutil.SeedPosition(t, db, "网络管理员", "network_admin", true)
+	_ = testutil.SeedPosition(t, db, "停用岗位", "inactive_pos", false)
+	user := testutil.SeedUser(t, db, "u1", role.ID)
+	testutil.SeedAssignment(t, db, user.ID, dept.ID, pos.ID, true)
+
+	got, err := resolver.QueryContext("", "", "", false)
+	if err != nil {
+		t.Fatalf("query org context: %v", err)
+	}
+	if len(got.Users) != 0 {
+		t.Fatalf("expected no users in unfiltered org vocabulary context, got %+v", got.Users)
+	}
+	if len(got.Departments) != 1 || got.Departments[0].Code != "it" || got.Departments[0].Name != "信息部" {
+		t.Fatalf("expected active department vocabulary, got %+v", got.Departments)
+	}
+	if len(got.Positions) != 1 || got.Positions[0].Code != "network_admin" || got.Positions[0].Name != "网络管理员" {
+		t.Fatalf("expected active position vocabulary, got %+v", got.Positions)
+	}
+}
