@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
 	"metis/internal/app"
+	"metis/internal/app/itsm/domain"
 	"metis/internal/app/itsm/engine"
 	"metis/internal/app/itsm/form"
 )
@@ -24,6 +26,19 @@ type Operator struct {
 	withdrawFunc  func(ticketID uint, reason string, operatorID uint) error
 	ticketCreator TicketCreator // nil-safe: falls back to error if not set
 	matcher       ServiceMatcher
+}
+
+type serviceSnapshotSource struct {
+	ID                uint
+	Name              string
+	EngineType        string
+	SLAID             *uint
+	CollaborationSpec string
+	IntakeFormSchema  string
+	WorkflowJSON      string
+	AgentID           *uint
+	AgentConfig       string
+	KnowledgeBaseIDs  string
 }
 
 // NewOperator creates a new ServiceDeskOperator.
@@ -41,33 +56,31 @@ func (o *Operator) MatchServices(ctx context.Context, query string) ([]ServiceMa
 
 // LoadService loads a service's full detail including form fields, actions, and routing hints.
 func (o *Operator) LoadService(serviceID uint) (*ServiceDetail, error) {
-	type svcRow struct {
-		ID                uint
-		Name              string
-		EngineType        string
-		CollaborationSpec string
-		IntakeFormSchema  string
-		WorkflowJSON      string
-	}
-	var svc svcRow
+	var svc serviceSnapshotSource
 	if err := o.db.Table("itsm_service_definitions").
 		Where("id = ? AND deleted_at IS NULL", serviceID).
 		First(&svc).Error; err != nil {
 		return nil, fmt.Errorf("service not found: %w", err)
 	}
+	version, err := o.ensureRuntimeVersionSnapshot(&svc)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot service definition: %w", err)
+	}
 
 	detail := &ServiceDetail{
-		ServiceID:         svc.ID,
-		Name:              svc.Name,
-		EngineType:        svc.EngineType,
-		CollaborationSpec: svc.CollaborationSpec,
+		ServiceID:          svc.ID,
+		ServiceVersionID:   version.ID,
+		ServiceVersionHash: version.ContentHash,
+		Name:               svc.Name,
+		EngineType:         version.EngineType,
+		CollaborationSpec:  version.CollaborationSpec,
 	}
 
 	// Load form fields from inline intake form schema.
-	if svc.IntakeFormSchema != "" {
-		detail.FormFields = parseFormFields(svc.IntakeFormSchema)
+	if len(version.IntakeFormSchema) > 0 {
+		detail.FormFields = parseFormFields(string(version.IntakeFormSchema))
 		var schema any
-		if err := json.Unmarshal([]byte(svc.IntakeFormSchema), &schema); err == nil {
+		if err := json.Unmarshal(version.IntakeFormSchema, &schema); err == nil {
 			detail.FormSchema = schema
 		}
 	}
@@ -89,8 +102,8 @@ func (o *Operator) LoadService(serviceID uint) (*ServiceDetail, error) {
 	}
 
 	// Extract routing field hint from workflow_json.
-	if svc.WorkflowJSON != "" {
-		if hint := extractRoutingHint(svc.WorkflowJSON); routingHintSupported(detail.FormFields, hint) {
+	if len(version.WorkflowJSON) > 0 {
+		if hint := extractRoutingHint(string(version.WorkflowJSON)); routingHintSupported(detail.FormFields, hint) {
 			detail.RoutingFieldHint = hint
 		}
 	}
@@ -99,6 +112,156 @@ func (o *Operator) LoadService(serviceID uint) (*ServiceDetail, error) {
 	detail.FieldsHash = computeFieldsHash(detail.FormFields)
 
 	return detail, nil
+}
+
+func (o *Operator) ensureRuntimeVersionSnapshot(svc *serviceSnapshotSource) (*domain.ServiceDefinitionVersion, error) {
+	type actionRow struct {
+		ID          uint
+		Name        string
+		Code        string
+		Description string
+		Prompt      string
+		ActionType  string
+		ConfigJSON  string
+		ServiceID   uint
+		IsActive    bool
+		CreatedAt   time.Time
+		UpdatedAt   time.Time
+	}
+	var actions []actionRow
+	if err := o.db.Table("itsm_service_actions").
+		Where("service_id = ? AND deleted_at IS NULL", svc.ID).
+		Order("id ASC").
+		Find(&actions).Error; err != nil {
+		return nil, err
+	}
+	actionResponses := make([]map[string]any, 0, len(actions))
+	for _, action := range actions {
+		actionResponses = append(actionResponses, map[string]any{
+			"id":          action.ID,
+			"name":        action.Name,
+			"code":        action.Code,
+			"description": action.Description,
+			"prompt":      action.Prompt,
+			"actionType":  action.ActionType,
+			"configJson":  domain.JSONField(action.ConfigJSON),
+			"serviceId":   action.ServiceID,
+			"isActive":    action.IsActive,
+			"createdAt":   action.CreatedAt,
+			"updatedAt":   action.UpdatedAt,
+		})
+	}
+	actionsJSON, err := json.Marshal(actionResponses)
+	if err != nil {
+		return nil, err
+	}
+	slaTemplateJSON, escalationRulesJSON, err := o.buildSLASnapshots(svc.SLAID)
+	if err != nil {
+		return nil, err
+	}
+
+	content := struct {
+		ServiceID           uint
+		EngineType          string
+		SLAID               *uint
+		IntakeFormSchema    domain.JSONField
+		WorkflowJSON        domain.JSONField
+		CollaborationSpec   string
+		AgentID             *uint
+		AgentConfig         domain.JSONField
+		KnowledgeBaseIDs    domain.JSONField
+		ActionsJSON         json.RawMessage
+		SLATemplateJSON     json.RawMessage
+		EscalationRulesJSON json.RawMessage
+	}{
+		ServiceID:           svc.ID,
+		EngineType:          svc.EngineType,
+		SLAID:               svc.SLAID,
+		IntakeFormSchema:    domain.JSONField(svc.IntakeFormSchema),
+		WorkflowJSON:        domain.JSONField(svc.WorkflowJSON),
+		CollaborationSpec:   svc.CollaborationSpec,
+		AgentID:             svc.AgentID,
+		AgentConfig:         domain.JSONField(svc.AgentConfig),
+		KnowledgeBaseIDs:    domain.JSONField(svc.KnowledgeBaseIDs),
+		ActionsJSON:         actionsJSON,
+		SLATemplateJSON:     slaTemplateJSON,
+		EscalationRulesJSON: escalationRulesJSON,
+	}
+	contentJSON, err := json.Marshal(content)
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(contentJSON)
+	hash := fmt.Sprintf("%x", sum[:])
+
+	var existing domain.ServiceDefinitionVersion
+	err = o.db.Where("service_id = ? AND content_hash = ?", svc.ID, hash).First(&existing).Error
+	if err == nil {
+		return &existing, nil
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	var maxVersion int
+	if err := o.db.Model(&domain.ServiceDefinitionVersion{}).
+		Where("service_id = ?", svc.ID).
+		Select("COALESCE(MAX(version), 0)").
+		Scan(&maxVersion).Error; err != nil {
+		return nil, err
+	}
+	snapshot := &domain.ServiceDefinitionVersion{
+		ServiceID:           svc.ID,
+		Version:             maxVersion + 1,
+		ContentHash:         hash,
+		EngineType:          svc.EngineType,
+		SLAID:               svc.SLAID,
+		IntakeFormSchema:    domain.JSONField(svc.IntakeFormSchema),
+		WorkflowJSON:        domain.JSONField(svc.WorkflowJSON),
+		CollaborationSpec:   svc.CollaborationSpec,
+		AgentID:             svc.AgentID,
+		AgentConfig:         domain.JSONField(svc.AgentConfig),
+		KnowledgeBaseIDs:    domain.JSONField(svc.KnowledgeBaseIDs),
+		ActionsJSON:         domain.JSONField(actionsJSON),
+		SLATemplateJSON:     domain.JSONField(slaTemplateJSON),
+		EscalationRulesJSON: domain.JSONField(escalationRulesJSON),
+	}
+	if err := o.db.Create(snapshot).Error; err != nil {
+		if err := o.db.Where("service_id = ? AND content_hash = ?", svc.ID, hash).First(&existing).Error; err == nil {
+			return &existing, nil
+		}
+		return nil, err
+	}
+	return snapshot, nil
+}
+
+func (o *Operator) buildSLASnapshots(slaID *uint) (json.RawMessage, json.RawMessage, error) {
+	if slaID == nil || *slaID == 0 {
+		return nil, nil, nil
+	}
+	var sla domain.SLATemplate
+	if err := o.db.First(&sla, *slaID).Error; err != nil {
+		return nil, nil, err
+	}
+	slaJSON, err := json.Marshal(sla.ToResponse())
+	if err != nil {
+		return nil, nil, err
+	}
+	var rules []domain.EscalationRule
+	if err := o.db.Where("sla_id = ? AND is_active = ?", *slaID, true).
+		Order("level ASC, id ASC").
+		Find(&rules).Error; err != nil {
+		return nil, nil, err
+	}
+	ruleResponses := make([]domain.EscalationRuleResponse, len(rules))
+	for i := range rules {
+		ruleResponses[i] = rules[i].ToResponse()
+	}
+	rulesJSON, err := json.Marshal(ruleResponses)
+	if err != nil {
+		return nil, nil, err
+	}
+	return slaJSON, rulesJSON, nil
 }
 
 // CreateTicket creates an ITSM ticket via the TicketService, ensuring full lifecycle

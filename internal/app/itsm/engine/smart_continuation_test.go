@@ -136,6 +136,7 @@ func TestSmartProgressContinuationWaitsForParallelGroupConvergence(t *testing.T)
 	if err := db.Create(&second).Error; err != nil {
 		t.Fatalf("create second activity: %v", err)
 	}
+	assignSmartActivityToOperator(t, db, ticket.ID, second.ID, 1)
 
 	submitter := &txRecordingSubmitter{}
 	eng := NewSmartEngine(availableDecisionExecutor{}, nil, nil, nil, submitter, nil)
@@ -551,11 +552,30 @@ func createSmartContinuationTicket(t *testing.T, db *gorm.DB, groupID string, ac
 	if err := db.Create(&activity).Error; err != nil {
 		t.Fatalf("create activity: %v", err)
 	}
+	if activityStatus == ActivityPending {
+		assignSmartActivityToOperator(t, db, ticket.ID, activity.ID, 1)
+	}
 	if err := db.Model(&ticketModel{}).Where("id = ?", ticket.ID).Update("current_activity_id", activity.ID).Error; err != nil {
 		t.Fatalf("set current activity: %v", err)
 	}
 	ticket.CurrentActivityID = &activity.ID
 	return ticket, activity
+}
+
+func assignSmartActivityToOperator(t *testing.T, db *gorm.DB, ticketID uint, activityID uint, operatorID uint) {
+	t.Helper()
+	assignment := assignmentModel{
+		TicketID:        ticketID,
+		ActivityID:      activityID,
+		ParticipantType: "user",
+		UserID:          &operatorID,
+		AssigneeID:      &operatorID,
+		Status:          ActivityPending,
+		IsCurrent:       true,
+	}
+	if err := db.Create(&assignment).Error; err != nil {
+		t.Fatalf("create assignment: %v", err)
+	}
 }
 
 type rootDBPositionResolver struct {

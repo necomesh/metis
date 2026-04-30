@@ -356,6 +356,7 @@ func (a *ITSMApp) Routes(api *gin.RouterGroup) {
 		g.GET("/tickets/approvals/history", ticketH.ApprovalHistory)
 		g.GET("/tickets/monitor", ticketH.Monitor)
 		g.GET("/tickets/decision-quality", ticketH.DecisionQuality)
+		g.POST("/tickets", ticketH.Create)
 		g.GET("/tickets", ticketH.List)
 		g.GET("/tickets/:id", ticketH.Get)
 		g.PUT("/tickets/:id/assign", ticketH.Assign)

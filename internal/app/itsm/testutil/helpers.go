@@ -37,6 +37,7 @@ func NewTestDB(t *testing.T) *gorm.DB {
 		&TicketAssignment{},
 		&TicketTimeline{},
 		&TicketActionExecution{},
+		&ExecutionToken{},
 		&ServiceDeskSubmission{},
 		&ai.Agent{},
 		&ai.AgentSession{},

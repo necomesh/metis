@@ -585,6 +585,9 @@ func (s *ServiceDeskSession) result(ok bool, state *ServiceDeskState, payload ma
 	payload["state"] = state
 	payload["next_expected_action"] = next
 	payload["nextExpectedAction"] = next
+	if _, exists := payload["next_required_tool"]; !exists {
+		payload["next_required_tool"] = next
+	}
 	if _, exists := payload["ok"]; !exists {
 		payload["ok"] = ok
 	}
@@ -622,6 +625,10 @@ func commandPayload(result *ServiceDeskCommandResult) map[string]any {
 		payload["missing_required_fields"] = result.MissingFields
 	}
 	return payload
+}
+
+func CommandPayload(result *ServiceDeskCommandResult) map[string]any {
+	return commandPayload(result)
 }
 
 func statePayload(state *ServiceDeskState) map[string]any {

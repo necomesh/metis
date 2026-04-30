@@ -530,6 +530,8 @@ export interface ServiceDeskState {
   confirmed_service_id?: number
   confirmation_required: boolean
   loaded_service_id?: number
+  service_version_id?: number
+  service_version_hash?: string
   draft_summary?: string
   draft_form_data?: Record<string, unknown>
   request_text?: string
@@ -551,8 +553,9 @@ export interface AgenticUISurface<TPayload = unknown> {
 }
 
 export interface ITSMDraftFormSurfacePayload {
-  status: "loading" | "ready" | "submitted"
+  status: "loading" | "ready" | "submitted" | "error"
   serviceId?: number
+  serviceVersionId?: number
   title?: string
   summary?: string
   schema?: unknown
@@ -581,6 +584,7 @@ export interface SubmitDraftResponse {
   ticketCode?: string
   status?: string
   message?: string
+  nextExpectedAction?: string
   failureReason?: string
   nodeLabel?: string
   guidance?: string

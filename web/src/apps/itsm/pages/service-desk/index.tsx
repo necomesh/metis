@@ -246,7 +246,7 @@ function ITSMDraftFormSurfaceCard({
       })
     },
     onMutate: () => setInlineError(null),
-    onSuccess: (result, submittedFormData) => {
+    onSuccess: (result) => {
       if (!result.ok) {
         setInlineError(result.guidance || result.failureReason || result.message || "提交失败")
         return
@@ -254,19 +254,8 @@ function ITSMDraftFormSurfaceCard({
       if (result.surface?.surfaceType === "itsm.draft_form") {
         setSubmittedSurface(result.surface as ITSMDraftFormSurface)
       } else {
-        setSubmittedSurface({
-          surfaceId: `${surface.surfaceId}:submitted`,
-          surfaceType: "itsm.draft_form",
-          payload: {
-            status: "submitted",
-            title: payload.title,
-            summary: payload.summary,
-            values: submittedFormData,
-            ticketId: result.ticketId,
-            ticketCode: result.ticketCode,
-            message: result.message,
-          },
-        })
+        setInlineError("服务台提交响应缺少表单 Surface，请刷新后查看工单状态")
+        return
       }
       onSubmitted()
     },
@@ -318,6 +307,14 @@ function ITSMDraftFormSurfaceCard({
             工单编号：<span className="ml-1 font-semibold">{currentPayload.ticketCode}</span>
           </div>
         )}
+      </div>
+    )
+  }
+
+  if (currentPayload.status === "error") {
+    return (
+      <div data-testid="itsm-draft-form-surface" className="mb-5 max-w-[720px] rounded-2xl border border-destructive/25 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+        {currentPayload.message || "申请草稿处理失败，请重新整理草稿"}
       </div>
     )
   }

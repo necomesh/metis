@@ -249,6 +249,9 @@ func (e *SmartEngine) Progress(ctx context.Context, tx *gorm.DB, params Progress
 
 	now := time.Now()
 	if _, _, err := completePendingAssignment(tx, e.resolver, activity.ID, params.OperatorID, params.Outcome, now, params.OperatorPositionIDs, params.OperatorDepartmentIDs, params.OperatorOrgScopeReady); err != nil {
+		if errors.Is(err, ErrNoActiveAssignment) && activityBecameInactive(tx, params.ActivityID) {
+			return ErrActivityNotActive
+		}
 		return err
 	}
 
@@ -462,21 +465,14 @@ func (e *SmartEngine) applyDeterministicServiceGuards(ctx context.Context, tx *g
 	if plan == nil || svc == nil {
 		return nil
 	}
-	if looksLikeDBBackupWhitelistSpec(svc.CollaborationSpec) {
-		return e.applyDBBackupWhitelistGuard(ctx, tx, ticketID, plan, svc)
-	}
-	if looksLikeBossSerialChangeSpec(svc.CollaborationSpec) {
-		return e.applyBossSerialChangeGuard(tx, ticketID, plan)
-	}
-	expectedPosition, ok, err := collaborationSpecAccessPurposePosition(tx, ticketID, svc.CollaborationSpec)
-	if err != nil {
-		return err
-	}
-	if ok {
-		if expectedPosition == "" {
-			return fmt.Errorf("form.access_reason/form.operation_purpose 缺失、为空或未命中协作规范定义的访问原因分支；不得高置信结束或选择单一路由")
+	for _, policy := range builtInSmartDecisionPolicies() {
+		applied, err := policy.Apply(ctx, e, tx, ticketID, plan, svc)
+		if err != nil {
+			return err
 		}
-		return e.applySingleHumanRouteGuard(tx, ticketID, plan, expectedPosition, "访问目的已命中协作规范岗位分支")
+		if applied {
+			return nil
+		}
 	}
 	return nil
 }

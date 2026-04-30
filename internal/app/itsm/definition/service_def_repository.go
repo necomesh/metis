@@ -97,28 +97,37 @@ func (r *ServiceDefRepo) buildRuntimeVersionSnapshot(svc *ServiceDefinition) (*S
 		return nil, "", err
 	}
 
+	slaTemplateJSON, escalationRulesJSON, err := r.buildSLASnapshots(svc.SLAID)
+	if err != nil {
+		return nil, "", err
+	}
+
 	content := struct {
-		ServiceID         uint
-		EngineType        string
-		SLAID             *uint
-		IntakeFormSchema  JSONField
-		WorkflowJSON      JSONField
-		CollaborationSpec string
-		AgentID           *uint
-		AgentConfig       JSONField
-		KnowledgeBaseIDs  JSONField
-		ActionsJSON       json.RawMessage
+		ServiceID           uint
+		EngineType          string
+		SLAID               *uint
+		IntakeFormSchema    JSONField
+		WorkflowJSON        JSONField
+		CollaborationSpec   string
+		AgentID             *uint
+		AgentConfig         JSONField
+		KnowledgeBaseIDs    JSONField
+		ActionsJSON         json.RawMessage
+		SLATemplateJSON     json.RawMessage
+		EscalationRulesJSON json.RawMessage
 	}{
-		ServiceID:         svc.ID,
-		EngineType:        svc.EngineType,
-		SLAID:             svc.SLAID,
-		IntakeFormSchema:  svc.IntakeFormSchema,
-		WorkflowJSON:      svc.WorkflowJSON,
-		CollaborationSpec: svc.CollaborationSpec,
-		AgentID:           svc.AgentID,
-		AgentConfig:       svc.AgentConfig,
-		KnowledgeBaseIDs:  svc.KnowledgeBaseIDs,
-		ActionsJSON:       actionsJSON,
+		ServiceID:           svc.ID,
+		EngineType:          svc.EngineType,
+		SLAID:               svc.SLAID,
+		IntakeFormSchema:    svc.IntakeFormSchema,
+		WorkflowJSON:        svc.WorkflowJSON,
+		CollaborationSpec:   svc.CollaborationSpec,
+		AgentID:             svc.AgentID,
+		AgentConfig:         svc.AgentConfig,
+		KnowledgeBaseIDs:    svc.KnowledgeBaseIDs,
+		ActionsJSON:         actionsJSON,
+		SLATemplateJSON:     slaTemplateJSON,
+		EscalationRulesJSON: escalationRulesJSON,
 	}
 	contentJSON, err := json.Marshal(content)
 	if err != nil {
@@ -127,18 +136,51 @@ func (r *ServiceDefRepo) buildRuntimeVersionSnapshot(svc *ServiceDefinition) (*S
 	sum := sha256.Sum256(contentJSON)
 	hash := hex.EncodeToString(sum[:])
 	return &ServiceDefinitionVersion{
-		ServiceID:         svc.ID,
-		ContentHash:       hash,
-		EngineType:        svc.EngineType,
-		SLAID:             svc.SLAID,
-		IntakeFormSchema:  svc.IntakeFormSchema,
-		WorkflowJSON:      svc.WorkflowJSON,
-		CollaborationSpec: svc.CollaborationSpec,
-		AgentID:           svc.AgentID,
-		AgentConfig:       svc.AgentConfig,
-		KnowledgeBaseIDs:  svc.KnowledgeBaseIDs,
-		ActionsJSON:       JSONField(actionsJSON),
+		ServiceID:           svc.ID,
+		ContentHash:         hash,
+		EngineType:          svc.EngineType,
+		SLAID:               svc.SLAID,
+		IntakeFormSchema:    svc.IntakeFormSchema,
+		WorkflowJSON:        svc.WorkflowJSON,
+		CollaborationSpec:   svc.CollaborationSpec,
+		AgentID:             svc.AgentID,
+		AgentConfig:         svc.AgentConfig,
+		KnowledgeBaseIDs:    svc.KnowledgeBaseIDs,
+		ActionsJSON:         JSONField(actionsJSON),
+		SLATemplateJSON:     JSONField(slaTemplateJSON),
+		EscalationRulesJSON: JSONField(escalationRulesJSON),
 	}, hash, nil
+}
+
+func (r *ServiceDefRepo) buildSLASnapshots(slaID *uint) (json.RawMessage, json.RawMessage, error) {
+	if slaID == nil || *slaID == 0 {
+		return nil, nil, nil
+	}
+
+	var sla SLATemplate
+	if err := r.db.First(&sla, *slaID).Error; err != nil {
+		return nil, nil, err
+	}
+	slaJSON, err := json.Marshal(sla.ToResponse())
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var rules []EscalationRule
+	if err := r.db.Where("sla_id = ? AND is_active = ?", *slaID, true).
+		Order("level ASC, id ASC").
+		Find(&rules).Error; err != nil {
+		return nil, nil, err
+	}
+	ruleResponses := make([]EscalationRuleResponse, len(rules))
+	for i := range rules {
+		ruleResponses[i] = rules[i].ToResponse()
+	}
+	rulesJSON, err := json.Marshal(ruleResponses)
+	if err != nil {
+		return nil, nil, err
+	}
+	return slaJSON, rulesJSON, nil
 }
 
 func (r *ServiceDefRepo) Update(id uint, updates map[string]any) error {

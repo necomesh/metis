@@ -760,8 +760,10 @@ func seedPolicies(enforcer *casbin.Enforcer) error {
 		{"admin", "/api/v1/itsm/sla/:id/escalations/:escalationId", "DELETE"},
 		// Tickets
 		{"admin", "/api/v1/itsm/tickets", "GET"},
+		{"admin", "/api/v1/itsm/tickets", "POST"},
 		{"admin", "/api/v1/itsm/tickets/mine", "GET"},
 		{"user", "/api/v1/itsm/tickets/mine", "GET"},
+		{"user", "/api/v1/itsm/tickets", "POST"},
 		{"admin", "/api/v1/itsm/tickets/approvals/pending", "GET"},
 		{"admin", "/api/v1/itsm/tickets/approvals/history", "GET"},
 		{"user", "/api/v1/itsm/tickets/approvals/pending", "GET"},

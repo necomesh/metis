@@ -38,6 +38,7 @@ var (
 	ErrTicketClaimed             = errors.New("ticket has been claimed and cannot be withdrawn")
 	ErrTicketForbidden           = errors.New("ticket access forbidden")
 	ErrInvalidProgressOutcome    = errors.New("人工节点只能提交 approved 或 rejected")
+	ErrCatalogSubmissionClassic  = errors.New("服务目录提单仅支持经典服务，请通过服务台提交智能服务")
 	ErrInvalidRecoveryAction     = errors.New("invalid recovery action")
 	ErrRecoveryActionTooFrequent = errors.New("recovery action is too frequent")
 	errSubmissionAlreadyExists   = errors.New("service desk submission already exists")
@@ -79,13 +80,14 @@ func NewTicketService(i do.Injector) (*TicketService, error) {
 }
 
 type CreateTicketInput struct {
-	Title          string    `json:"title"`
-	Description    string    `json:"description"`
-	ServiceID      uint      `json:"serviceId"`
-	PriorityID     uint      `json:"priorityId"`
-	FormData       JSONField `json:"formData"`
-	Source         string    `json:"source"`
-	AgentSessionID *uint     `json:"agentSessionId"`
+	Title            string    `json:"title"`
+	Description      string    `json:"description"`
+	ServiceID        uint      `json:"serviceId"`
+	ServiceVersionID *uint     `json:"serviceVersionId"`
+	PriorityID       uint      `json:"priorityId"`
+	FormData         JSONField `json:"formData"`
+	Source           string    `json:"source"`
+	AgentSessionID   *uint     `json:"agentSessionId"`
 }
 
 func (s *TicketService) Create(input CreateTicketInput, requesterID uint) (*Ticket, error) {
@@ -106,6 +108,21 @@ func (s *TicketService) Create(input CreateTicketInput, requesterID uint) (*Tick
 	return s.ticketRepo.FindByID(ticket.ID)
 }
 
+func (s *TicketService) CreateCatalog(input CreateTicketInput, requesterID uint) (*Ticket, error) {
+	svc, err := s.serviceRepo.FindByID(input.ServiceID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrServiceDefNotFound
+		}
+		return nil, err
+	}
+	if svc.EngineType != "classic" {
+		return nil, ErrCatalogSubmissionClassic
+	}
+	input.Source = TicketSourceCatalog
+	return s.Create(input, requesterID)
+}
+
 func (s *TicketService) prepareTicket(input CreateTicketInput, requesterID uint) (*Ticket, *ServiceDefinition, error) {
 	// Validate service
 	svc, err := s.serviceRepo.FindByID(input.ServiceID)
@@ -118,10 +135,30 @@ func (s *TicketService) prepareTicket(input CreateTicketInput, requesterID uint)
 	if !svc.IsActive {
 		return nil, nil, ErrServiceNotActive
 	}
-	version, err := s.serviceRepo.GetOrCreateRuntimeVersion(input.ServiceID)
-	if err != nil {
-		return nil, nil, err
+	var version *ServiceDefinitionVersion
+	if input.ServiceVersionID != nil && *input.ServiceVersionID > 0 {
+		var snapshot ServiceDefinitionVersion
+		if err := s.ticketRepo.DB().
+			Where("id = ? AND service_id = ?", *input.ServiceVersionID, input.ServiceID).
+			First(&snapshot).Error; err != nil {
+			return nil, nil, err
+		}
+		version = &snapshot
+	} else {
+		version, err = s.serviceRepo.GetOrCreateRuntimeVersion(input.ServiceID)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
+	runtimeSvc := *svc
+	runtimeSvc.EngineType = version.EngineType
+	runtimeSvc.SLAID = version.SLAID
+	runtimeSvc.IntakeFormSchema = version.IntakeFormSchema
+	runtimeSvc.WorkflowJSON = version.WorkflowJSON
+	runtimeSvc.CollaborationSpec = version.CollaborationSpec
+	runtimeSvc.AgentID = version.AgentID
+	runtimeSvc.AgentConfig = version.AgentConfig
+	runtimeSvc.KnowledgeBaseIDs = version.KnowledgeBaseIDs
 
 	// Validate priority
 	if _, err := s.priorityRepo.FindByID(input.PriorityID); err != nil {
@@ -132,11 +169,11 @@ func (s *TicketService) prepareTicket(input CreateTicketInput, requesterID uint)
 	}
 
 	// For classic engine, validate workflow_json before creating ticket
-	if svc.EngineType == "classic" {
-		if len(svc.WorkflowJSON) == 0 {
+	if runtimeSvc.EngineType == "classic" {
+		if len(runtimeSvc.WorkflowJSON) == 0 {
 			return nil, nil, errors.New("服务未配置工作流")
 		}
-		if errs := engine.ValidateWorkflow(json.RawMessage(svc.WorkflowJSON)); len(errs) > 0 {
+		if errs := engine.ValidateWorkflow(json.RawMessage(runtimeSvc.WorkflowJSON)); len(errs) > 0 {
 			return nil, nil, errors.New("工作流校验失败: " + errs[0].Message)
 		}
 	}
@@ -157,7 +194,7 @@ func (s *TicketService) prepareTicket(input CreateTicketInput, requesterID uint)
 		Description:      input.Description,
 		ServiceID:        input.ServiceID,
 		ServiceVersionID: &version.ID,
-		EngineType:       svc.EngineType,
+		EngineType:       runtimeSvc.EngineType,
 		Status:           TicketStatusSubmitted,
 		PriorityID:       input.PriorityID,
 		RequesterID:      requesterID,
@@ -168,18 +205,21 @@ func (s *TicketService) prepareTicket(input CreateTicketInput, requesterID uint)
 	}
 
 	// Snapshot workflow_json for classic engine
-	if svc.EngineType == "classic" {
-		ticket.WorkflowJSON = svc.WorkflowJSON
+	if runtimeSvc.EngineType == "classic" {
+		ticket.WorkflowJSON = runtimeSvc.WorkflowJSON
 	}
 
-	// Calculate SLA deadlines
-	if svc.SLAID != nil {
-		sla, err := s.slaRepo.FindActiveByID(*svc.SLAID)
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, nil, ErrSLATemplateNotFound
-			}
+	// Calculate SLA deadlines from the bound service definition snapshot.
+	if runtimeSvc.SLAID != nil {
+		var sla SLATemplateResponse
+		if len(version.SLATemplateJSON) == 0 {
+			return nil, nil, ErrSLATemplateNotFound
+		}
+		if err := json.Unmarshal(version.SLATemplateJSON, &sla); err != nil {
 			return nil, nil, err
+		}
+		if !sla.IsActive {
+			return nil, nil, ErrSLATemplateNotFound
 		}
 		now := time.Now()
 		responseDeadline := now.Add(time.Duration(sla.ResponseMinutes) * time.Minute)
@@ -187,7 +227,7 @@ func (s *TicketService) prepareTicket(input CreateTicketInput, requesterID uint)
 		ticket.SLAResponseDeadline = &responseDeadline
 		ticket.SLAResolutionDeadline = &resolutionDeadline
 	}
-	return ticket, svc, nil
+	return ticket, &runtimeSvc, nil
 }
 
 func (s *TicketService) createTicketLifecycleInTx(ctx context.Context, tx *gorm.DB, ticket *Ticket, svc *ServiceDefinition, requesterID uint) error {
@@ -239,13 +279,14 @@ func (s *TicketService) CreateFromAgent(ctx context.Context, req tools.AgentTick
 
 	formJSON, _ := json.Marshal(req.FormData)
 	input := CreateTicketInput{
-		Title:          req.Summary,
-		Description:    req.Summary,
-		ServiceID:      req.ServiceID,
-		PriorityID:     defaultPriority.ID,
-		FormData:       JSONField(formJSON),
-		Source:         TicketSourceAgent,
-		AgentSessionID: &req.SessionID,
+		Title:            req.Summary,
+		Description:      req.Summary,
+		ServiceID:        req.ServiceID,
+		ServiceVersionID: serviceVersionIDPointer(req.ServiceVersionID),
+		PriorityID:       defaultPriority.ID,
+		FormData:         JSONField(formJSON),
+		Source:           TicketSourceAgent,
+		AgentSessionID:   &req.SessionID,
 	}
 
 	ticket, err := s.createAgentTicket(ctx, input, req)
@@ -360,6 +401,13 @@ func (s *TicketService) createAgentTicket(ctx context.Context, input CreateTicke
 		s.smartEngine.DispatchDecisionAsync(created.ID, nil, engine.TriggerReasonTicketCreated)
 	}
 	return s.ticketRepo.FindByID(created.ID)
+}
+
+func serviceVersionIDPointer(id uint) *uint {
+	if id == 0 {
+		return nil
+	}
+	return &id
 }
 
 func (s *TicketService) findSubmittedDraftTicket(sessionID uint, draftVersion int, fieldsHash string) (*Ticket, bool, error) {

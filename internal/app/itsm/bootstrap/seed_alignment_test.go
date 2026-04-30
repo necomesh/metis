@@ -37,7 +37,7 @@ func newSeedAlignmentDB(t *testing.T) *gorm.DB {
 		t.Fatalf("open db: %v", err)
 	}
 	if err := db.AutoMigrate(
-		&ServiceCatalog{}, &ServiceDefinition{}, &ServiceAction{}, &Priority{}, &SLATemplate{},
+		&ServiceCatalog{}, &ServiceDefinition{}, &ServiceDefinitionVersion{}, &ServiceAction{}, &Priority{}, &SLATemplate{}, &EscalationRule{},
 		&org.Department{}, &org.Position{}, &org.DepartmentPosition{}, &org.UserPosition{},
 		&coremodel.User{}, &coremodel.Role{}, &coremodel.Menu{}, &coremodel.SystemConfig{},
 		&aiapp.Provider{}, &aiapp.AIModel{}, &aiapp.Agent{}, &aiapp.Tool{}, &aiapp.AgentTool{},

@@ -191,7 +191,7 @@ func (bc *bddContext) whenCountersignRoleProcesss(positionCode string) error {
 	// Claim.
 	bc.db.Model(&TicketAssignment{}).
 		Where("activity_id = ?", targetActivity.ID).
-		Updates(map[string]any{"assignee_id": operatorID, "status": "claimed"})
+		Updates(map[string]any{"assignee_id": operatorID, "status": "pending"})
 
 	// Progress — this triggers the convergence check in SmartEngine.Progress().
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
