@@ -89,6 +89,10 @@ func validServerAccessWorkflowJSONForGenerateTest() string {
 	return `{"nodes":[{"id":"start","type":"start","data":{"label":"开始"}},{"id":"request","type":"form","data":{"label":"填写服务器临时访问申请","participants":[{"type":"requester"}],"formSchema":{"fields":[{"key":"target_servers","type":"textarea","label":"访问服务器"},{"key":"access_window","type":"date_range","label":"访问时段"},{"key":"operation_purpose","type":"textarea","label":"操作目的"},{"key":"access_reason","type":"textarea","label":"访问原因"}]}}},{"id":"route","type":"exclusive","data":{"label":"访问原因路由"}},{"id":"ops_process","type":"process","data":{"label":"运维管理员处理","participants":[{"type":"position_department","department_code":"it","position_code":"ops_admin"}]}},{"id":"network_process","type":"process","data":{"label":"网络管理员处理","participants":[{"type":"position_department","department_code":"it","position_code":"network_admin"}]}},{"id":"security_process","type":"process","data":{"label":"信息安全管理员处理","participants":[{"type":"position_department","department_code":"it","position_code":"security_admin"}]}},{"id":"end","type":"end","data":{"label":"结束"}}],"edges":[{"id":"edge_start_request","source":"start","target":"request","data":{}},{"id":"edge_request_route","source":"request","target":"route","data":{"outcome":"submitted"}},{"id":"edge_route_ops","source":"route","target":"ops_process","data":{"condition":{"field":"form.access_reason","operator":"contains_any","value":["应用发布","进程排障","日志排查","磁盘清理","主机巡检","生产运维操作"]}}},{"id":"edge_route_network","source":"route","target":"network_process","data":{"condition":{"field":"form.access_reason","operator":"contains_any","value":["网络抓包","连通性诊断","ACL调整","负载均衡变更","防火墙策略调整"]}}},{"id":"edge_route_security","source":"route","target":"security_process","data":{"condition":{"field":"form.access_reason","operator":"contains_any","value":["安全审计","入侵排查","漏洞修复验证","取证分析","合规检查"]}}},{"id":"edge_route_default","source":"route","target":"security_process","data":{"default":true}},{"id":"edge_ops_end_ok","source":"ops_process","target":"end","data":{"outcome":"approved"}},{"id":"edge_ops_end_reject","source":"ops_process","target":"end","data":{"outcome":"rejected"}},{"id":"edge_network_end_ok","source":"network_process","target":"end","data":{"outcome":"approved"}},{"id":"edge_network_end_reject","source":"network_process","target":"end","data":{"outcome":"rejected"}},{"id":"edge_security_end_ok","source":"security_process","target":"end","data":{"outcome":"approved"}},{"id":"edge_security_end_reject","source":"security_process","target":"end","data":{"outcome":"rejected"}}]}`
 }
 
+func validDBBackupWorkflowJSONForGenerateTest() string {
+	return `{"nodes":[{"id":"start","type":"start","data":{"label":"开始"}},{"id":"request","type":"form","data":{"label":"填写数据库备份白名单临时放行申请","participants":[{"type":"requester"}],"formSchema":{"fields":[{"key":"database_name","type":"text","label":"目标数据库"},{"key":"source_ip","type":"text","label":"来源 IP"},{"key":"whitelist_window","type":"text","label":"白名单放行时间窗"},{"key":"access_reason","type":"textarea","label":"申请原因"}]}}},{"id":"db_process","type":"process","data":{"label":"数据库管理员处理","participants":[{"type":"position_department","department_code":"it","position_code":"db_admin"}]}},{"id":"end","type":"end","data":{"label":"结束"}}],"edges":[{"id":"edge_start_request","source":"start","target":"request","data":{}},{"id":"edge_request_db","source":"request","target":"db_process","data":{"outcome":"submitted"}},{"id":"edge_db_end_ok","source":"db_process","target":"end","data":{"outcome":"approved"}},{"id":"edge_db_end_reject","source":"db_process","target":"end","data":{"outcome":"rejected"}}]}`
+}
+
 func workflowWithBlockingIssueForGenerateTest(userID uint) string {
 	return fmt.Sprintf(`{
 		"nodes": [
@@ -819,6 +823,30 @@ func (serverAccessWorkflowGenerateOrgStructureResolver) ResolveOrgParticipant(de
 	}, nil
 }
 
+type dbBackupWorkflowGenerateOrgStructureResolver struct{}
+
+func (dbBackupWorkflowGenerateOrgStructureResolver) SearchOrgStructure(query string, kinds []string, limit int) (*appcore.OrgStructureSearchResult, error) {
+	return &appcore.OrgStructureSearchResult{
+		Departments: []appcore.OrgContextDepartment{{Code: "it", Name: "信息部", IsActive: true}},
+		Positions:   []appcore.OrgContextPosition{{Code: "db_admin", Name: "数据库管理员", IsActive: true}},
+		Summary:     "测试组织结构搜索: " + query,
+	}, nil
+}
+
+func (dbBackupWorkflowGenerateOrgStructureResolver) ResolveOrgParticipant(departmentHint, positionHint string, limit int) (*appcore.OrgParticipantResolveResult, error) {
+	return &appcore.OrgParticipantResolveResult{
+		Candidates: []appcore.OrgParticipantCandidate{{
+			Type:           "position_department",
+			DepartmentCode: "it",
+			DepartmentName: "信息部",
+			PositionCode:   "db_admin",
+			PositionName:   "数据库管理员",
+			CandidateCount: 1,
+		}},
+		Summary: "测试参与人解析",
+	}, nil
+}
+
 func TestGenerate_WithServiceIDUsesOrgToolPreflightForVPNContext(t *testing.T) {
 	db := newTestDB(t)
 	catSvc := newCatalogServiceForTest(t, db)
@@ -975,6 +1003,77 @@ func TestGenerate_WithServiceIDUsesOrgToolPreflightForServerAccessContext(t *tes
 		if !strings.Contains(workflowText, snippet) {
 			t.Fatalf("expected generated workflow to contain %q, got %s", snippet, workflowText)
 		}
+	}
+}
+
+func TestGenerate_WithServiceIDUsesOrgToolPreflightForDBBackupContext(t *testing.T) {
+	db := newTestDB(t)
+	catSvc := newCatalogServiceForTest(t, db)
+	root, _ := catSvc.Create("Root", "root", "", "", nil, 10)
+
+	dbBackupSchema := JSONField(`{"version":1,"fields":[{"key":"database_name","type":"text","label":"目标数据库"},{"key":"source_ip","type":"text","label":"来源 IP"},{"key":"whitelist_window","type":"text","label":"白名单放行时间窗"},{"key":"access_reason","type":"textarea","label":"申请原因"}]}`)
+	service := ServiceDefinition{
+		Name:             "生产数据库备份白名单临时放行申请",
+		Code:             "db-backup-whitelist-action-flow",
+		CatalogID:        root.ID,
+		EngineType:       "smart",
+		IntakeFormSchema: dbBackupSchema,
+		IsActive:         true,
+	}
+	if err := db.Create(&service).Error; err != nil {
+		t.Fatalf("create db backup service: %v", err)
+	}
+
+	client := &fakeWorkflowLLMClient{
+		responses: []llm.ChatResponse{
+			{ToolCalls: []llm.ToolCall{
+				{ID: "call_db", Name: "workflow.org_resolve_participant", Arguments: `{"department_hint":"信息部","position_hint":"数据库管理员","limit":10}`},
+			}},
+			{Content: "组织上下文已收集"},
+			{Content: validDBBackupWorkflowJSONForGenerateTest()},
+		},
+	}
+	svc := newWorkflowGenerateServiceForRetryTest(client, 0)
+	svc.serviceDefSvc = newServiceDefServiceForTest(t, db)
+	svc.orgStructureResolver = dbBackupWorkflowGenerateOrgStructureResolver{}
+
+	naturalSpec := `员工在 IT 服务台申请生产数据库备份白名单临时放行时，服务台需要确认目标数据库、发起备份访问的来源 IP、白名单放行时间窗，以及这次临时放行的申请原因。
+申请资料收齐后，系统会先做一次白名单参数预检，确认数据库、来源 IP、放行窗口和申请原因满足放行前置条件。预检通过后，交给信息部数据库管理员处理。
+数据库管理员完成处理后，系统执行备份白名单放行；放行成功后流程结束。驳回时不进入补充或返工，流程按驳回结果结束。`
+	resp, err := svc.Generate(context.Background(), &GenerateRequest{ServiceID: service.ID, CollaborationSpec: naturalSpec})
+	if err != nil {
+		t.Fatalf("generate workflow: %v", err)
+	}
+	if len(client.requests) != 3 {
+		t.Fatalf("expected org preflight two-turn exchange plus final JSON generation, got %d requests", len(client.requests))
+	}
+	userPrompt := client.requests[2].Messages[1].Content
+	for _, snippet := range []string{
+		naturalSpec,
+		"已有申请表单契约",
+		"database_name",
+		"source_ip",
+		"whitelist_window",
+		"access_reason",
+		"按需查询到的组织上下文",
+		"信息部",
+		"it",
+		"数据库管理员",
+		"db_admin",
+		"workflow_json 不生成 type=\"action\"",
+	} {
+		if !strings.Contains(userPrompt, snippet) {
+			t.Fatalf("expected generated prompt to contain %q, got %s", snippet, userPrompt)
+		}
+	}
+	workflowText := string(resp.WorkflowJSON)
+	for _, snippet := range []string{"database_name", "source_ip", "whitelist_window", "access_reason", "db_admin"} {
+		if !strings.Contains(workflowText, snippet) {
+			t.Fatalf("expected generated workflow to contain %q, got %s", snippet, workflowText)
+		}
+	}
+	if strings.Contains(workflowText, `"type":"action"`) {
+		t.Fatalf("db backup reference workflow must not contain action nodes, got %s", workflowText)
 	}
 }
 

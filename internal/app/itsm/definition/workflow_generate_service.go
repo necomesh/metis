@@ -857,6 +857,12 @@ func (s *WorkflowGenerateService) buildUserMessage(spec string, promptCtx workfl
 		sb.WriteString(promptCtx.OrgContext)
 	}
 
+	if looksLikeDBBackupWhitelistPromptSpec(spec) {
+		sb.WriteString("\n\n## 数据库备份白名单运行时动作约束\n")
+		sb.WriteString("该服务的预检和放行动作由智能引擎运行时执行，参考路径 workflow_json 不生成 type=\"action\" 节点；请用申请人表单、数据库管理员人工处理和结束节点表达路径。\n")
+		sb.WriteString("数据库管理员处理节点应使用按需组织上下文中的 position_department 参与人配置。\n")
+	}
+
 	if promptCtx.ActionsContext != "" {
 		sb.WriteString(promptCtx.ActionsContext)
 	}
@@ -908,6 +914,12 @@ func (s *WorkflowGenerateService) buildUserMessage(spec string, promptCtx workfl
 
 	sb.WriteString("\n\n请仅输出合法的 JSON，不要包含任何额外文字或 markdown 代码块标记。")
 	return sb.String()
+}
+
+func looksLikeDBBackupWhitelistPromptSpec(spec string) bool {
+	return strings.Contains(spec, "数据库备份") &&
+		strings.Contains(spec, "白名单") &&
+		(strings.Contains(spec, "放行") || strings.Contains(spec, "临时"))
 }
 
 func (s *WorkflowGenerateService) BuildUserMessage(spec string, actionsCtx string, prevErrors []engine.ValidationError) string {

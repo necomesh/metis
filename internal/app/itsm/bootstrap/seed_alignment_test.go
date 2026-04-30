@@ -151,13 +151,13 @@ func TestBuiltInSmartSeedsAlignParticipantsAndInstallAdminIdentity(t *testing.T)
 			t.Fatalf("load smart services: %v", err)
 		}
 		wanted := map[string][]string{
-			"boss-serial-change-request":      {"headquarters", "serial_reviewer", "ops_admin"},
-			"db-backup-whitelist-action-flow": {"db_admin"},
-			"copilot-account-request":         {"IT管理员"},
+			"boss-serial-change-request": {"headquarters", "serial_reviewer", "ops_admin"},
+			"copilot-account-request":    {"IT管理员"},
 		}
 		workflowWanted := map[string][]string{
-			"prod-server-temporary-access": {"target_servers", "access_window", "operation_purpose", "access_reason", "ops_admin", "network_admin", "security_admin"},
-			"vpn-access-request":           {"vpn_account", "device_usage", "request_kind", "network_admin", "security_admin"},
+			"db-backup-whitelist-action-flow": {"database_name", "source_ip", "whitelist_window", "access_reason", "db_backup_whitelist_precheck", "db_backup_whitelist_apply"},
+			"prod-server-temporary-access":    {"target_servers", "access_window", "operation_purpose", "access_reason", "ops_admin", "network_admin", "security_admin"},
+			"vpn-access-request":              {"vpn_account", "device_usage", "request_kind", "network_admin", "security_admin"},
 		}
 		for _, svc := range services {
 			if needles, ok := wanted[svc.Code]; ok {
@@ -168,7 +168,14 @@ func TestBuiltInSmartSeedsAlignParticipantsAndInstallAdminIdentity(t *testing.T)
 				}
 			}
 			if needles, ok := workflowWanted[svc.Code]; ok {
+				var actions []ServiceAction
+				if err := db.Where("service_id = ?", svc.ID).Find(&actions).Error; err != nil {
+					t.Fatalf("load service %s actions: %v", svc.Code, err)
+				}
 				structured := string(svc.IntakeFormSchema) + string(svc.WorkflowJSON)
+				for _, action := range actions {
+					structured += action.Code
+				}
 				for _, needle := range needles {
 					if !strings.Contains(structured, needle) {
 						t.Fatalf("service %s missing structured marker %q in schema/workflow", svc.Code, needle)

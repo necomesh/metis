@@ -142,6 +142,16 @@ form 节点必须包含 formSchema，描述该节点需要收集的字段：
 
 后续排他网关必须基于 form.access_reason 路由，不要改用 form.reason、form.purpose、form.request_kind、form.access_purpose 或自然语言字段名。
 
+### 生产数据库备份白名单临时放行表单字段
+
+当协作规范描述“生产数据库备份白名单临时放行申请”，并要求收集目标数据库、来源 IP、放行时间窗、申请原因时，申请表单字段 key 必须稳定为：
+- database_name：目标数据库
+- source_ip：来源 IP
+- whitelist_window：白名单放行时间窗
+- access_reason：申请原因
+
+该服务的预检和放行动作由智能引擎运行时执行；参考路径 workflow_json 不生成 type="action" 节点，应使用申请人表单、数据库管理员人工处理和结束节点表达路径。
+
 ## 排他网关（exclusive）条件格式
 
 排他网关的路由条件配置在**出边的 data.condition** 中（不是节点上）：

@@ -487,6 +487,12 @@ func (e *SmartEngine) applyDeterministicServiceGuards(ctx context.Context, tx *g
 }
 
 func looksLikeDBBackupWhitelistSpec(spec string) bool {
+	if strings.Contains(spec, "数据库备份") &&
+		strings.Contains(spec, "白名单") &&
+		strings.Contains(spec, "放行") &&
+		(strings.Contains(spec, "数据库管理员") || strings.Contains(spec, "db_admin")) {
+		return true
+	}
 	return strings.Contains(spec, "db_admin") &&
 		strings.Contains(spec, "precheck") &&
 		strings.Contains(spec, "apply") &&
@@ -672,10 +678,21 @@ func ticketActionSucceeded(tx *gorm.DB, ticketID uint, actionCode string) (bool,
 	var count int64
 	err := tx.Table("itsm_ticket_action_executions").
 		Joins("JOIN itsm_service_actions ON itsm_service_actions.id = itsm_ticket_action_executions.service_action_id").
-		Where("itsm_ticket_action_executions.ticket_id = ? AND itsm_service_actions.code = ? AND itsm_ticket_action_executions.status = ?",
-			ticketID, actionCode, "success").
+		Where("itsm_ticket_action_executions.ticket_id = ? AND itsm_service_actions.code IN ? AND itsm_ticket_action_executions.status = ?",
+			ticketID, actionCodeAliases(actionCode), "success").
 		Count(&count).Error
 	return count > 0, err
+}
+
+func actionCodeAliases(actionCode string) []string {
+	switch actionCode {
+	case "db_backup_whitelist_precheck", "backup_whitelist_precheck":
+		return []string{"db_backup_whitelist_precheck", "backup_whitelist_precheck"}
+	case "db_backup_whitelist_apply", "backup_whitelist_apply":
+		return []string{"db_backup_whitelist_apply", "backup_whitelist_apply"}
+	default:
+		return []string{actionCode}
+	}
 }
 
 func ticketHasCompletedPositionProcess(tx *gorm.DB, ticketID uint, positionCode string) (bool, error) {
@@ -730,10 +747,7 @@ func (e *SmartEngine) executeServiceActionOnce(ctx context.Context, tx *gorm.DB,
 	}
 
 	var action serviceActionModel
-	if err := tx.Table("itsm_service_actions").
-		Where("service_id = ? AND code = ? AND is_active = ? AND deleted_at IS NULL", serviceID, actionCode, true).
-		Select("id, name, code, service_id, is_active, config_json").
-		First(&action).Error; err != nil {
+	if err := findActiveServiceActionByCodeAliases(tx, serviceID, actionCodeAliases(actionCode), &action); err != nil {
 		return fmt.Errorf("服务动作 %s 不存在或未启用: %w", actionCode, err)
 	}
 
@@ -745,6 +759,21 @@ func (e *SmartEngine) executeServiceActionOnce(ctx context.Context, tx *gorm.DB,
 	e.recordTimeline(tx, ticketID, nil, 0, "ai_decision_action_executed",
 		fmt.Sprintf("AI 决策服务护栏已执行动作：%s", action.Name), "")
 	return nil
+}
+
+func findActiveServiceActionByCodeAliases(tx *gorm.DB, serviceID uint, codes []string, action *serviceActionModel) error {
+	var lastErr error
+	for _, code := range codes {
+		err := tx.Table("itsm_service_actions").
+			Where("service_id = ? AND code = ? AND is_active = ? AND deleted_at IS NULL", serviceID, code, true).
+			Select("id, name, code, service_id, is_active, config_json").
+			First(action).Error
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+	}
+	return lastErr
 }
 
 // handleComplete finishes the ticket when agent decides to complete.

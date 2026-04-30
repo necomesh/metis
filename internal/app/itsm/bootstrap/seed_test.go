@@ -127,6 +127,143 @@ func TestSeedServiceDefinitions_ServerAccessUsesNaturalSpecAndPreservesStructure
 	}
 }
 
+func TestSeedServiceDefinitions_DBBackupUsesNaturalSpecAndPreservesStructuredContract(t *testing.T) {
+	db := newTestDB(t)
+
+	if err := seedCatalogs(db); err != nil {
+		t.Fatalf("seed catalogs: %v", err)
+	}
+	if err := seedSLATemplates(db); err != nil {
+		t.Fatalf("seed SLA templates: %v", err)
+	}
+	if err := seedServiceDefinitions(db); err != nil {
+		t.Fatalf("seed service definitions: %v", err)
+	}
+
+	var service ServiceDefinition
+	if err := db.Where("code = ?", "db-backup-whitelist-action-flow").First(&service).Error; err != nil {
+		t.Fatalf("find db backup service: %v", err)
+	}
+
+	for _, forbidden := range []string{
+		"database_name",
+		"source_ip",
+		"whitelist_window",
+		"access_reason",
+		"position_department",
+		"department_code",
+		"position_code",
+		"db_admin",
+		"decision.execute_action",
+		"db_backup_whitelist_precheck",
+		"db_backup_whitelist_apply",
+		"backup_whitelist_precheck",
+		"backup_whitelist_apply",
+	} {
+		if strings.Contains(service.CollaborationSpec, forbidden) {
+			t.Fatalf("db backup collaboration spec should be natural text, found machine token %q in %q", forbidden, service.CollaborationSpec)
+		}
+	}
+
+	var schema struct {
+		Fields []struct {
+			Key  string `json:"key"`
+			Type string `json:"type"`
+		} `json:"fields"`
+	}
+	if err := json.Unmarshal([]byte(service.IntakeFormSchema), &schema); err != nil {
+		t.Fatalf("unmarshal db backup intake form schema: %v", err)
+	}
+	want := []struct {
+		key string
+		typ string
+	}{
+		{"database_name", "text"},
+		{"source_ip", "text"},
+		{"whitelist_window", "text"},
+		{"access_reason", "textarea"},
+	}
+	if len(schema.Fields) != len(want) {
+		t.Fatalf("expected field keys %v, got %+v", want, schema.Fields)
+	}
+	for i, field := range schema.Fields {
+		if field.Key != want[i].key || field.Type != want[i].typ {
+			t.Fatalf("expected field %d to be %s/%s, got %s/%s", i, want[i].key, want[i].typ, field.Key, field.Type)
+		}
+	}
+
+	var actions []ServiceAction
+	if err := db.Where("service_id = ?", service.ID).Order("code ASC").Find(&actions).Error; err != nil {
+		t.Fatalf("load db backup actions: %v", err)
+	}
+	actionCodes := map[string]bool{}
+	for _, action := range actions {
+		actionCodes[action.Code] = true
+	}
+	for _, code := range []string{"db_backup_whitelist_precheck", "db_backup_whitelist_apply"} {
+		if !actionCodes[code] {
+			t.Fatalf("expected seeded db backup action %q, got %#v", code, actionCodes)
+		}
+	}
+}
+
+func TestSeedServiceDefinitions_DBBackupMigratesLegacyActionCodes(t *testing.T) {
+	db := newTestDB(t)
+
+	if err := seedCatalogs(db); err != nil {
+		t.Fatalf("seed catalogs: %v", err)
+	}
+	if err := seedSLATemplates(db); err != nil {
+		t.Fatalf("seed SLA templates: %v", err)
+	}
+
+	var catalog ServiceCatalog
+	if err := db.Where("code = ?", "application-platform:database").First(&catalog).Error; err != nil {
+		t.Fatalf("find catalog: %v", err)
+	}
+	service := ServiceDefinition{
+		Name:              "生产数据库备份白名单临时放行申请",
+		Code:              "db-backup-whitelist-action-flow",
+		CatalogID:         catalog.ID,
+		EngineType:        "smart",
+		CollaborationSpec: "旧协作规范",
+		IsActive:          true,
+	}
+	if err := db.Create(&service).Error; err != nil {
+		t.Fatalf("create legacy service: %v", err)
+	}
+	legacyConfig := JSONField(`{"url":"/custom-precheck","method":"POST"}`)
+	if err := db.Create(&ServiceAction{
+		Name:       "旧预检",
+		Code:       "backup_whitelist_precheck",
+		ActionType: "http",
+		ConfigJSON: legacyConfig,
+		ServiceID:  service.ID,
+		IsActive:   true,
+	}).Error; err != nil {
+		t.Fatalf("create legacy action: %v", err)
+	}
+
+	if err := seedServiceDefinitions(db); err != nil {
+		t.Fatalf("seed service definitions: %v", err)
+	}
+
+	var migrated ServiceAction
+	if err := db.Where("service_id = ? AND code = ?", service.ID, "db_backup_whitelist_precheck").First(&migrated).Error; err != nil {
+		t.Fatalf("expected legacy precheck action to migrate to canonical code: %v", err)
+	}
+	if string(migrated.ConfigJSON) != string(legacyConfig) {
+		t.Fatalf("expected migration to preserve action config, got %s", migrated.ConfigJSON)
+	}
+	var legacyCount int64
+	if err := db.Model(&ServiceAction{}).Where("service_id = ? AND code = ?", service.ID, "backup_whitelist_precheck").Count(&legacyCount).Error; err != nil {
+		t.Fatalf("count legacy action: %v", err)
+	}
+	if legacyCount != 0 {
+		t.Fatalf("expected legacy action code to be migrated, still found %d", legacyCount)
+	}
+}
+
 func TestSeedServiceDefinitions_VPNUsesNaturalSpecAndPreservesStructuredContract(t *testing.T) {
 	db := newTestDB(t)
 

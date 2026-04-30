@@ -79,6 +79,41 @@ func TestAgenticSystemPromptGuardsServerAccessLexicalRouting(t *testing.T) {
 	}
 }
 
+func TestLooksLikeDBBackupWhitelistSpecMatchesNaturalSpec(t *testing.T) {
+	spec := `员工在 IT 服务台申请生产数据库备份白名单临时放行时，服务台需要确认目标数据库、发起备份访问的来源 IP、白名单放行时间窗，以及这次临时放行的申请原因。
+申请资料收齐后，系统会先做一次白名单参数预检，确认数据库、来源 IP、放行窗口和申请原因满足放行前置条件。预检通过后，交给信息部数据库管理员处理。
+数据库管理员完成处理后，系统执行备份白名单放行；放行成功后流程结束。驳回时不进入补充或返工，流程按驳回结果结束。`
+
+	if !looksLikeDBBackupWhitelistSpec(spec) {
+		t.Fatalf("expected natural db backup whitelist spec to enable deterministic guard")
+	}
+}
+
+func TestTicketActionSucceededAcceptsLegacyDBBackupActionCode(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&serviceActionModel{}, &actionExecutionModel{}); err != nil {
+		t.Fatalf("migrate action tables: %v", err)
+	}
+	action := serviceActionModel{ID: 7, Name: "旧预检", Code: "backup_whitelist_precheck", ServiceID: 3, IsActive: true}
+	if err := db.Create(&action).Error; err != nil {
+		t.Fatalf("create legacy action: %v", err)
+	}
+	if err := db.Create(&actionExecutionModel{TicketID: 42, ServiceActionID: action.ID, Status: "success"}).Error; err != nil {
+		t.Fatalf("create action execution: %v", err)
+	}
+
+	ok, err := ticketActionSucceeded(db, 42, "db_backup_whitelist_precheck")
+	if err != nil {
+		t.Fatalf("ticketActionSucceeded: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected canonical db backup action lookup to match legacy successful execution")
+	}
+}
+
 func TestBuildInitialSeedIncludesRejectedActivityPolicy(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {

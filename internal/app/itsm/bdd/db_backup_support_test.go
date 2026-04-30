@@ -19,15 +19,32 @@ import (
 )
 
 // dbBackupCollaborationSpec is the collaboration spec for the production database backup whitelist temporary access service.
-const dbBackupCollaborationSpec = `这是一个数据库备份白名单临时放行服务。
-用户来找服务台时，要先把目标数据库、来源 IP、放行时间窗和申请原因这些信息问清楚，再整理成可以确认的申请摘要。
-信息收集完成后，你需要先调用预检动作（precheck）验证参数合法性，根据预检结果决定下一步。
-预检使用后，交给信息部的数据库管理员岗位处理，处理参与者类型必须使用 position_department，部门编码使用 it，岗位编码使用 db_admin。
-处理完成后，你需要调用放行动作（apply）完成实际的白名单配置。放行动作执行成功后，流程立即结束，不再创建任何新的处理、处理或通知活动。
-注意：预检动作和放行动作由流程决策智能体在运行时通过 decision.execute_action 工具调用完成，workflow_json 只表达参考路径，禁止在 workflow_json 中生成 type="action" 的动作节点。
-协作规范没有定义驳回后补充或返工路径；每个人工 process 节点的 rejected 出边都应指向统一的驳回结束终态 end_rejected，不能退回申请人补充。
-不要让申请人在表单里自己选择处理类别，流程决策智能体应根据上下文在运行时决定。
-不需要额外生成取消分支。`
+const dbBackupCollaborationSpec = `员工在 IT 服务台申请生产数据库备份白名单临时放行时，服务台需要确认目标数据库、发起备份访问的来源 IP、白名单放行时间窗，以及这次临时放行的申请原因。
+申请资料收齐后，系统会先做一次白名单参数预检，确认数据库、来源 IP、放行窗口和申请原因满足放行前置条件。预检通过后，交给信息部数据库管理员处理。
+数据库管理员完成处理后，系统执行备份白名单放行；放行成功后流程结束。驳回时不进入补充或返工，流程按驳回结果结束。`
+
+const dbBackupFormSchema = `{"version":1,"fields":[{"key":"database_name","type":"text","label":"目标数据库"},{"key":"source_ip","type":"text","label":"来源 IP"},{"key":"whitelist_window","type":"text","label":"白名单放行时间窗"},{"key":"access_reason","type":"textarea","label":"申请原因"}]}`
+
+const dbBackupGenerationContext = `
+
+## 已有申请表单契约
+该服务已经配置申请确认表单。生成参考路径时必须复用这些字段 key、类型和选项值；引用表单字段时必须使用 form.<key>。
+
+- 目标数据库: key=` + "`database_name`" + `, type=` + "`text`" + `
+- 来源 IP: key=` + "`source_ip`" + `, type=` + "`text`" + `
+- 白名单放行时间窗: key=` + "`whitelist_window`" + `, type=` + "`text`" + `
+- 申请原因: key=` + "`access_reason`" + `, type=` + "`textarea`" + `
+
+## 按需查询到的组织上下文
+以下组织结构映射来自本次按需工具查询。生成人工处理节点参与人时，特定部门中的特定岗位使用 position_department，并填入 department_code 与 position_code；不要输出具体用户。
+
+- 参与人解析：department_hint=` + "`信息部`" + `, position_hint=` + "`数据库管理员`" + `
+  - 候选：type=` + "`position_department`" + `, department_code=` + "`it`" + `（信息部）, position_code=` + "`db_admin`" + `（数据库管理员）, candidate_count=1
+
+## 数据库备份白名单运行时动作约束
+该服务的预检和放行动作由智能引擎运行时执行，参考路径 workflow_json 不生成 type="action" 节点；请用申请人表单、数据库管理员人工处理和结束节点表达路径。
+协作规范没有定义补充或返工路径；人工 process 节点的 rejected 出边应指向公共结束节点，不能退回申请人补充。
+`
 
 // dbBackupCasePayload defines test data for a single db backup whitelist BDD scenario.
 type dbBackupCasePayload struct {
@@ -98,7 +115,7 @@ func generateDbBackupWorkflow(cfg llmConfig) (json.RawMessage, error) {
 	var lastErrors []engine.ValidationError
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		userMsg := svc.BuildUserMessage(dbBackupCollaborationSpec, "", lastErrors)
+		userMsg := svc.BuildUserMessage(dbBackupCollaborationSpec, dbBackupGenerationContext, lastErrors)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 		resp, err := client.Chat(ctx, llm.ChatRequest{
@@ -214,6 +231,7 @@ func publishDbBackupSmartService(bc *bddContext) error {
 		EngineType:        "smart",
 		WorkflowJSON:      JSONField(workflowJSON),
 		CollaborationSpec: dbBackupCollaborationSpec,
+		IntakeFormSchema:  JSONField(dbBackupFormSchema),
 		AgentID:           &agent.ID,
 		IsActive:          true,
 	}
