@@ -83,6 +83,10 @@ func (h *Handler) UpdateSiteInfo(c *gin.Context) {
 		return
 	}
 
+	c.Set("audit_action", "site_info.update")
+	c.Set("audit_resource", "site_info")
+	c.Set("audit_summary", "更新站点信息")
+
 	h.GetSiteInfo(c)
 }
 
@@ -137,6 +141,10 @@ func (h *Handler) UploadLogo(c *gin.Context) {
 		return
 	}
 
+	c.Set("audit_action", "site_info.logo.upload")
+	c.Set("audit_resource", "site_info")
+	c.Set("audit_summary", "上传系统 Logo")
+
 	OK(c, nil)
 }
 
@@ -145,6 +153,10 @@ func (h *Handler) DeleteLogo(c *gin.Context) {
 		Fail(c, http.StatusNotFound, "logo not found")
 		return
 	}
+
+	c.Set("audit_action", "site_info.logo.delete")
+	c.Set("audit_resource", "site_info")
+	c.Set("audit_summary", "删除系统 Logo")
 	OK(c, nil)
 }
 

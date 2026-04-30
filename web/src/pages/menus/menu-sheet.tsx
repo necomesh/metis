@@ -47,6 +47,8 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>
 
+const ROOT_PARENT_VALUE = "__root__"
+
 interface MenuSheetProps {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -183,8 +185,10 @@ export function MenuSheet({ open, onOpenChange, menu, parentId }: MenuSheetProps
                 <FormItem>
                   <FormLabel>{t("menus:parentMenu")}</FormLabel>
                   <Select
-                    value={field.value != null ? String(field.value) : ""}
-                    onValueChange={(v) => field.onChange(v ? Number(v) : null)}
+                    value={field.value != null ? String(field.value) : ROOT_PARENT_VALUE}
+                    onValueChange={(value) => {
+                      field.onChange(value === ROOT_PARENT_VALUE ? null : Number(value))
+                    }}
                   >
                     <FormControl>
                       <SelectTrigger>
@@ -192,7 +196,7 @@ export function MenuSheet({ open, onOpenChange, menu, parentId }: MenuSheetProps
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      <SelectItem value="">{t("menus:topLevelMenu")}</SelectItem>
+                      <SelectItem value={ROOT_PARENT_VALUE}>{t("menus:topLevelMenu")}</SelectItem>
                       {parentOptions.map((opt) => (
                         <SelectItem key={opt.id} value={String(opt.id)}>{opt.label}</SelectItem>
                       ))}

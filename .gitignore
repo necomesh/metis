@@ -43,6 +43,12 @@ sidecar
 !cmd/server
 !cmd/sidecar
 !internal/sidecar
+
+.codex/
+.opencode/
+.cursor/
+.github/
+
 !internal/**
 *.db
 *.db-shm

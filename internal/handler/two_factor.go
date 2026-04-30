@@ -108,6 +108,10 @@ func (h *TwoFactorHandler) Login(c *gin.Context) {
 	// Verify the TOTP/backup code
 	valid, err := h.tfSvc.Verify(claims.UserID, req.Code)
 	if err != nil {
+		if errors.Is(err, service.ErrTwoFactorNotSetup) {
+			Fail(c, http.StatusUnauthorized, "invalid 2FA code")
+			return
+		}
 		Fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}

@@ -190,6 +190,12 @@ func (h *InstallHandler) Execute(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "database connection failed: "+err.Error())
 		return
 	}
+	keepDBOpen := false
+	defer func() {
+		if !keepDBOpen {
+			_ = db.Shutdown()
+		}
+	}()
 
 	// 4. AutoMigrate
 	if err := database.AutoMigrateKernel(db.DB); err != nil {
@@ -312,6 +318,7 @@ func (h *InstallHandler) Execute(c *gin.Context) {
 		return
 	}
 
+	keepDBOpen = true
 	OK(c, nil)
 }
 

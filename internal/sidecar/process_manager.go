@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
-	"syscall"
 	"text/template"
 	"time"
 )
@@ -105,7 +104,7 @@ func (pm *ProcessManager) startProcess(mp *ManagedProcess) error {
 	// Render the start command with template placeholders
 	rendered := pm.renderCommand(mp.Def.StartCommand, mp.Def.Name, 0)
 
-	cmd := exec.Command("sh", "-c", rendered)
+	cmd := newManagedShellCommand(rendered)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -127,8 +126,7 @@ func (pm *ProcessManager) startProcess(mp *ManagedProcess) error {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 
-	// Set process group for clean termination
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	configureManagedCommand(cmd)
 
 	if err := cmd.Start(); err != nil {
 		mp.Status = "error"
@@ -264,7 +262,7 @@ func (pm *ProcessManager) stopProcess(mp *ManagedProcess) error {
 	if mp.Def.StopCommand != "" {
 		rendered := pm.renderCommand(mp.Def.StopCommand, mp.Def.Name, mp.PID)
 		slog.Info("executing stop command", "name", mp.Def.Name, "command", rendered)
-		stopCmd := exec.Command("sh", "-c", rendered)
+		stopCmd := newManagedShellCommand(rendered)
 		stopCmd.Stdout = os.Stdout
 		stopCmd.Stderr = os.Stderr
 		if err := stopCmd.Run(); err != nil {
@@ -293,9 +291,9 @@ func (pm *ProcessManager) stopProcess(mp *ManagedProcess) error {
 		}
 	}
 
-	// Default: Send SIGTERM
-	if err := mp.cmd.Process.Signal(syscall.SIGTERM); err != nil {
-		slog.Warn("SIGTERM failed, sending SIGKILL", "name", mp.Def.Name, "error", err)
+	// Default: ask the platform helper for graceful termination.
+	if err := terminateManagedCommand(mp.cmd); err != nil {
+		slog.Warn("graceful stop failed, sending SIGKILL", "name", mp.Def.Name, "error", err)
 		_ = mp.cmd.Process.Kill()
 	} else {
 		// Wait up to 10s for graceful shutdown
@@ -360,7 +358,7 @@ func (pm *ProcessManager) Reload(defID uint) error {
 		mp.mu.Unlock()
 
 		slog.Info("executing reload command", "name", mp.Def.Name, "command", rendered)
-		cmd := exec.Command("sh", "-c", rendered)
+		cmd := newManagedShellCommand(rendered)
 		if err := cmd.Run(); err != nil {
 			slog.Warn("reload command failed, falling back to restart", "name", mp.Def.Name, "error", err)
 		} else {
