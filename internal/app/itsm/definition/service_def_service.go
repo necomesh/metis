@@ -344,12 +344,6 @@ func (s *ServiceDefService) computePublishHealthCheckBase(svc *ServiceDefinition
 	if !hasUsableIntakeFormSchema(svc.IntakeFormSchema) {
 		add(&ServiceHealthItem{Key: "intake_form", Label: "申请表单", Status: "warn", Message: "尚未生成申请确认表单，请先生成参考路径后再在服务台使用"})
 	}
-	if svc.AgentID == nil || *svc.AgentID == 0 {
-		add(&ServiceHealthItem{Key: "service_agent", Label: "服务 Agent", Status: "fail", Message: "智能服务未绑定 Agent"})
-	} else if err := s.validateAgent(svc.AgentID); err != nil {
-		add(&ServiceHealthItem{Key: "service_agent", Label: "服务 Agent", Status: "fail", Message: "绑定的 Agent 不存在或未启用"})
-	}
-
 	decisionAgentID := strings.TrimSpace(s.systemConfigValue(SmartTicketDecisionAgentKey))
 	switch {
 	case decisionAgentID == "", decisionAgentID == "0":

@@ -729,10 +729,19 @@ func seedPolicies(enforcer *casbin.Enforcer) error {
 		// Workflow Generate
 		{"admin", "/api/v1/itsm/workflows/generate", "POST"},
 		// Service Desk
+		{"user", "/api/v1/itsm/smart-staffing/config", "GET"},
 		{"admin", "/api/v1/itsm/service-desk/sessions/:sid/state", "GET"},
 		{"admin", "/api/v1/itsm/service-desk/sessions/:sid/draft/submit", "POST"},
 		{"user", "/api/v1/itsm/service-desk/sessions/:sid/state", "GET"},
 		{"user", "/api/v1/itsm/service-desk/sessions/:sid/draft/submit", "POST"},
+		{"user", "/api/v1/ai/sessions", "GET"},
+		{"user", "/api/v1/ai/sessions", "POST"},
+		{"user", "/api/v1/ai/sessions/:sid", "GET"},
+		{"user", "/api/v1/ai/sessions/:sid", "DELETE"},
+		{"user", "/api/v1/ai/sessions/:sid/chat", "POST"},
+		{"user", "/api/v1/ai/sessions/:sid/stream", "GET"},
+		{"user", "/api/v1/ai/sessions/:sid/cancel", "POST"},
+		{"user", "/api/v1/ai/sessions/:sid/images", "POST"},
 		// Priorities
 		{"admin", "/api/v1/itsm/priorities", "POST"},
 		{"admin", "/api/v1/itsm/priorities", "GET"},

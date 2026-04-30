@@ -664,7 +664,7 @@ func TestGenerate_RetriesLLMUpstreamError(t *testing.T) {
 
 func TestWorkflowGenerateHandlerReturnsBadGatewayForLLMUpstreamError(t *testing.T) {
 	client := &fakeWorkflowLLMClient{
-		errs: []error{context.DeadlineExceeded},
+		errs: []error{context.DeadlineExceeded, context.DeadlineExceeded, context.DeadlineExceeded, context.DeadlineExceeded},
 	}
 	h := &WorkflowGenerateHandler{svc: newWorkflowGenerateServiceForRetryTest(client, 3)}
 	c, rec := newGinContext(http.MethodPost, "/api/v1/itsm/workflows/generate")

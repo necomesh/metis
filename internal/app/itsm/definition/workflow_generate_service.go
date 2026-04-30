@@ -153,6 +153,12 @@ func (s *WorkflowGenerateService) Generate(ctx context.Context, req *GenerateReq
 		if err != nil {
 			slog.Warn("workflow generate: LLM call failed",
 				"attempt", attempt+1, "error", err)
+			lastErrors = []engine.ValidationError{
+				{Message: fmt.Sprintf("参考路径生成引擎调用失败: %v", err)},
+			}
+			if attempt < maxRetries {
+				continue
+			}
 			return nil, fmt.Errorf("%w: 参考路径生成引擎调用超时或不可用，请检查 AI 供应商上游、模型、密钥或额度配置: %v", ErrPathEngineUpstream, err)
 		}
 

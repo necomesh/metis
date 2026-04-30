@@ -517,13 +517,13 @@ func TestServiceDefServiceRefreshPublishHealthCheck_DoesNotRequireServiceAgent(t
 	setServiceHealthDecisionAgent(t, db, decisionAgent.ID)
 	seedServiceHealthPathEngine(t, db)
 	service, err := svc.Create(&ServiceDefinition{
-		Name:             "Smart",
-		Code:             "smart-no-service-agent",
-		CatalogID:        root.ID,
-		EngineType:       "smart",
-		IntakeFormSchema: serviceHealthIntakeFormSchema(),
+		Name:              "Smart",
+		Code:              "smart-no-service-agent",
+		CatalogID:         root.ID,
+		EngineType:        "smart",
+		IntakeFormSchema:  serviceHealthIntakeFormSchema(),
 		CollaborationSpec: "route the request to the handler",
-		WorkflowJSON:     JSONField(validServiceHealthWorkflow(user.ID)),
+		WorkflowJSON:      JSONField(validServiceHealthWorkflow(user.ID)),
 	})
 	if err != nil {
 		t.Fatalf("create service: %v", err)

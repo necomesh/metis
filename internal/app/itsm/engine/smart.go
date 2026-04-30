@@ -216,14 +216,8 @@ func (e *SmartEngine) Start(ctx context.Context, tx *gorm.DB, params StartParams
 		return ErrSmartEngineUnavailable
 	}
 
-	// Load service definition for agent config
-	svcInfo, err := e.loadServiceForTicket(tx, params.TicketID)
-	if err != nil {
+	if _, err := e.loadServiceForTicket(tx, params.TicketID); err != nil {
 		return fmt.Errorf("load service: %w", err)
-	}
-
-	if svcInfo.AgentID == nil || *svcInfo.AgentID == 0 {
-		return fmt.Errorf("智能服务未绑定 Agent")
 	}
 
 	// Update ticket status to decisioning; the first decision cycle is dispatched after commit.
