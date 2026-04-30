@@ -88,6 +88,9 @@ func (a *ITSMApp) BuildAgentRuntimeContext(ctx context.Context, _ string, sessio
 		"draft_form_data":         state.DraftFormData,
 		"draft_version":           state.DraftVersion,
 		"confirmed_draft_version": state.ConfirmedDraftVersion,
+		"missing_fields":          state.MissingFields,
+		"asked_fields":            state.AskedFields,
+		"min_decision_ready":      state.MinDecisionReady,
 		"next_expected_action":    tools.NextExpectedAction(state),
 	}
 	b, err := json.MarshalIndent(payload, "", "  ")

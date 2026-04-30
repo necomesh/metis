@@ -93,6 +93,10 @@ func TestBuiltInSmartSeedsAlignParticipantsAndInstallAdminIdentity(t *testing.T)
 	if err := db.Create(&adminRole).Error; err != nil {
 		t.Fatalf("create admin role: %v", err)
 	}
+	userRole := coremodel.Role{Name: "User", Code: coremodel.RoleUser}
+	if err := db.Create(&userRole).Error; err != nil {
+		t.Fatalf("create user role: %v", err)
+	}
 	admin := coremodel.User{Username: "admin", IsActive: true, RoleID: adminRole.ID}
 	if err := db.Create(&admin).Error; err != nil {
 		t.Fatalf("create admin user: %v", err)
@@ -105,6 +109,28 @@ func TestBuiltInSmartSeedsAlignParticipantsAndInstallAdminIdentity(t *testing.T)
 	if err := SeedITSM(db, enforcer); err != nil {
 		t.Fatalf("seed itsm: %v", err)
 	}
+
+	t.Run("user role can access service desk self-service", func(t *testing.T) {
+		for _, tc := range []struct {
+			obj string
+			act string
+		}{
+			{obj: "itsm", act: "read"},
+			{obj: "itsm:service-desk:use", act: "read"},
+			{obj: "itsm:ticket:mine", act: "read"},
+			{obj: "/api/v1/itsm/service-desk/sessions/:sid/state", act: "GET"},
+			{obj: "/api/v1/itsm/service-desk/sessions/:sid/draft/submit", act: "POST"},
+			{obj: "/api/v1/itsm/tickets/mine", act: "GET"},
+		} {
+			allowed, err := enforcer.Enforce(coremodel.RoleUser, tc.obj, tc.act)
+			if err != nil {
+				t.Fatalf("enforce %s %s: %v", tc.obj, tc.act, err)
+			}
+			if !allowed {
+				t.Fatalf("expected user role to access %s %s", tc.act, tc.obj)
+			}
+		}
+	})
 
 	var dept org.Department
 	if err := db.Where("code = ?", "it").First(&dept).Error; err != nil {
@@ -155,7 +181,7 @@ func TestBuiltInSmartSeedsAlignParticipantsAndInstallAdminIdentity(t *testing.T)
 		}
 		workflowWanted := map[string][]string{
 			"boss-serial-change-request":      {"subject", "request_category", "prod_change", "risk_level", "rollback_required", "impact_modules", "gateway", "change_items", "permission_level", "read_write"},
-			"db-backup-whitelist-action-flow": {"database_name", "source_ip", "whitelist_window", "access_reason", "db_backup_whitelist_precheck", "db_backup_whitelist_apply"},
+			"db-backup-whitelist-action-flow": {"database_name", "source_ip", "whitelist_window", "access_reason", `"type":"action"`, "db_precheck_action", "db_apply_action", "db_backup_whitelist_precheck", "db_backup_whitelist_apply"},
 			"prod-server-temporary-access":    {"target_servers", "access_window", "operation_purpose", "access_reason", "ops_admin", "network_admin", "security_admin"},
 			"vpn-access-request":              {"vpn_account", "device_usage", "request_kind", "network_admin", "security_admin"},
 		}

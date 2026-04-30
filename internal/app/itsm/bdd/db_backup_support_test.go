@@ -42,7 +42,11 @@ const dbBackupGenerationContext = `
   - 候选：type=` + "`position_department`" + `, department_code=` + "`it`" + `（信息部）, position_code=` + "`db_admin`" + `（数据库管理员）, candidate_count=1
 
 ## 数据库备份白名单运行时动作约束
-该服务的预检和放行动作由智能引擎运行时执行，参考路径 workflow_json 不生成 type="action" 节点；请用申请人表单、数据库管理员人工处理和结束节点表达路径。
+该服务的预检和放行动作由智能引擎运行时执行；参考路径 workflow_json 也必须展示这两个动作节点，让用户能在流程图上看到完整业务链路。
+如果可用动作列表存在 code=` + "`db_backup_whitelist_precheck`" + ` 和 code=` + "`db_backup_whitelist_apply`" + `，必须生成两个 type="action" 节点，并使用对应的数字 action_id。
+推荐路径：申请人表单 -> 备份白名单预检 action -> 数据库管理员人工处理 -> 执行备份白名单放行 action -> 结束。
+数据库管理员 rejected 出边必须直接指向公共结束节点，不能经过放行动作节点，且不能退回申请人补充。
+运行时仍由智能引擎优先通过 decision.execute_action 同步执行预检和放行动作，不要因为 workflow_json 中有 action 节点就改变为异步动作活动。
 协作规范没有定义补充或返工路径；人工 process 节点的 rejected 出边应指向公共结束节点，不能退回申请人补充。
 `
 
@@ -103,7 +107,7 @@ var dbBackupCasePayloads = map[string]dbBackupCasePayload{
 
 // generateDbBackupWorkflow calls the LLM to generate a db backup whitelist workflow JSON
 // from the collaboration spec. Same pattern as generateVPNWorkflow.
-func generateDbBackupWorkflow(cfg llmConfig) (json.RawMessage, error) {
+func generateDbBackupWorkflow(cfg llmConfig, actionsContext string) (json.RawMessage, error) {
 	client, err := llm.NewClient(llm.ProtocolOpenAI, cfg.baseURL, cfg.apiKey)
 	if err != nil {
 		return nil, fmt.Errorf("create LLM client: %w", err)
@@ -115,7 +119,7 @@ func generateDbBackupWorkflow(cfg llmConfig) (json.RawMessage, error) {
 	var lastErrors []engine.ValidationError
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		userMsg := svc.BuildUserMessage(dbBackupCollaborationSpec, dbBackupGenerationContext, lastErrors)
+		userMsg := svc.BuildUserMessage(dbBackupCollaborationSpec, dbBackupGenerationContext+actionsContext, lastErrors)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 		resp, err := client.Chat(ctx, llm.ChatRequest{
@@ -177,13 +181,7 @@ func publishDbBackupSmartService(bc *bddContext) error {
 		bc.actionReceiver = NewLocalActionReceiver()
 	}
 
-	// 1. Generate workflow via LLM
-	workflowJSON, err := generateDbBackupWorkflow(bc.llmCfg)
-	if err != nil {
-		return fmt.Errorf("generate db backup workflow: %w", err)
-	}
-
-	// 2. ServiceCatalog
+	// 1. ServiceCatalog
 	catalog := &ServiceCatalog{
 		Name:     "数据库服务",
 		Code:     "db-services",
@@ -193,7 +191,7 @@ func publishDbBackupSmartService(bc *bddContext) error {
 		return fmt.Errorf("create service catalog: %w", err)
 	}
 
-	// 3. Priority
+	// 2. Priority
 	priority := &Priority{
 		Name:     "紧急",
 		Code:     "urgent-db",
@@ -206,7 +204,7 @@ func publishDbBackupSmartService(bc *bddContext) error {
 	}
 	bc.priority = priority
 
-	// 4. Seed Agent record (process decision agent)
+	// 3. Seed Agent record (process decision agent)
 	agent := &ai.Agent{
 		Name:         "流程决策智能体",
 		Type:         "assistant",
@@ -223,13 +221,14 @@ func publishDbBackupSmartService(bc *bddContext) error {
 	}
 	bc.db.Model(agent).Update("temperature", 0)
 
-	// 5. ServiceDefinition with engine_type=smart
+	// 4. ServiceDefinition with engine_type=smart. WorkflowJSON is generated after
+	// actions are created so the reference path can bind real action_id values.
 	svc := &ServiceDefinition{
 		Name:              "数据库备份白名单临时放行",
 		Code:              "db-backup-whitelist",
 		CatalogID:         catalog.ID,
 		EngineType:        "smart",
-		WorkflowJSON:      JSONField(workflowJSON),
+		WorkflowJSON:      JSONField(`{"nodes":[],"edges":[]}`),
 		CollaborationSpec: dbBackupCollaborationSpec,
 		IntakeFormSchema:  JSONField(dbBackupFormSchema),
 		AgentID:           &agent.ID,
@@ -240,7 +239,7 @@ func publishDbBackupSmartService(bc *bddContext) error {
 	}
 	bc.service = svc
 
-	// 6. Create 2 ServiceActions: precheck + apply (URLs point to LocalActionReceiver)
+	// 5. Create 2 ServiceActions: precheck + apply (URLs point to LocalActionReceiver)
 	precheckConfig, _ := json.Marshal(engine.ActionConfig{
 		URL:     bc.actionReceiver.URL("/precheck"),
 		Method:  "POST",
@@ -282,6 +281,26 @@ func publishDbBackupSmartService(bc *bddContext) error {
 		return fmt.Errorf("create apply action: %w", err)
 	}
 	bc.serviceActions["db_backup_whitelist_apply"] = applyAction
+
+	actionsContext := fmt.Sprintf(`
+
+## 可用动作（Action）列表
+以下动作可在工作流中作为 action 类型节点使用：
+
+- **%s**（id: %d, code: %s）：%s
+- **%s**（id: %d, code: %s）：%s
+`, precheckAction.Name, precheckAction.ID, precheckAction.Code, precheckAction.Description,
+		applyAction.Name, applyAction.ID, applyAction.Code, applyAction.Description)
+
+	// 6. Generate workflow via LLM with real action IDs, then persist it.
+	workflowJSON, err := generateDbBackupWorkflow(bc.llmCfg, actionsContext)
+	if err != nil {
+		return fmt.Errorf("generate db backup workflow: %w", err)
+	}
+	if err := bc.db.Model(svc).Update("workflow_json", JSONField(workflowJSON)).Error; err != nil {
+		return fmt.Errorf("update db backup workflow json: %w", err)
+	}
+	svc.WorkflowJSON = JSONField(workflowJSON)
 
 	// 7. Re-wire engines with syncActionSubmitter (actionReceiver is now set).
 	orgSvc := &testOrgService{db: bc.db}

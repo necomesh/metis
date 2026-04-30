@@ -36,6 +36,10 @@ import {
   type ITSMDraftFormSurfacePayload,
 } from "../../api"
 import { useServiceDeskChat } from "./use-service-desk-chat"
+import {
+  createServiceDeskWorkspaceActions,
+  recoverInitialPromptDraft,
+} from "./service-desk-behavior"
 
 const SUGGESTED_PROMPTS = [
   "我想申请 VPN，线上支持用",
@@ -203,22 +207,22 @@ function ITSMDraftFormSurfaceCard({
 }) {
   const payload = surface.payload
   const initialFormData = useMemo(() => payload.values ?? {}, [payload.values])
-  const [formData, setFormData] = useState<Record<string, unknown>>(payload.values ?? {})
   const [submittedSurface, setSubmittedSurface] = useState<ITSMDraftFormSurface | null>(null)
   const [inlineError, setInlineError] = useState<string | null>(null)
 
   const submitMutation = useMutation({
-    mutationFn: () => {
+    mutationFn: (validatedFormData: Record<string, unknown>) => {
       if (!payload.draftVersion) {
         throw new Error("草稿版本缺失，请重新整理草稿")
       }
       return submitServiceDeskDraft(sessionId, {
         draftVersion: payload.draftVersion,
         summary: payload.summary ?? payload.title ?? "",
-        formData,
+        formData: validatedFormData,
       })
     },
-    onSuccess: (result) => {
+    onMutate: () => setInlineError(null),
+    onSuccess: (result, submittedFormData) => {
       if (!result.ok) {
         setInlineError(result.guidance || result.failureReason || result.message || "提交失败")
         return
@@ -233,7 +237,7 @@ function ITSMDraftFormSurfaceCard({
             status: "submitted",
             title: payload.title,
             summary: payload.summary,
-            values: formData,
+            values: submittedFormData,
             ticketId: result.ticketId,
             ticketCode: result.ticketCode,
             message: result.message,
@@ -321,8 +325,20 @@ function ITSMDraftFormSurfaceCard({
         schema={currentPayload.schema}
         data={initialFormData}
         mode="edit"
-        onChange={setFormData}
+        onSubmit={(validatedData) => submitMutation.mutate(validatedData)}
         disabled={submitMutation.isPending}
+        footer={(
+          <div className="mt-4 flex justify-end">
+            <Button
+              data-testid="itsm-submit-draft-button"
+              type="submit"
+              disabled={submitMutation.isPending}
+            >
+              {submitMutation.isPending ? <Loader2 className="mr-1.5 size-4 animate-spin" /> : <CheckCircle2 className="mr-1.5 size-4" />}
+              提交工单
+            </Button>
+          </div>
+        )}
       />
 
       {inlineError && (
@@ -330,18 +346,6 @@ function ITSMDraftFormSurfaceCard({
           {inlineError}
         </div>
       )}
-
-      <div className="mt-4 flex justify-end">
-        <Button
-          data-testid="itsm-submit-draft-button"
-          type="button"
-          onClick={() => submitMutation.mutate()}
-          disabled={submitMutation.isPending}
-        >
-          {submitMutation.isPending ? <Loader2 className="mr-1.5 size-4 animate-spin" /> : <CheckCircle2 className="mr-1.5 size-4" />}
-          提交工单
-        </Button>
-      </div>
     </div>
   )
 }
@@ -352,12 +356,14 @@ function ServiceDeskConversation({
   initialPrompt,
   initialImages,
   onInitialPromptSent,
+  onInitialPromptFailed,
 }: {
   session: AgentSession
   agentName: string
   initialPrompt?: string
   initialImages?: ChatComposerImage[]
   onInitialPromptSent: () => void
+  onInitialPromptFailed: () => void
 }) {
   const queryClient = useQueryClient()
   const [input, setInput] = useState("")
@@ -407,11 +413,14 @@ function ServiceDeskConversation({
         })
         onInitialPromptSent()
       } catch (err) {
-        initialPromptSentRef.current = false
+        const draft = recoverInitialPromptDraft(initialPrompt, initialImages)
+        setInput(draft.input)
+        setPendingImages(draft.images)
+        onInitialPromptFailed()
         toast.error(err instanceof Error ? err.message : "图片上传失败")
       }
     })()
-  }, [chat, initialImages, initialPrompt, isLoading, onInitialPromptSent, session.id])
+  }, [chat, initialImages, initialPrompt, isLoading, onInitialPromptFailed, onInitialPromptSent, session.id])
 
   useEffect(() => {
     const container = scrollRef.current
@@ -421,18 +430,21 @@ function ServiceDeskConversation({
 
   const sendMutation = useMutation({
     mutationFn: async (text: string) => {
+      const images = [...pendingImages]
       const imageUrls: string[] = []
-      for (const image of pendingImages) {
+      for (const image of images) {
         const res = await sessionApi.uploadMessageImage(session.id, image.file)
         imageUrls.push(res.url)
       }
-      return { text, imageUrls }
+      return { text, imageUrls, images }
     },
-    onSuccess: ({ text, imageUrls }) => {
+    onSuccess: ({ text, imageUrls, images }) => {
       void chat.sendMessage({
         text,
         files: toImageFileParts(imageUrls),
       }).catch((err: Error) => {
+        setInput(text)
+        setPendingImages(images)
         toast.error(err.message)
         invalidateWorkspace()
       })
@@ -453,6 +465,15 @@ function ServiceDeskConversation({
     onError: (err) => toast.error(err.message),
   })
 
+  const continueMutation = useMutation({
+    mutationFn: async () => {
+      await sessionApi.continueGeneration(session.id)
+      chat.clearError()
+      await chat.resumeStream()
+    },
+    onError: (err) => toast.error(err.message),
+  })
+
   const isBusy = chatBusy || sendMutation.isPending
 
   const handleSend = useCallback(() => {
@@ -468,6 +489,13 @@ function ServiceDeskConversation({
   const removePendingImage = useCallback((index: number) => {
     setPendingImages((prev) => prev.filter((_, i) => i !== index))
   }, [])
+
+  const workspaceActions = createServiceDeskWorkspaceActions({
+    regenerate: () => chat.regenerate(),
+    clearError: () => chat.clearError(),
+    continueGeneration: () => continueMutation.mutate(),
+    cancel: () => cancelMutation.mutate(),
+  })
 
   const showEmpty = !isLoading && visibleMessages.length === 0 && !isBusy && !initialPrompt
 
@@ -517,10 +545,7 @@ function ServiceDeskConversation({
           ),
         } satisfies ChatWorkspaceSurfaceRenderer,
       ]}
-      workspaceActions={{
-        regenerate: () => chat.regenerate(),
-        cancel: () => cancelMutation.mutate(),
-      }}
+      workspaceActions={workspaceActions}
       composer={{
         value: input,
         onChange: setInput,
@@ -597,8 +622,6 @@ export function Component() {
       setCreatedSession(session)
       setSelectedSessionId(session.id)
       setPendingInitialPrompt({ sessionId: session.id, text, images })
-      setLandingInput("")
-      setLandingImages([])
       queryClient.invalidateQueries({ queryKey: ["ai-sessions", serviceDeskAgentId] })
     },
     onError: (err) => toast.error(err.message),
@@ -643,6 +666,12 @@ export function Component() {
   const handleNewSession = useCallback(() => {
     setSelectedSessionId(null)
     setCreatedSession(null)
+    setPendingInitialPrompt(null)
+    setLandingInput("")
+    setLandingImages([])
+  }, [])
+
+  const handleInitialPromptSent = useCallback(() => {
     setPendingInitialPrompt(null)
     setLandingInput("")
     setLandingImages([])
@@ -693,7 +722,8 @@ export function Component() {
             agentName={serviceDeskAgentName}
             initialPrompt={pendingInitialPrompt?.sessionId === activeSession.id ? pendingInitialPrompt.text : undefined}
             initialImages={pendingInitialPrompt?.sessionId === activeSession.id ? pendingInitialPrompt.images : undefined}
-            onInitialPromptSent={clearPendingInitialPrompt}
+            onInitialPromptSent={handleInitialPromptSent}
+            onInitialPromptFailed={clearPendingInitialPrompt}
           />
         </main>
       ) : (

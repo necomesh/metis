@@ -150,7 +150,11 @@ form 节点必须包含 formSchema，描述该节点需要收集的字段：
 - whitelist_window：白名单放行时间窗
 - access_reason：申请原因
 
-该服务的预检和放行动作由智能引擎运行时执行；参考路径 workflow_json 不生成 type="action" 节点，应使用申请人表单、数据库管理员人工处理和结束节点表达路径。
+该服务的预检和放行动作由智能引擎运行时执行；但为了让用户在流程图上看懂完整业务链路，参考路径 workflow_json 也必须表达这两个动作节点。
+如果可用动作列表存在 code='db_backup_whitelist_precheck' 和 code='db_backup_whitelist_apply'，必须生成两个 type="action" 节点，并使用对应的数字 action_id：
+- 申请表单 -> 备份白名单预检 action -> 数据库管理员处理 -> 执行备份白名单放行 action -> 结束
+- 数据库管理员处理 rejected 出边直接指向公共结束节点，不经过放行动作节点。
+运行时仍由智能引擎优先通过 decision.execute_action 同步执行预检和放行动作，不要因为 workflow_json 中有 action 节点就改变为异步动作活动。
 
 ### 高风险变更协同申请（Boss）表单字段
 

@@ -196,13 +196,55 @@ func TestSeedServiceDefinitions_DBBackupUsesNaturalSpecAndPreservesStructuredCon
 	if err := db.Where("service_id = ?", service.ID).Order("code ASC").Find(&actions).Error; err != nil {
 		t.Fatalf("load db backup actions: %v", err)
 	}
-	actionCodes := map[string]bool{}
+	actionIDsByCode := map[string]uint{}
 	for _, action := range actions {
-		actionCodes[action.Code] = true
+		actionIDsByCode[action.Code] = action.ID
 	}
 	for _, code := range []string{"db_backup_whitelist_precheck", "db_backup_whitelist_apply"} {
-		if !actionCodes[code] {
-			t.Fatalf("expected seeded db backup action %q, got %#v", code, actionCodes)
+		if actionIDsByCode[code] == 0 {
+			t.Fatalf("expected seeded db backup action %q, got %#v", code, actionIDsByCode)
+		}
+	}
+
+	var workflow struct {
+		Nodes []struct {
+			ID   string `json:"id"`
+			Type string `json:"type"`
+			Data struct {
+				Label    string `json:"label"`
+				ActionID uint   `json:"action_id"`
+			} `json:"data"`
+		} `json:"nodes"`
+		Edges []struct {
+			Source string `json:"source"`
+			Target string `json:"target"`
+			Data   struct {
+				Outcome string `json:"outcome"`
+			} `json:"data"`
+		} `json:"edges"`
+	}
+	if err := json.Unmarshal([]byte(service.WorkflowJSON), &workflow); err != nil {
+		t.Fatalf("unmarshal db backup workflow json: %v", err)
+	}
+	actionNodeIDs := map[uint]string{}
+	for _, node := range workflow.Nodes {
+		if node.Type == "action" {
+			actionNodeIDs[node.Data.ActionID] = node.ID
+			if node.Data.ActionID == actionIDsByCode["db_backup_whitelist_precheck"] && !strings.Contains(node.Data.Label, "预检") {
+				t.Fatalf("expected precheck action node label to mention precheck, got %q", node.Data.Label)
+			}
+			if node.Data.ActionID == actionIDsByCode["db_backup_whitelist_apply"] && !strings.Contains(node.Data.Label, "放行") {
+				t.Fatalf("expected apply action node label to mention release, got %q", node.Data.Label)
+			}
+		}
+	}
+	applyNodeID := actionNodeIDs[actionIDsByCode["db_backup_whitelist_apply"]]
+	if actionNodeIDs[actionIDsByCode["db_backup_whitelist_precheck"]] == "" || applyNodeID == "" {
+		t.Fatalf("expected workflow action nodes bound to real action ids, got %#v workflow=%s", actionNodeIDs, service.WorkflowJSON)
+	}
+	for _, edge := range workflow.Edges {
+		if edge.Source == "db_process" && edge.Data.Outcome == "rejected" && edge.Target == applyNodeID {
+			t.Fatalf("db backup rejected edge must not pass through apply action: %s", service.WorkflowJSON)
 		}
 	}
 }

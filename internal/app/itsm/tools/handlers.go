@@ -442,6 +442,9 @@ func currentRequestContextHandler(store StateStore) ToolHandler {
 			"draft_form_data":         state.DraftFormData,
 			"draft_version":           state.DraftVersion,
 			"confirmed_draft_version": state.ConfirmedDraftVersion,
+			"missing_fields":          state.MissingFields,
+			"asked_fields":            state.AskedFields,
+			"min_decision_ready":      state.MinDecisionReady,
 			"next_expected_action":    NextExpectedAction(state),
 		}), nil
 	}
@@ -1743,7 +1746,7 @@ func ticketCreateHandler(op ServiceDeskOperator, store StateStore) ToolHandler {
 			}
 		}
 
-		result, err := op.CreateTicket(userID, resolvedServiceID, p.Summary, p.FormData, sid)
+		result, err := op.SubmitConfirmedDraft(userID, resolvedServiceID, p.Summary, p.FormData, sid, state.DraftVersion, state.FieldsHash, requestHash(p.FormData))
 		if err != nil {
 			return nil, fmt.Errorf("create ticket: %w", err)
 		}

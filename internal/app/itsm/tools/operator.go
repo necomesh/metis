@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -256,25 +257,20 @@ func (o *Operator) ValidateParticipants(serviceID uint, formData map[string]any)
 		return &ParticipantValidation{OK: true}, nil
 	}
 
-	def, err := engine.ParseWorkflowDef(json.RawMessage(svc.WorkflowJSON))
+	nodes, err := engine.InitialReachableParticipantNodes(json.RawMessage(svc.WorkflowJSON), formData)
 	if err != nil {
-		return &ParticipantValidation{OK: true}, nil // Can't parse, skip.
+		if errors.Is(err, engine.ErrInitialRouteNoMatch) {
+			return &ParticipantValidation{
+				OK:            false,
+				FailureReason: err.Error(),
+				Guidance:      "请检查申请信息或服务路由配置后再提交",
+			}, nil
+		}
+		return &ParticipantValidation{OK: true}, nil // Can't parse or traverse, skip.
 	}
 
-	for _, node := range def.Nodes {
-		if node.Type != "process" && node.Type != "form" {
-			continue
-		}
-		nd, err := engine.ParseNodeData(node.Data)
-		if err != nil || len(nd.Participants) == 0 {
-			continue
-		}
-		nodeLabel := nd.Label
-		if nodeLabel == "" {
-			nodeLabel = node.ID
-		}
-
-		for _, p := range nd.Participants {
+	for _, node := range nodes {
+		for _, p := range node.Participants {
 			// Skip requester/requester_manager — can't validate before ticket exists
 			if p.Type == "requester" || p.Type == "requester_manager" {
 				continue
@@ -292,12 +288,12 @@ func (o *Operator) ValidateParticipants(serviceID uint, formData map[string]any)
 				return &ParticipantValidation{
 					OK:            false,
 					FailureReason: err.Error(),
-					NodeLabel:     nodeLabel,
+					NodeLabel:     node.Label,
 					Guidance:      "请联系管理员检查参与人配置",
 				}, nil
 			}
 			if len(userIDs) == 0 {
-				reason := fmt.Sprintf("节点[%s]的参与人（%s）无可用人员", nodeLabel, p.Type)
+				reason := fmt.Sprintf("节点[%s]的参与人（%s）无可用人员", node.Label, p.Type)
 				if p.PositionCode != "" {
 					reason = fmt.Sprintf("岗位[%s]", p.PositionCode)
 					if p.DepartmentCode != "" {
@@ -308,7 +304,7 @@ func (o *Operator) ValidateParticipants(serviceID uint, formData map[string]any)
 				return &ParticipantValidation{
 					OK:            false,
 					FailureReason: reason,
-					NodeLabel:     nodeLabel,
+					NodeLabel:     node.Label,
 					Guidance:      "请联系 IT 管理员补充人员配置后再提单",
 				}, nil
 			}

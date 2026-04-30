@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"fmt"
 	"log/slog"
 	. "metis/internal/app/itsm/config"
 	. "metis/internal/app/itsm/domain"
@@ -694,6 +695,8 @@ func seedPolicies(enforcer *casbin.Enforcer) error {
 		// Service Desk
 		{"admin", "/api/v1/itsm/service-desk/sessions/:sid/state", "GET"},
 		{"admin", "/api/v1/itsm/service-desk/sessions/:sid/draft/submit", "POST"},
+		{"user", "/api/v1/itsm/service-desk/sessions/:sid/state", "GET"},
+		{"user", "/api/v1/itsm/service-desk/sessions/:sid/draft/submit", "POST"},
 		// Priorities
 		{"admin", "/api/v1/itsm/priorities", "POST"},
 		{"admin", "/api/v1/itsm/priorities", "GET"},
@@ -713,6 +716,7 @@ func seedPolicies(enforcer *casbin.Enforcer) error {
 		// Tickets
 		{"admin", "/api/v1/itsm/tickets", "GET"},
 		{"admin", "/api/v1/itsm/tickets/mine", "GET"},
+		{"user", "/api/v1/itsm/tickets/mine", "GET"},
 		{"admin", "/api/v1/itsm/tickets/approvals/pending", "GET"},
 		{"admin", "/api/v1/itsm/tickets/approvals/history", "GET"},
 		{"admin", "/api/v1/itsm/tickets/monitor", "GET"},
@@ -736,6 +740,8 @@ func seedPolicies(enforcer *casbin.Enforcer) error {
 	menuPerms := [][]string{
 		{"admin", "itsm", "read"},
 		{"admin", "itsm:service-desk:use", "read"},
+		{"user", "itsm", "read"},
+		{"user", "itsm:service-desk:use", "read"},
 		{"admin", "itsm:catalog:create", "read"},
 		{"admin", "itsm:catalog:update", "read"},
 		{"admin", "itsm:catalog:delete", "read"},
@@ -749,6 +755,7 @@ func seedPolicies(enforcer *casbin.Enforcer) error {
 		{"admin", "itsm:ticket:cancel", "read"},
 		{"admin", "itsm:ticket:override", "read"},
 		{"admin", "itsm:ticket:mine", "read"},
+		{"user", "itsm:ticket:mine", "read"},
 		{"admin", "itsm:ticket:approval:pending", "read"},
 		{"admin", "itsm:ticket:approval:history", "read"},
 		{"admin", "itsm:priority:list", "read"},
@@ -958,6 +965,9 @@ func seedServiceDefinitions(db *gorm.DB) error {
 				}
 			}
 			seedServiceActions(db, s.Code, existing.ID, s.Actions)
+			if s.Code == "db-backup-whitelist-action-flow" {
+				seedDBBackupWhitelistWorkflow(db, existing.ID)
+			}
 			continue
 		}
 
@@ -1000,6 +1010,9 @@ func seedServiceDefinitions(db *gorm.DB) error {
 		slog.Info("seed: created service definition", "code", s.Code, "name", s.Name)
 
 		seedServiceActions(db, s.Code, svc.ID, s.Actions)
+		if s.Code == "db-backup-whitelist-action-flow" {
+			seedDBBackupWhitelistWorkflow(db, svc.ID)
+		}
 	}
 
 	// Backfill: update existing smart services that have no agent
@@ -1057,6 +1070,42 @@ func seedServiceActions(db *gorm.DB, serviceCode string, serviceID uint, actions
 		}
 		slog.Info("seed: created service action", "serviceCode", serviceCode, "actionCode", action.Code)
 	}
+}
+
+func seedDBBackupWhitelistWorkflow(db *gorm.DB, serviceID uint) {
+	var actions []ServiceAction
+	if err := db.Where("service_id = ? AND code IN ? AND is_active = ?", serviceID, []string{
+		"db_backup_whitelist_precheck",
+		"db_backup_whitelist_apply",
+	}, true).Find(&actions).Error; err != nil {
+		slog.Error("seed: failed to load db backup whitelist actions for workflow", "serviceID", serviceID, "error", err)
+		return
+	}
+
+	var precheckActionID, applyActionID uint
+	for _, action := range actions {
+		switch action.Code {
+		case "db_backup_whitelist_precheck":
+			precheckActionID = action.ID
+		case "db_backup_whitelist_apply":
+			applyActionID = action.ID
+		}
+	}
+	if precheckActionID == 0 || applyActionID == 0 {
+		slog.Warn("seed: db backup whitelist workflow skipped because actions are missing", "serviceID", serviceID, "precheckActionID", precheckActionID, "applyActionID", applyActionID)
+		return
+	}
+
+	workflowJSON := dbBackupWhitelistWorkflowJSON(precheckActionID, applyActionID)
+	if err := db.Model(&ServiceDefinition{}).Where("id = ?", serviceID).Update("workflow_json", JSONField(workflowJSON)).Error; err != nil {
+		slog.Error("seed: failed to update db backup whitelist workflow json", "serviceID", serviceID, "error", err)
+		return
+	}
+	slog.Info("seed: updated db backup whitelist workflow json", "serviceID", serviceID)
+}
+
+func dbBackupWhitelistWorkflowJSON(precheckActionID, applyActionID uint) string {
+	return fmt.Sprintf(`{"nodes":[{"id":"start","type":"start","position":{"x":120,"y":120},"data":{"label":"开始","nodeType":"start"}},{"id":"request","type":"form","position":{"x":380,"y":120},"data":{"label":"填写数据库备份白名单临时放行申请","nodeType":"form","participants":[{"type":"requester"}],"formSchema":{"fields":[{"key":"database_name","type":"text","label":"目标数据库"},{"key":"source_ip","type":"text","label":"来源 IP"},{"key":"whitelist_window","type":"text","label":"白名单放行时间窗"},{"key":"access_reason","type":"textarea","label":"申请原因"}]}}},{"id":"db_precheck_action","type":"action","position":{"x":680,"y":120},"data":{"label":"备份白名单预检","nodeType":"action","action_id":%d}},{"id":"db_process","type":"process","position":{"x":980,"y":120},"data":{"label":"数据库管理员处理","nodeType":"process","participants":[{"type":"position_department","department_code":"it","position_code":"db_admin"}]}},{"id":"db_apply_action","type":"action","position":{"x":1280,"y":120},"data":{"label":"执行备份白名单放行","nodeType":"action","action_id":%d}},{"id":"end","type":"end","position":{"x":1580,"y":120},"data":{"label":"结束","nodeType":"end"}}],"edges":[{"id":"edge_start_request","source":"start","target":"request","data":{}},{"id":"edge_request_precheck","source":"request","target":"db_precheck_action","data":{"outcome":"submitted"}},{"id":"edge_precheck_db","source":"db_precheck_action","target":"db_process","data":{"outcome":"success"}},{"id":"edge_db_apply_ok","source":"db_process","target":"db_apply_action","data":{"outcome":"approved"}},{"id":"edge_apply_end","source":"db_apply_action","target":"end","data":{"outcome":"success"}},{"id":"edge_db_end_reject","source":"db_process","target":"end","data":{"outcome":"rejected"}}]}`, precheckActionID, applyActionID)
 }
 
 func legacyActionCodesForCanonical(code string) []string {

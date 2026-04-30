@@ -896,7 +896,10 @@ func (s *WorkflowGenerateService) buildUserMessage(spec string, promptCtx workfl
 
 	if looksLikeDBBackupWhitelistPromptSpec(spec) {
 		sb.WriteString("\n\n## 数据库备份白名单运行时动作约束\n")
-		sb.WriteString("该服务的预检和放行动作由智能引擎运行时执行，参考路径 workflow_json 不生成 type=\"action\" 节点；请用申请人表单、数据库管理员人工处理和结束节点表达路径。\n")
+		sb.WriteString("该服务的预检和放行动作由智能引擎运行时执行；但为了让用户在流程图上看懂完整业务链路，参考路径 workflow_json 也必须表达这两个动作节点。\n")
+		sb.WriteString("如果可用动作列表存在 code=`db_backup_whitelist_precheck` 和 code=`db_backup_whitelist_apply`，必须生成两个 type=\"action\" 节点，并使用对应的数字 action_id：申请表单 -> 备份白名单预检 action -> 数据库管理员处理 -> 执行备份白名单放行 action -> 结束。\n")
+		sb.WriteString("数据库管理员处理 rejected 出边直接指向公共结束节点，不经过放行动作节点。\n")
+		sb.WriteString("运行时仍由智能引擎优先通过 decision.execute_action 同步执行预检和放行动作，不要因为 workflow_json 中有 action 节点就改变为异步动作活动。\n")
 		sb.WriteString("数据库管理员处理节点应使用按需组织上下文中的 position_department 参与人配置。\n")
 	}
 
@@ -930,7 +933,8 @@ func (s *WorkflowGenerateService) buildUserMessage(spec string, promptCtx workfl
 		if validationErrorsRequireActionRepair(prevErrors) {
 			sb.WriteString("\n## 动作节点修正要求\n\n")
 			sb.WriteString("- 只有协作规范明确要求在参考路径 workflow_json 里编排系统动作，且“可用动作列表”给出了动作 id 时，才允许生成 type=\"action\" 节点。\n")
-			sb.WriteString("- 如果没有可用动作 id，或动作应由智能体运行时通过工具调用完成，不要生成 action 节点；请改用 process/notify/end 表达参考路径。\n")
+			sb.WriteString("- 如果没有可用动作 id，或动作应由智能体运行时通过工具调用完成且没有可视化要求，不要生成 action 节点；请改用 process/notify/end 表达参考路径。\n")
+			sb.WriteString("- 例外：生产数据库备份白名单临时放行需要在流程图上可视化预检和放行动作；如果可用动作列表提供了对应动作 id，应保留两个 action 节点并修正 action_id。\n")
 			sb.WriteString("- 保留人工处理语义：人工处理、并行处理、部门岗位处理必须使用 type=\"process\"，不能写成 action。\n")
 		}
 		if validationErrorsRequireRejectedEdgeRepair(prevErrors) {

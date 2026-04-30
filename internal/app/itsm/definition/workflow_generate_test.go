@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"metis/internal/app/itsm/engine"
+	"metis/internal/database"
 	"metis/internal/llm"
 	"metis/internal/model"
 )
@@ -89,8 +90,8 @@ func validServerAccessWorkflowJSONForGenerateTest() string {
 	return `{"nodes":[{"id":"start","type":"start","data":{"label":"开始"}},{"id":"request","type":"form","data":{"label":"填写服务器临时访问申请","participants":[{"type":"requester"}],"formSchema":{"fields":[{"key":"target_servers","type":"textarea","label":"访问服务器"},{"key":"access_window","type":"date_range","label":"访问时段"},{"key":"operation_purpose","type":"textarea","label":"操作目的"},{"key":"access_reason","type":"textarea","label":"访问原因"}]}}},{"id":"route","type":"exclusive","data":{"label":"访问原因路由"}},{"id":"ops_process","type":"process","data":{"label":"运维管理员处理","participants":[{"type":"position_department","department_code":"it","position_code":"ops_admin"}]}},{"id":"network_process","type":"process","data":{"label":"网络管理员处理","participants":[{"type":"position_department","department_code":"it","position_code":"network_admin"}]}},{"id":"security_process","type":"process","data":{"label":"信息安全管理员处理","participants":[{"type":"position_department","department_code":"it","position_code":"security_admin"}]}},{"id":"end","type":"end","data":{"label":"结束"}}],"edges":[{"id":"edge_start_request","source":"start","target":"request","data":{}},{"id":"edge_request_route","source":"request","target":"route","data":{"outcome":"submitted"}},{"id":"edge_route_ops","source":"route","target":"ops_process","data":{"condition":{"field":"form.access_reason","operator":"contains_any","value":["应用发布","进程排障","日志排查","磁盘清理","主机巡检","生产运维操作"]}}},{"id":"edge_route_network","source":"route","target":"network_process","data":{"condition":{"field":"form.access_reason","operator":"contains_any","value":["网络抓包","连通性诊断","ACL调整","负载均衡变更","防火墙策略调整"]}}},{"id":"edge_route_security","source":"route","target":"security_process","data":{"condition":{"field":"form.access_reason","operator":"contains_any","value":["安全审计","入侵排查","漏洞修复验证","取证分析","合规检查"]}}},{"id":"edge_route_default","source":"route","target":"security_process","data":{"default":true}},{"id":"edge_ops_end_ok","source":"ops_process","target":"end","data":{"outcome":"approved"}},{"id":"edge_ops_end_reject","source":"ops_process","target":"end","data":{"outcome":"rejected"}},{"id":"edge_network_end_ok","source":"network_process","target":"end","data":{"outcome":"approved"}},{"id":"edge_network_end_reject","source":"network_process","target":"end","data":{"outcome":"rejected"}},{"id":"edge_security_end_ok","source":"security_process","target":"end","data":{"outcome":"approved"}},{"id":"edge_security_end_reject","source":"security_process","target":"end","data":{"outcome":"rejected"}}]}`
 }
 
-func validDBBackupWorkflowJSONForGenerateTest() string {
-	return `{"nodes":[{"id":"start","type":"start","data":{"label":"开始"}},{"id":"request","type":"form","data":{"label":"填写数据库备份白名单临时放行申请","participants":[{"type":"requester"}],"formSchema":{"fields":[{"key":"database_name","type":"text","label":"目标数据库"},{"key":"source_ip","type":"text","label":"来源 IP"},{"key":"whitelist_window","type":"text","label":"白名单放行时间窗"},{"key":"access_reason","type":"textarea","label":"申请原因"}]}}},{"id":"db_process","type":"process","data":{"label":"数据库管理员处理","participants":[{"type":"position_department","department_code":"it","position_code":"db_admin"}]}},{"id":"end","type":"end","data":{"label":"结束"}}],"edges":[{"id":"edge_start_request","source":"start","target":"request","data":{}},{"id":"edge_request_db","source":"request","target":"db_process","data":{"outcome":"submitted"}},{"id":"edge_db_end_ok","source":"db_process","target":"end","data":{"outcome":"approved"}},{"id":"edge_db_end_reject","source":"db_process","target":"end","data":{"outcome":"rejected"}}]}`
+func validDBBackupWorkflowJSONForGenerateTest(precheckActionID, applyActionID uint) string {
+	return fmt.Sprintf(`{"nodes":[{"id":"start","type":"start","data":{"label":"开始"}},{"id":"request","type":"form","data":{"label":"填写数据库备份白名单临时放行申请","participants":[{"type":"requester"}],"formSchema":{"fields":[{"key":"database_name","type":"text","label":"目标数据库"},{"key":"source_ip","type":"text","label":"来源 IP"},{"key":"whitelist_window","type":"text","label":"白名单放行时间窗"},{"key":"access_reason","type":"textarea","label":"申请原因"}]}}},{"id":"db_precheck_action","type":"action","data":{"label":"备份白名单预检","action_id":%d}},{"id":"db_process","type":"process","data":{"label":"数据库管理员处理","participants":[{"type":"position_department","department_code":"it","position_code":"db_admin"}]}},{"id":"db_apply_action","type":"action","data":{"label":"执行备份白名单放行","action_id":%d}},{"id":"end","type":"end","data":{"label":"结束"}}],"edges":[{"id":"edge_start_request","source":"start","target":"request","data":{}},{"id":"edge_request_precheck","source":"request","target":"db_precheck_action","data":{"outcome":"submitted"}},{"id":"edge_precheck_db","source":"db_precheck_action","target":"db_process","data":{"outcome":"success"}},{"id":"edge_db_apply_ok","source":"db_process","target":"db_apply_action","data":{"outcome":"approved"}},{"id":"edge_apply_end","source":"db_apply_action","target":"end","data":{"outcome":"success"}},{"id":"edge_db_end_reject","source":"db_process","target":"end","data":{"outcome":"rejected"}}]}`, precheckActionID, applyActionID)
 }
 
 func validBossWorkflowJSONForGenerateTest() string {
@@ -1088,6 +1089,28 @@ func TestGenerate_WithServiceIDUsesOrgToolPreflightForDBBackupContext(t *testing
 	if err := db.Create(&service).Error; err != nil {
 		t.Fatalf("create db backup service: %v", err)
 	}
+	precheckAction := ServiceAction{
+		Name:        "备份白名单预检",
+		Code:        "db_backup_whitelist_precheck",
+		Description: "校验数据库、来源 IP、放行窗口和申请原因满足放行前置条件",
+		ActionType:  "http",
+		ServiceID:   service.ID,
+		IsActive:    true,
+	}
+	if err := db.Create(&precheckAction).Error; err != nil {
+		t.Fatalf("create precheck action: %v", err)
+	}
+	applyAction := ServiceAction{
+		Name:        "执行备份白名单放行",
+		Code:        "db_backup_whitelist_apply",
+		Description: "数据库管理员处理完成后执行备份白名单放行",
+		ActionType:  "http",
+		ServiceID:   service.ID,
+		IsActive:    true,
+	}
+	if err := db.Create(&applyAction).Error; err != nil {
+		t.Fatalf("create apply action: %v", err)
+	}
 
 	client := &fakeWorkflowLLMClient{
 		responses: []llm.ChatResponse{
@@ -1095,11 +1118,12 @@ func TestGenerate_WithServiceIDUsesOrgToolPreflightForDBBackupContext(t *testing
 				{ID: "call_db", Name: "workflow.org_resolve_participant", Arguments: `{"department_hint":"信息部","position_hint":"数据库管理员","limit":10}`},
 			}},
 			{Content: "组织上下文已收集"},
-			{Content: validDBBackupWorkflowJSONForGenerateTest()},
+			{Content: validDBBackupWorkflowJSONForGenerateTest(precheckAction.ID, applyAction.ID)},
 		},
 	}
 	svc := newWorkflowGenerateServiceForRetryTest(client, 0)
 	svc.serviceDefSvc = newServiceDefServiceForTest(t, db)
+	svc.actionRepo = &ServiceActionRepo{db: &database.DB{DB: db}}
 	svc.orgStructureResolver = dbBackupWorkflowGenerateOrgStructureResolver{}
 
 	naturalSpec := `员工在 IT 服务台申请生产数据库备份白名单临时放行时，服务台需要确认目标数据库、发起备份访问的来源 IP、白名单放行时间窗，以及这次临时放行的申请原因。
@@ -1125,20 +1149,53 @@ func TestGenerate_WithServiceIDUsesOrgToolPreflightForDBBackupContext(t *testing
 		"it",
 		"数据库管理员",
 		"db_admin",
-		"workflow_json 不生成 type=\"action\"",
+		"必须生成两个 type=\"action\" 节点",
+		"db_backup_whitelist_precheck",
+		"db_backup_whitelist_apply",
+		fmt.Sprintf("id: `%d`", precheckAction.ID),
+		fmt.Sprintf("id: `%d`", applyAction.ID),
+		"decision.execute_action",
 	} {
 		if !strings.Contains(userPrompt, snippet) {
 			t.Fatalf("expected generated prompt to contain %q, got %s", snippet, userPrompt)
 		}
 	}
+	if strings.Contains(userPrompt, "workflow_json 不生成 type=\"action\"") {
+		t.Fatalf("db backup prompt still forbids action nodes: %s", userPrompt)
+	}
 	workflowText := string(resp.WorkflowJSON)
-	for _, snippet := range []string{"database_name", "source_ip", "whitelist_window", "access_reason", "db_admin"} {
+	for _, snippet := range []string{
+		"database_name",
+		"source_ip",
+		"whitelist_window",
+		"access_reason",
+		"db_admin",
+		`"type":"action"`,
+		"db_precheck_action",
+		"db_apply_action",
+		fmt.Sprintf(`"action_id":%d`, precheckAction.ID),
+		fmt.Sprintf(`"action_id":%d`, applyAction.ID),
+	} {
 		if !strings.Contains(workflowText, snippet) {
 			t.Fatalf("expected generated workflow to contain %q, got %s", snippet, workflowText)
 		}
 	}
-	if strings.Contains(workflowText, `"type":"action"`) {
-		t.Fatalf("db backup reference workflow must not contain action nodes, got %s", workflowText)
+	var generated struct {
+		Edges []struct {
+			Source string `json:"source"`
+			Target string `json:"target"`
+			Data   struct {
+				Outcome string `json:"outcome"`
+			} `json:"data"`
+		} `json:"edges"`
+	}
+	if err := json.Unmarshal(resp.WorkflowJSON, &generated); err != nil {
+		t.Fatalf("unmarshal generated workflow: %v", err)
+	}
+	for _, edge := range generated.Edges {
+		if edge.Source == "db_process" && edge.Data.Outcome == "rejected" && edge.Target == "db_apply_action" {
+			t.Fatalf("rejected edge must not pass through apply action: %s", workflowText)
+		}
 	}
 }
 
