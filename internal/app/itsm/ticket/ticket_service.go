@@ -45,7 +45,7 @@ var (
 
 const (
 	defaultAgentPriorityCode = "P3"
-	recoveryDedupWindow     = 15 * time.Second
+	recoveryDedupWindow      = 15 * time.Second
 )
 
 type TicketService struct {

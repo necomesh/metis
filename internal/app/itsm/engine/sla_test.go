@@ -266,9 +266,22 @@ func TestEscalationNotifySendsResolvedUsers(t *testing.T) {
 
 func TestEscalationReassignTakesFirstResolvedUser(t *testing.T) {
 	db := setupSLAAssuranceTestDB(t)
-	ticket := &ticketModel{ID: 1, Code: "T-1", Title: "VPN 申请", Status: "in_progress", SLAStatus: slaBreachedResponse}
+	if err := db.AutoMigrate(&activityModel{}, &assignmentModel{}); err != nil {
+		t.Fatalf("migrate activity assignment models: %v", err)
+	}
+	activityID := uint(88)
+	currentUser := uint(19)
+	ticket := &ticketModel{ID: 1, Code: "T-1", Title: "VPN 申请", Status: "in_progress", CurrentActivityID: &activityID, SLAStatus: slaBreachedResponse}
 	if err := db.Create(ticket).Error; err != nil {
 		t.Fatalf("create ticket: %v", err)
+	}
+	activity := activityModel{ID: activityID, TicketID: ticket.ID, ActivityType: NodeProcess, Status: ActivityPending}
+	if err := db.Create(&activity).Error; err != nil {
+		t.Fatalf("create activity: %v", err)
+	}
+	assignment := assignmentModel{TicketID: ticket.ID, ActivityID: activity.ID, ParticipantType: "user", UserID: &currentUser, AssigneeID: &currentUser, Status: ActivityPending, IsCurrent: true}
+	if err := db.Create(&assignment).Error; err != nil {
+		t.Fatalf("create assignment: %v", err)
 	}
 	rule := &escalationRuleModel{
 		ID:           8,

@@ -24,11 +24,11 @@ import (
 )
 
 var (
-	ErrServiceDefNotFound    = errors.New("service definition not found")
-	ErrServiceCodeExists     = errors.New("service code already exists")
-	ErrWorkflowValidation    = errors.New("workflow validation failed")
-	ErrServiceEngineMismatch = errors.New("service engine field mismatch")
-	ErrAgentNotAvailable     = errors.New("agent not available")
+	ErrServiceDefNotFound     = errors.New("service definition not found")
+	ErrServiceCodeExists      = errors.New("service code already exists")
+	ErrWorkflowValidation     = errors.New("workflow validation failed")
+	ErrServiceEngineMismatch  = errors.New("service engine field mismatch")
+	ErrAgentNotAvailable      = errors.New("agent not available")
 	ErrSLATemplateUnavailable = errors.New("SLA template not available")
 )
 
