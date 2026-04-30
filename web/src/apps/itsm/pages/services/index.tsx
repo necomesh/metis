@@ -23,11 +23,12 @@ import {
   Form, FormControl, FormField, FormItem, FormLabel, FormMessage,
 } from "@/components/ui/form"
 import {
-  type CatalogItem, type ServiceDefItem,
-  fetchCatalogTree, fetchServiceDefs, createServiceDef, deleteServiceDef,
+  fetchCatalogTree, fetchCatalogServiceCounts, fetchServiceDefs, createServiceDef, deleteServiceDef,
 } from "../../api"
 import { CatalogNavPanel } from "../../components/catalog-nav-panel"
 import { ServiceCard } from "../../components/service-card"
+import { itsmQueryKeys } from "../../query-keys"
+import { getCatalogSelection, getCreateServiceCatalogDefault } from "./service-catalog-state"
 
 // ─── Create Schema ─────────────────────────────────────
 
@@ -46,37 +47,6 @@ type CreateFormValues = z.infer<ReturnType<typeof useCreateSchema>>
 
 // ─── Helpers ───────────────────────────────────────────
 
-/** Build child→root mapping from catalog tree */
-function buildChildToRootMap(catalogs: CatalogItem[]) {
-  const map = new Map<number, number>()
-  for (const root of catalogs) {
-    if (!root.parentId && root.children) {
-      for (const child of root.children) {
-        map.set(child.id, root.id)
-      }
-    }
-  }
-  return map
-}
-
-/** Group services by root catalog */
-function groupByRoot(
-  services: ServiceDefItem[],
-  childToRoot: Map<number, number>,
-  roots: CatalogItem[],
-) {
-  const groups = new Map<number, ServiceDefItem[]>()
-  for (const root of roots) groups.set(root.id, [])
-  for (const svc of services) {
-    const rootId = childToRoot.get(svc.catalogId)
-    if (rootId !== undefined) {
-      const arr = groups.get(rootId)
-      if (arr) arr.push(svc)
-    }
-  }
-  return groups
-}
-
 // ─── Component ─────────────────────────────────────────
 
 export function Component() {
@@ -85,6 +55,7 @@ export function Component() {
   const queryClient = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const [createOpen, setCreateOpen] = useState(false)
+  const [page, setPage] = useState(1)
   const createSchema = useCreateSchema()
 
   const canCreateService = usePermission("itsm:service:create")
@@ -99,6 +70,7 @@ export function Component() {
   const selectedCatalogId = catalogParam ? Number(catalogParam) : null
 
   function handleSelectCatalog(id: number | null) {
+    setPage(1)
     if (id === null) {
       setSearchParams({})
     } else {
@@ -109,37 +81,53 @@ export function Component() {
   // ── Data fetching ────────────────────────────────────
 
   const { data: catalogs = [] } = useQuery({
-    queryKey: ["itsm-catalogs"],
+    queryKey: itsmQueryKeys.catalogs.tree(),
     queryFn: () => fetchCatalogTree(),
   })
 
+  const { data: serviceCounts } = useQuery({
+    queryKey: itsmQueryKeys.catalogs.serviceCounts(),
+    queryFn: () => fetchCatalogServiceCounts(),
+  })
+
+  const serviceListParams = useMemo(() => ({
+    ...getCatalogSelection(catalogs, selectedCatalogId),
+    page,
+    pageSize: 24,
+  }), [catalogs, page, selectedCatalogId])
+
   const { data: servicesData, isLoading: servicesLoading } = useQuery({
-    queryKey: ["itsm-services-all"],
-    queryFn: () => fetchServiceDefs({ pageSize: 100 }),
+    queryKey: itsmQueryKeys.services.list(serviceListParams),
+    queryFn: () => fetchServiceDefs(serviceListParams),
   })
 
   const allServices = useMemo(() => servicesData?.items ?? [], [servicesData])
+  const totalServices = servicesData?.total ?? 0
+  const totalPages = Math.max(1, Math.ceil(totalServices / serviceListParams.pageSize))
 
   // ── Derived data ─────────────────────────────────────
 
   const roots = useMemo(() => catalogs.filter((n) => !n.parentId), [catalogs])
-  const childToRoot = useMemo(() => buildChildToRootMap(catalogs), [catalogs])
-
-  const filteredServices = useMemo(() => {
-    if (selectedCatalogId === null) return allServices
-    return allServices.filter((s) => s.catalogId === selectedCatalogId)
-  }, [allServices, selectedCatalogId])
-
-  const groupedServices = useMemo(
-    () => groupByRoot(allServices, childToRoot, roots),
-    [allServices, childToRoot, roots],
-  )
+  const catalogNames = useMemo(() => {
+    const names = new Map<number, string>()
+    for (const root of catalogs) {
+      names.set(root.id, root.name)
+      for (const child of root.children ?? []) {
+        names.set(child.id, `${root.name} / ${child.name}`)
+      }
+    }
+    return names
+  }, [catalogs])
 
   // ── Delete service ───────────────────────────────────
 
   const deleteMut = useMutation({
     mutationFn: (id: number) => deleteServiceDef(id),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["itsm-services-all"] }); toast.success(t("itsm:services.deleteSuccess")) },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: itsmQueryKeys.services.lists() })
+      queryClient.invalidateQueries({ queryKey: itsmQueryKeys.catalogs.serviceCounts() })
+      toast.success(t("itsm:services.deleteSuccess"))
+    },
     onError: (err) => toast.error(err.message),
   })
 
@@ -155,11 +143,11 @@ export function Component() {
     if (createOpen) {
       createForm.reset({
         name: "", code: "",
-        catalogId: selectedCatalogId ?? 0,
+        catalogId: getCreateServiceCatalogDefault(catalogs, selectedCatalogId),
         engineType: "smart", description: "",
       })
     }
-  }, [createOpen, selectedCatalogId, createForm])
+  }, [catalogs, createOpen, selectedCatalogId, createForm])
 
   const createMut = useMutation({
     mutationFn: (v: CreateFormValues) => createServiceDef({
@@ -168,7 +156,8 @@ export function Component() {
     onSuccess: (data) => {
       toast.success(t("itsm:services.createSuccess"))
       setCreateOpen(false)
-      queryClient.invalidateQueries({ queryKey: ["itsm-services-all"] })
+      queryClient.invalidateQueries({ queryKey: itsmQueryKeys.services.lists() })
+      queryClient.invalidateQueries({ queryKey: itsmQueryKeys.catalogs.serviceCounts() })
       navigate(`/itsm/services/${data.id}`)
     },
     onError: (err) => toast.error(err.message),
@@ -190,10 +179,10 @@ export function Component() {
       </div>
 
       <div className="flex min-h-0 flex-1 gap-4">
-        <CatalogNavPanel
-          catalogs={catalogs}
-          services={allServices}
-          selectedCatalogId={selectedCatalogId}
+          <CatalogNavPanel
+            catalogs={catalogs}
+            serviceCounts={serviceCounts}
+            selectedCatalogId={selectedCatalogId}
           onSelect={handleSelectCatalog}
           canCreate={canCreateCatalog}
           canUpdate={canUpdateCatalog}
@@ -205,74 +194,51 @@ export function Component() {
             <div className="workspace-surface flex h-48 items-center justify-center rounded-[1.25rem]">
               <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary/70" />
             </div>
-          ) : selectedCatalogId === null ? (
-            roots.length === 0 ? (
-              <EmptyState
-                icon={Cog}
-                title={t("itsm:services.empty")}
-                description={canCreateService ? t("itsm:services.emptyHint") : undefined}
-                action={canCreateService ? () => setCreateOpen(true) : undefined}
-                actionLabel={t("itsm:services.create")}
-              />
-            ) : (
-              <div className="space-y-6">
-                {roots.map((root) => {
-                  const group = groupedServices.get(root.id) ?? []
-                  if (group.length === 0) return null
-                  return (
-                    <div key={root.id}>
-                      <div className="mb-3 flex items-center gap-3 border-b border-border/45 pb-2">
-                        <h3 className="text-sm font-semibold text-foreground/82">{root.name}</h3>
-                        <span className="text-xs text-muted-foreground">{group.length}</span>
-                      </div>
-                      <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4">
-                        {group.map((svc) => (
-                          <ServiceCard
-                            key={svc.id}
-                            service={svc}
-                            canUpdate={canUpdateService}
-                            canDelete={canDeleteService}
-                            onDelete={(id) => deleteMut.mutate(id)}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  )
-                })}
-                {allServices.length === 0 && (
-                  <EmptyState
-                    icon={Cog}
-                    title={t("itsm:services.empty")}
-                    description={canCreateService ? t("itsm:services.emptyHint") : undefined}
-                    action={canCreateService ? () => setCreateOpen(true) : undefined}
-                    actionLabel={t("itsm:services.create")}
-                  />
-                )}
-              </div>
-            )
+          ) : roots.length === 0 ? (
+            <EmptyState
+              icon={Cog}
+              title={t("itsm:services.empty")}
+              description={canCreateService ? t("itsm:services.emptyHint") : undefined}
+              action={canCreateService ? () => setCreateOpen(true) : undefined}
+              actionLabel={t("itsm:services.create")}
+            />
+          ) : allServices.length === 0 ? (
+            <EmptyState
+              icon={Cog}
+              title={selectedCatalogId === null ? t("itsm:services.empty") : t("itsm:services.emptyInCatalog")}
+              description={canCreateService ? selectedCatalogId === null ? t("itsm:services.emptyHint") : t("itsm:services.emptyInCatalogHint") : undefined}
+              action={canCreateService ? () => setCreateOpen(true) : undefined}
+              actionLabel={selectedCatalogId === null ? t("itsm:services.create") : t("itsm:services.addService")}
+            />
           ) : (
-            /* Filtered view: flat grid */
-            filteredServices.length === 0 ? (
-              <EmptyState
-                icon={Cog}
-                title={t("itsm:services.emptyInCatalog")}
-                description={canCreateService ? t("itsm:services.emptyInCatalogHint") : undefined}
-                action={canCreateService ? () => setCreateOpen(true) : undefined}
-                actionLabel={t("itsm:services.addService")}
-              />
-            ) : (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3 border-b border-border/45 pb-2 text-xs text-muted-foreground">
+                <span>{t("itsm:services.listCount", { count: totalServices })}</span>
+                <span>{page} / {totalPages}</span>
+              </div>
               <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4">
-                {filteredServices.map((svc) => (
+                {allServices.map((svc) => (
                   <ServiceCard
                     key={svc.id}
                     service={svc}
+                    catalogName={catalogNames.get(svc.catalogId)}
                     canUpdate={canUpdateService}
                     canDelete={canDeleteService}
                     onDelete={(id) => deleteMut.mutate(id)}
                   />
                 ))}
               </div>
-            )
+              {totalPages > 1 && (
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((v) => Math.max(1, v - 1))}>
+                    {t("common:previous")}
+                  </Button>
+                  <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((v) => Math.min(totalPages, v + 1))}>
+                    {t("common:next")}
+                  </Button>
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>

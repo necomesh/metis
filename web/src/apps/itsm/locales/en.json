@@ -168,7 +168,8 @@
     "addService": "Add Service",
     "guideCardHint": "Add Service",
     "emptyInCatalog": "No services in this category",
-    "emptyInCatalogHint": "Click \"Add Service\" to create one"
+    "emptyInCatalogHint": "Click \"Add Service\" to create one",
+    "listCount": "{{count}} services"
   },
   "intakeForm": {
     "title": "Intake Form",

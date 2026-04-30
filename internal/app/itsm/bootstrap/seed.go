@@ -667,6 +667,7 @@ func seedPolicies(enforcer *casbin.Enforcer) error {
 		// Catalogs
 		{"admin", "/api/v1/itsm/catalogs", "POST"},
 		{"admin", "/api/v1/itsm/catalogs/tree", "GET"},
+		{"admin", "/api/v1/itsm/catalogs/service-counts", "GET"},
 		{"admin", "/api/v1/itsm/catalogs/:id", "PUT"},
 		{"admin", "/api/v1/itsm/catalogs/:id", "DELETE"},
 		// Services

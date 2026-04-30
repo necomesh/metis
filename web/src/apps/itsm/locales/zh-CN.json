@@ -168,7 +168,8 @@
     "addService": "添加服务",
     "guideCardHint": "添加服务",
     "emptyInCatalog": "该分类下暂无服务",
-    "emptyInCatalogHint": "点击「添加服务」创建第一个服务"
+    "emptyInCatalogHint": "点击「添加服务」创建第一个服务",
+    "listCount": "{{count}} 个服务"
   },
   "intakeForm": {
     "title": "进件表单",

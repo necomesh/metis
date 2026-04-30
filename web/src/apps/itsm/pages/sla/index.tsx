@@ -50,6 +50,7 @@ import {
   fetchEscalationRules, createEscalationRule, updateEscalationRule, deleteEscalationRule,
   fetchNotificationChannels, fetchPriorities,
 } from "../../api"
+import { itsmQueryKeys } from "../../query-keys"
 
 function useSLASchema() {
   const { t } = useTranslation("itsm")
@@ -514,7 +515,7 @@ export function Component() {
   const canDelete = usePermission("itsm:sla:delete")
 
   const { data: items = [], isLoading } = useQuery({
-    queryKey: ["itsm-sla"],
+    queryKey: itsmQueryKeys.sla.all,
     queryFn: () => fetchSLATemplates(),
   })
 
@@ -541,19 +542,19 @@ export function Component() {
 
   const createMut = useMutation({
     mutationFn: (v: SLAFormValues) => createSLATemplate({ ...v, description: v.description ?? "" }),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["itsm-sla"] }); setFormOpen(false); toast.success(t("itsm:sla.createSuccess")) },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: itsmQueryKeys.sla.all }); setFormOpen(false); toast.success(t("itsm:sla.createSuccess")) },
     onError: (err) => toast.error(err.message),
   })
 
   const updateMut = useMutation({
     mutationFn: (v: SLAFormValues) => updateSLATemplate(editing!.id, { ...v, description: v.description ?? "" }),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["itsm-sla"] }); setFormOpen(false); toast.success(t("itsm:sla.updateSuccess")) },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: itsmQueryKeys.sla.all }); setFormOpen(false); toast.success(t("itsm:sla.updateSuccess")) },
     onError: (err) => toast.error(err.message),
   })
 
   const deleteMut = useMutation({
     mutationFn: (id: number) => deleteSLATemplate(id),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["itsm-sla"] }); toast.success(t("itsm:sla.deleteSuccess")) },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: itsmQueryKeys.sla.all }); toast.success(t("itsm:sla.deleteSuccess")) },
     onError: (err) => toast.error(err.message),
   })
 

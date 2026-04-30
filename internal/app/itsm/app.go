@@ -294,6 +294,7 @@ func (a *ITSMApp) Routes(api *gin.RouterGroup) {
 		// Service Catalogs
 		g.POST("/catalogs", catalogH.Create)
 		g.GET("/catalogs/tree", catalogH.Tree)
+		g.GET("/catalogs/service-counts", catalogH.ServiceCounts)
 		g.PUT("/catalogs/:id", catalogH.Update)
 		g.DELETE("/catalogs/:id", catalogH.Delete)
 

@@ -35,12 +35,13 @@ function relativeTime(dateStr: string) {
 
 interface ServiceCardProps {
   service: ServiceDefItem
+  catalogName?: string
   canUpdate: boolean
   canDelete: boolean
   onDelete: (id: number) => void
 }
 
-export function ServiceCard({ service, canUpdate, canDelete, onDelete }: ServiceCardProps) {
+export function ServiceCard({ service, catalogName, canUpdate, canDelete, onDelete }: ServiceCardProps) {
   const { t } = useTranslation("itsm")
   const navigate = useNavigate()
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -65,6 +66,12 @@ export function ServiceCard({ service, canUpdate, canDelete, onDelete }: Service
             <p className="truncate text-[15px] font-semibold leading-5 tracking-[-0.01em]">{service.name}</p>
             <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
               <span className="truncate font-mono">{service.code}</span>
+              {catalogName && (
+                <>
+                  <span className="text-muted-foreground/45">/</span>
+                  <span className="truncate">{catalogName}</span>
+                </>
+              )}
             </div>
           </div>
           {(canUpdate || canDelete) && (

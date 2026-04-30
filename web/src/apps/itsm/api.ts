@@ -20,6 +20,20 @@ export function fetchCatalogTree() {
   return api.get<CatalogItem[]>("/api/v1/itsm/catalogs/tree").then((r) => r ?? [])
 }
 
+export interface CatalogServiceCounts {
+  total: number
+  byCatalogId: Record<number, number>
+  byRootCatalogId: Record<number, number>
+}
+
+export function fetchCatalogServiceCounts() {
+  return api.get<CatalogServiceCounts>("/api/v1/itsm/catalogs/service-counts").then((r) => r ?? {
+    total: 0,
+    byCatalogId: {},
+    byRootCatalogId: {},
+  })
+}
+
 export function createCatalog(data: {
   name: string
   code: string
@@ -81,6 +95,7 @@ export interface SmartAgentConfig {
 export interface ServiceDefListParams {
   keyword?: string
   catalogId?: number
+  rootCatalogId?: number
   isActive?: boolean
   page?: number
   pageSize?: number
@@ -89,7 +104,8 @@ export interface ServiceDefListParams {
 export function fetchServiceDefs(params: ServiceDefListParams) {
   const p = new URLSearchParams()
   if (params.keyword) p.set("keyword", params.keyword)
-  if (params.catalogId) p.set("catalogId", String(params.catalogId))
+  if (params.catalogId !== undefined) p.set("catalogId", String(params.catalogId))
+  if (params.rootCatalogId !== undefined) p.set("rootCatalogId", String(params.rootCatalogId))
   if (params.isActive !== undefined) p.set("isActive", String(params.isActive))
   p.set("page", String(params.page ?? 1))
   p.set("pageSize", String(params.pageSize ?? 20))

@@ -200,20 +200,20 @@ func (h *ServiceDefHandler) HealthCheck(c *gin.Context) {
 }
 
 type UpdateServiceDefRequest struct {
-	Name              *string    `json:"name" binding:"omitempty,max=128"`
-	Code              *string    `json:"code" binding:"omitempty,max=64"`
-	Description       *string    `json:"description" binding:"omitempty,max=1024"`
-	CatalogID         *uint      `json:"catalogId"`
-	EngineType        *string    `json:"engineType" binding:"omitempty,oneof=classic smart"`
+	Name              *string          `json:"name" binding:"omitempty,max=128"`
+	Code              *string          `json:"code" binding:"omitempty,max=64"`
+	Description       *string          `json:"description" binding:"omitempty,max=1024"`
+	CatalogID         *uint            `json:"catalogId"`
+	EngineType        *string          `json:"engineType" binding:"omitempty,oneof=classic smart"`
 	SLAID             optionalUintJSON `json:"slaId"`
-	IntakeFormSchema  *JSONField `json:"intakeFormSchema"`
-	WorkflowJSON      *JSONField `json:"workflowJson"`
-	CollaborationSpec *string    `json:"collaborationSpec"`
-	AgentID           *uint      `json:"agentId"`
-	AgentConfig       *JSONField `json:"agentConfig"`
-	KnowledgeBaseIDs  *JSONField `json:"knowledgeBaseIds"`
-	IsActive          *bool      `json:"isActive"`
-	SortOrder         *int       `json:"sortOrder"`
+	IntakeFormSchema  *JSONField       `json:"intakeFormSchema"`
+	WorkflowJSON      *JSONField       `json:"workflowJson"`
+	CollaborationSpec *string          `json:"collaborationSpec"`
+	AgentID           *uint            `json:"agentId"`
+	AgentConfig       *JSONField       `json:"agentConfig"`
+	KnowledgeBaseIDs  *JSONField       `json:"knowledgeBaseIds"`
+	IsActive          *bool            `json:"isActive"`
+	SortOrder         *int             `json:"sortOrder"`
 }
 
 func (h *ServiceDefHandler) Update(c *gin.Context) {
