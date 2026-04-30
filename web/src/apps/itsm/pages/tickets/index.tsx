@@ -518,10 +518,22 @@ function MonitorTicketSheet({
   const canCancel = usePermission("itsm:ticket:cancel")
   const canOverride = usePermission("itsm:ticket:override")
   const currentUserId = useAuthStore((s) => s.user?.id ?? 0)
-  const [assigneeId, setAssigneeId] = useState("")
-  const [opinion, setOpinion] = useState("")
-  const [cancelReason, setCancelReason] = useState("")
   const ticketId = monitorItem?.id ?? null
+  const [actionDraft, setActionDraft] = useState({
+    ticketId: null as number | null,
+    assigneeId: "",
+    opinion: "",
+    cancelReason: "",
+  })
+  const scopedDraft = actionDraft.ticketId === ticketId
+    ? actionDraft
+    : { ticketId, assigneeId: "", opinion: "", cancelReason: "" }
+  const updateDraft = (patch: Partial<Omit<typeof actionDraft, "ticketId">>) => {
+    setActionDraft({ ...scopedDraft, ...patch, ticketId })
+  }
+  const resetDraft = () => {
+    setActionDraft({ ticketId: null, assigneeId: "", opinion: "", cancelReason: "" })
+  }
 
   const enabled = open && ticketId != null
   const { data: ticket } = useQuery({
@@ -545,12 +557,6 @@ function MonitorTicketSheet({
     enabled,
   })
 
-  useEffect(() => {
-    setAssigneeId("")
-    setOpinion("")
-    setCancelReason("")
-  }, [open, ticketId])
-
   const actionContext = buildTicketActionContext({
     ticket,
     activities,
@@ -573,10 +579,10 @@ function MonitorTicketSheet({
   }
 
   const assignMut = useMutation({
-    mutationFn: () => assignTicket(ticketId!, Number(assigneeId)),
+    mutationFn: () => assignTicket(ticketId!, Number(scopedDraft.assigneeId)),
     onSuccess: () => {
       toast.success(t("itsm:tickets.assignSuccess"))
-      setAssigneeId("")
+      updateDraft({ assigneeId: "" })
       invalidate()
     },
     onError: (err) => toast.error(err.message),
@@ -586,28 +592,31 @@ function MonitorTicketSheet({
     mutationFn: (outcome: "approved" | "rejected") => progressTicket(ticketId!, {
       activityId: actionableActivity!.id,
       outcome,
-      opinion,
+      opinion: scopedDraft.opinion,
     }),
     onSuccess: () => {
       toast.success(t("itsm:tickets.progressSuccess"))
-      setOpinion("")
+      updateDraft({ opinion: "" })
       invalidate()
     },
     onError: (err) => toast.error(err.message),
   })
 
   const cancelMut = useMutation({
-    mutationFn: () => cancelTicket(ticketId!, cancelReason.trim()),
+    mutationFn: () => cancelTicket(ticketId!, scopedDraft.cancelReason.trim()),
     onSuccess: () => {
       toast.success(t("itsm:tickets.cancelSuccess"))
-      setCancelReason("")
+      updateDraft({ cancelReason: "" })
       invalidate()
     },
     onError: (err) => toast.error(err.message),
   })
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    <Sheet open={open} onOpenChange={(nextOpen) => {
+      if (!nextOpen) resetDraft()
+      onOpenChange(nextOpen)
+    }}>
       <SheetContent className="w-full border-l-border/70 bg-background shadow-none backdrop-blur-none sm:max-w-[560px]">
         <SheetHeader className="border-b border-border/55 pr-12">
           <SheetTitle className="flex items-center gap-2">
@@ -683,8 +692,8 @@ function MonitorTicketSheet({
 	                  {actionContext.canProcess && actionableActivity ? (
 	                    <div className="space-y-2">
 	                      <Textarea
-	                        value={opinion}
-                        onChange={(event) => setOpinion(event.target.value)}
+	                        value={scopedDraft.opinion}
+	                        onChange={(event) => updateDraft({ opinion: event.target.value })}
                         rows={3}
                         placeholder={t("tickets.approvalOpinionPlaceholder")}
                       />
@@ -707,7 +716,7 @@ function MonitorTicketSheet({
 
 	                  {actionContext.canAssign && (
                     <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                      <Select value={assigneeId} onValueChange={setAssigneeId}>
+	                      <Select value={scopedDraft.assigneeId} onValueChange={(value) => updateDraft({ assigneeId: value })}>
                         <SelectTrigger><SelectValue placeholder={t("tickets.assigneePlaceholder")} /></SelectTrigger>
                         <SelectContent>
                           {users.map((user) => (
@@ -715,7 +724,7 @@ function MonitorTicketSheet({
                           ))}
                         </SelectContent>
                       </Select>
-                      <Button size="sm" variant="outline" disabled={!assigneeId || assignMut.isPending} onClick={() => assignMut.mutate()}>
+	                      <Button size="sm" variant="outline" disabled={!scopedDraft.assigneeId || assignMut.isPending} onClick={() => assignMut.mutate()}>
                         <UserPlus className="h-4 w-4" />
                         {t("tickets.assign")}
                       </Button>
@@ -734,9 +743,9 @@ function MonitorTicketSheet({
 
 	                  {actionContext.canCancel && (
                     <div className="space-y-2">
-                      <Textarea
-                        value={cancelReason}
-                        onChange={(event) => setCancelReason(event.target.value)}
+	                      <Textarea
+	                        value={scopedDraft.cancelReason}
+	                        onChange={(event) => updateDraft({ cancelReason: event.target.value })}
                         rows={2}
                         placeholder={t("tickets.cancelReasonPlaceholder")}
                       />

@@ -1055,12 +1055,16 @@ const (
 )
 
 func (s *TicketService) Monitor(params TicketMonitorParams, operatorID uint) (*TicketMonitorResponse, error) {
+	if params.OperatorID == 0 {
+		params.OperatorID = operatorID
+	}
 	tickets, err := s.ticketRepo.ListMonitorBase(params)
 	if err != nil {
 		return nil, err
 	}
 
-	base, err := s.BuildResponses(tickets, operatorID)
+	now := time.Now()
+	completedToday, err := s.ticketRepo.CountMonitorCompletedToday(params, now)
 	if err != nil {
 		return nil, err
 	}
@@ -1070,18 +1074,18 @@ func (s *TicketService) Monitor(params TicketMonitorParams, operatorID uint) (*T
 		return nil, err
 	}
 
-	now := time.Now()
-	items := make([]TicketMonitorItem, 0, len(base))
+	items := make([]TicketMonitorItem, 0, len(tickets))
 	summary := TicketMonitorSummary{}
-	for i := range base {
+	for i := range tickets {
 		ticket := &tickets[i]
-		item := TicketMonitorItem{TicketResponse: base[i], RiskLevel: "normal"}
+		item := TicketMonitorItem{TicketResponse: ticket.ToResponse(), RiskLevel: "normal"}
 		s.populateMonitorItem(&item, ticket, facts[ticket.ID], now)
 		s.accumulateMonitorSummary(&summary, ticket, &item, now)
 		if monitorRiskMatches(params.RiskLevel, item.RiskLevel) && monitorMetricMatches(params.MetricCode, ticket, &item, now) {
 			items = append(items, item)
 		}
 	}
+	summary.CompletedTodayTotal = int(completedToday)
 
 	sort.SliceStable(items, func(i, j int) bool {
 		ri, rj := monitorRiskRank(items[i].RiskLevel), monitorRiskRank(items[j].RiskLevel)
@@ -1105,6 +1109,29 @@ func (s *TicketService) Monitor(params TicketMonitorParams, operatorID uint) (*T
 			end = len(items)
 		}
 		items = items[start:end]
+	}
+	if len(items) > 0 {
+		ticketByID := make(map[uint]Ticket, len(tickets))
+		for _, ticket := range tickets {
+			ticketByID[ticket.ID] = ticket
+		}
+		pageTickets := make([]Ticket, 0, len(items))
+		itemByID := make(map[uint]*TicketMonitorItem, len(items))
+		for i := range items {
+			pageTickets = append(pageTickets, ticketByID[items[i].ID])
+			itemByID[items[i].ID] = &items[i]
+		}
+		responses, err := s.BuildResponses(pageTickets, operatorID)
+		if err != nil {
+			return nil, err
+		}
+		for _, response := range responses {
+			if item := itemByID[response.ID]; item != nil {
+				ticket := ticketByID[response.ID]
+				item.TicketResponse = response
+				s.populateMonitorItem(item, &ticket, facts[response.ID], now)
+			}
+		}
 	}
 
 	return &TicketMonitorResponse{Summary: summary, Items: items, Total: total}, nil

@@ -52,11 +52,11 @@ export function resolveServiceDeskStaffingState(
   const intake = config?.posts.intake
   const agentId = intake?.agentId ?? 0
   const agentName = intake?.agentName || "IT 服务台"
-  if (agentId <= 0) {
+  if (!config || agentId <= 0) {
     return { ready: false, agentId: 0, agentName, reason: "missing" }
   }
 
-  const health = config.health.items.find((item) => item.key === "intake")
+  const health = config?.health.items.find((item) => item.key === "intake")
   if (health?.status !== "pass") {
     return {
       ready: false,
