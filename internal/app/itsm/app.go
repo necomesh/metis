@@ -178,17 +178,8 @@ func (a *ITSMApp) Providers(i do.Injector) {
 		db := do.MustInvoke[*database.DB](i)
 		submitter := &schedulerSubmitter{db: db.DB}
 
-		// Try to resolve AI App services (optional)
-		var decisionExecutor app.AIDecisionExecutor
+		decisionExecutor := newLazyDecisionExecutor(i)
 		var knowledgeSearcher engine.KnowledgeSearcher
-
-		de, err := do.InvokeAs[app.AIDecisionExecutor](i)
-		if err == nil && de != nil {
-			decisionExecutor = de
-			slog.Info("ITSM SmartEngine: AI DecisionExecutor available")
-		} else {
-			slog.Info("ITSM SmartEngine: AI DecisionExecutor not available, smart engine disabled")
-		}
 
 		aiKnowledge, err := do.InvokeAs[app.AIKnowledgeSearcher](i)
 		if err == nil && aiKnowledge != nil {
@@ -275,10 +266,7 @@ func (a *ITSMApp) Tasks() []scheduler.TaskDef {
 	configProvider := do.MustInvoke[*config.EngineConfigService](a.injector)
 	resolver := do.MustInvoke[*engine.ParticipantResolver](a.injector)
 	knowledgeDocSvc := do.MustInvoke[*definition.KnowledgeDocService](a.injector)
-	var slaAssuranceExecutor app.AIDecisionExecutor
-	if executor, err := do.InvokeAs[app.AIDecisionExecutor](a.injector); err == nil {
-		slaAssuranceExecutor = executor
-	}
+	slaAssuranceExecutor := newLazyDecisionExecutor(a.injector)
 	var notifier engine.NotificationSender
 	if mcSvc, err := do.Invoke[*service.MessageChannelService](a.injector); err == nil && mcSvc != nil {
 		notifier = &notificationAdapter{svc: mcSvc, db: db.DB}
