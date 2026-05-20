@@ -459,6 +459,7 @@
       "start": "开始",
       "end": "结束",
       "form": "表单",
+      "approve": "审批",
       "process": "处理",
       "action": "动作",
       "gateway": "网关",
@@ -476,6 +477,7 @@
       "start": "流程入口",
       "end": "流程结束",
       "form": "收集申请信息",
+      "approve": "审批决策节点",
       "process": "人工处理节点",
       "action": "执行服务动作",
       "exclusive": "单一路径分支",
@@ -518,6 +520,7 @@
       "confirm": "确定",
       "serviceAction": "服务动作",
       "selectAction": "选择动作",
+      "manageActions": "去配置动作 →",
       "channelType": "通知通道",
       "selectChannel": "选择通道",
       "template": "消息模板",
@@ -534,6 +537,7 @@
       "noActivities": "该节点暂无活动记录"
     },
     "participant": {
+      "requester": "提单人",
       "user": "指定用户",
       "position": "岗位",
       "department": "部门",
@@ -607,7 +611,8 @@
       "target": "目标",
       "add": "添加映射",
       "variable": "流程变量",
-      "formField": "表单字段"
+      "formField": "表单字段",
+      "responsePath": "响应字段路径"
     },
     "script": {
       "variable": "变量名",

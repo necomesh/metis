@@ -6,7 +6,7 @@ import { GatewayNode } from "./gateway-node"
 import { SubprocessNode } from "./subprocess-node"
 
 const EVENT_TYPES = new Set<NodeType>(["start", "end", "timer", "signal"])
-const TASK_TYPES = new Set<NodeType>(["form", "process", "action", "script", "notify"])
+const TASK_TYPES = new Set<NodeType>(["form", "approve", "process", "action", "script", "notify"])
 const GATEWAY_TYPES = new Set<NodeType>(["exclusive", "parallel", "inclusive"])
 
 function resolveNodeComponent(nodeType: NodeType) {

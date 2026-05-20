@@ -7,7 +7,6 @@ import {
   Background,
   Controls,
   MiniMap,
-  addEdge,
   useNodesState,
   useEdgesState,
   type Connection,
@@ -48,6 +47,7 @@ import {
 } from "./workflow-contract"
 import { fetchWorkflowCapabilities } from "../../api"
 import { itsmQueryKeys } from "../../query-keys"
+import type { FormField } from "../form-engine"
 import "./style.css"
 
 const DEFAULT_VIEWPORT = { x: 96, y: 72, zoom: 0.86 }
@@ -114,12 +114,20 @@ function InnerEditor({
   }, [nodes, edges, push])
 
   const onConnect = useCallback((params: Connection) => {
-    setEdges((eds) => addEdge({
+    const newEdge = {
       ...params,
+      id: `edge_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       type: "workflow",
       markerEnd: { type: MarkerType.ArrowClosed },
-        data: { outcome: "", default: false } as Record<string, unknown>,
-    }, eds))
+      data: { outcome: "", default: false } as Record<string, unknown>,
+    }
+    setEdges((eds) => {
+      const duplicate = eds.some(
+        (e) => e.source === newEdge.source && e.target === newEdge.target &&
+               e.sourceHandle === newEdge.sourceHandle && e.targetHandle === newEdge.targetHandle
+      )
+      return duplicate ? eds : [...eds, newEdge]
+    })
   }, [setEdges])
 
   const onDragOver = useCallback((event: React.DragEvent) => {
@@ -203,6 +211,35 @@ function InnerEditor({
     toast.success(t("workflow.copied", { count: selected.length }))
   }
 
+  function handlePaletteFieldClick(field: FormField & { variable: string }) {
+    if (!selectedNodeId) {
+      navigator.clipboard.writeText(field.variable)
+      toast.success(`已复制 ${field.variable}`)
+      return
+    }
+    const targetNode = nodes.find((n) => n.id === selectedNodeId)
+    if (!targetNode) return
+    const targetType = (targetNode.data as unknown as WFNodeData).nodeType
+    if (!["form", "process", "approve"].includes(targetType)) {
+      navigator.clipboard.writeText(field.variable)
+      toast.success(`已复制 ${field.variable}`)
+      return
+    }
+    const currentData = targetNode.data as unknown as WFNodeData
+    const rawSchema = currentData.formSchema
+    const currentSchema = (rawSchema && typeof rawSchema === "object" && Array.isArray((rawSchema as { fields: unknown[] }).fields))
+      ? rawSchema as { version: number; fields: FormField[] }
+      : { version: 1, fields: [] as FormField[] }
+    const existingKeys = new Set(currentSchema.fields.map((f) => f.key))
+    let newKey = field.key
+    let counter = 1
+    while (existingKeys.has(newKey)) { newKey = `${field.key}_${counter++}` }
+    const { variable: _v, ...fieldDef } = field
+    const newSchema = { ...currentSchema, fields: [...currentSchema.fields, { ...fieldDef, key: newKey }] }
+    setNodes((nds) => nds.map((n) => n.id === selectedNodeId ? { ...n, data: { ...n.data, formSchema: newSchema } } : n))
+    toast.success(`已将「${field.label}」添加到「${currentData.label ?? selectedNodeId}」`)
+  }
+
   function handlePaste() {
     const clip = clipboardRef.current
     if (!clip || clip.nodes.length === 0) return
@@ -224,7 +261,16 @@ function InnerEditor({
   }
 
   function handleDeleteSelected() {
-    const nodesToDelete = nodes.filter((n) => n.selected && (n.data as unknown as WFNodeData).nodeType !== "start" && (n.data as unknown as WFNodeData).nodeType !== "end")
+    const endNodeCount = nodes.filter((n) => (n.data as unknown as WFNodeData).nodeType === "end").length
+    const selectedEndCount = nodes.filter((n) => n.selected && (n.data as unknown as WFNodeData).nodeType === "end").length
+    const canDeleteEnds = endNodeCount - selectedEndCount >= 1
+    const nodesToDelete = nodes.filter((n) => {
+      if (!n.selected) return false
+      const nt = (n.data as unknown as WFNodeData).nodeType
+      if (nt === "start") return false
+      if (nt === "end") return canDeleteEnds
+      return true
+    })
     const edgesToDelete = edges.filter((e) => e.selected)
     if (nodesToDelete.length > 0 || edgesToDelete.length > 0) {
       rfInstance.deleteElements({ nodes: nodesToDelete.map((n) => ({ id: n.id })), edges: edgesToDelete.map((e) => ({ id: e.id })) })
@@ -299,7 +345,7 @@ function InnerEditor({
 
   return (
     <div className="flex h-full overflow-hidden bg-background" ref={reactFlowWrapper}>
-      <NodePalette serviceId={serviceId} nodes={nodes as Node[]} intakeFormSchema={intakeFormSchema} workflowCapability={workflowCapability} />
+      <NodePalette serviceId={serviceId} nodes={nodes as Node[]} intakeFormSchema={intakeFormSchema} workflowCapability={workflowCapability} selectedNodeId={selectedNodeId ?? undefined} onFieldCardClick={handlePaletteFieldClick} />
       <div className="min-w-0 flex-1">
         <ContextMenu>
           <ContextMenuTrigger asChild>

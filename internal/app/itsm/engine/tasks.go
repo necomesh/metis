@@ -21,9 +21,11 @@ var (
 
 // ActionExecutePayload is the async task payload for itsm-action-execute.
 type ActionExecutePayload struct {
-	TicketID   uint `json:"ticket_id"`
-	ActivityID uint `json:"activity_id"`
-	ActionID   uint `json:"action_id"`
+	TicketID      uint              `json:"ticket_id"`
+	ActivityID    uint              `json:"activity_id"`
+	ActionID      uint              `json:"action_id"`
+	OutputMapping []VariableMapping `json:"output_mapping,omitempty"`
+	ScopeID       string            `json:"scope_id,omitempty"`
 }
 
 // WaitTimerPayload is the async task payload for itsm-wait-timer.
@@ -51,6 +53,21 @@ func HandleActionExecute(db *gorm.DB, classicEngine *ClassicEngine, smartEngine 
 		slog.Info("executing action", "ticketID", p.TicketID, "activityID", p.ActivityID, "actionID", p.ActionID)
 
 		err := executor.Execute(ctx, p.TicketID, p.ActivityID, p.ActionID)
+
+		// Apply output variable bindings from HTTP response when execution succeeded.
+		if err == nil && len(p.OutputMapping) > 0 {
+			scopeID := p.ScopeID
+			if scopeID == "" {
+				scopeID = "root"
+			}
+			var exec actionExecutionModel
+			if qErr := db.Where("activity_id = ? AND status = 'success'", p.ActivityID).
+				Order("id DESC").First(&exec).Error; qErr == nil {
+				if mapErr := applyActionOutputMapping(db, p.TicketID, scopeID, exec.ResponsePayload, p.OutputMapping); mapErr != nil {
+					slog.Warn("action output mapping failed", "ticketID", p.TicketID, "error", mapErr)
+				}
+			}
+		}
 
 		outcome := "success"
 		if err != nil {

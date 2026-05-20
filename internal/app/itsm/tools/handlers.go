@@ -479,6 +479,40 @@ func normalizeFormDataKeys(data map[string]any, fields []FormField) map[string]a
 		}
 		normalized[canonicalKey] = val
 	}
+	// For select/radio fields, normalize submitted value: if it matches an option
+	// label (case-insensitive) but not a value, replace it with the canonical value.
+	// This handles the common case where the LLM submits a display label instead
+	// of the machine-readable value (e.g. "线上支持" → "online_support").
+	for _, f := range fields {
+		if (f.Type != form.FieldSelect && f.Type != form.FieldRadio) || len(f.Options) == 0 {
+			continue
+		}
+		raw, ok := normalized[f.Key]
+		if !ok {
+			continue
+		}
+		strVal, ok := raw.(string)
+		if !ok || strVal == "" {
+			continue
+		}
+		// Already an exact option value? Leave it as-is.
+		for _, opt := range f.Options {
+			if opt.Value != "" && strings.EqualFold(strVal, opt.Value) {
+				normalized[f.Key] = opt.Value // ensure canonical casing
+				goto nextField
+			}
+		}
+		// Try to match by label (case-insensitive) and replace with option value.
+		for _, opt := range f.Options {
+			if strings.EqualFold(strVal, opt.Label) {
+				if opt.Value != "" {
+					normalized[f.Key] = opt.Value
+				}
+				break
+			}
+		}
+	nextField:
+	}
 	return normalized
 }
 

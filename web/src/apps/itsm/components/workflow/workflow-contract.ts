@@ -121,7 +121,7 @@ export function collectDraftIssues(nodes: Node[], edges: Edge[], capability: Wor
     if (nodeType !== "start" && (incoming.get(node.id) ?? 0) === 0) {
       issues.push({ nodeId: node.id, message: "节点不可达" })
     }
-    if ((nodeType === "form" || nodeType === "process") && !data.participants?.length) {
+    if ((nodeType === "form" || nodeType === "approve" || nodeType === "process") && !data.participants?.length) {
       issues.push({ nodeId: node.id, message: "人工节点缺少参与人" })
     }
     if ((nodeType === "parallel" || nodeType === "inclusive") && data.gateway_direction !== "fork" && data.gateway_direction !== "join") {

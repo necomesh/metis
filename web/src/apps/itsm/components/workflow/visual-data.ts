@@ -7,7 +7,7 @@ export type WorkflowNodeGroup = {
 }
 
 export const WORKFLOW_NODE_GROUPS: WorkflowNodeGroup[] = [
-  { label: "workflow.group.human", types: ["form", "process"] },
+  { label: "workflow.group.human", types: ["form", "approve", "process"] },
   { label: "workflow.group.automation", types: ["action", "script", "notify"] },
   { label: "workflow.group.control", types: ["exclusive", "parallel", "inclusive"] },
   { label: "workflow.group.composite", types: ["wait", "subprocess"] },
@@ -62,7 +62,7 @@ export function buildNodeSummary(data: WFNodeData, t: (key: string) => string): 
   }
 
   const pSummary = participantSummary(data.participants)
-  if (pSummary && (data.nodeType === "form" || data.nodeType === "process")) {
+  if (pSummary && (data.nodeType === "form" || data.nodeType === "approve" || data.nodeType === "process")) {
     parts.push(pSummary)
   }
 

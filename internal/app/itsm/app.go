@@ -85,6 +85,7 @@ func (a *ITSMApp) BuildAgentRuntimeContext(ctx context.Context, _ string, sessio
 		"prefill_form_data":       state.PrefillFormData,
 		"draft_summary":           state.DraftSummary,
 		"draft_form_data":         state.DraftFormData,
+		"partial_form_data":       state.PartialFormData,
 		"draft_version":           state.DraftVersion,
 		"confirmed_draft_version": state.ConfirmedDraftVersion,
 		"missing_fields":          state.MissingFields,

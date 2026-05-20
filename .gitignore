@@ -52,7 +52,6 @@ sidecar
 .gocache/**
 .gocache-test/
 .codex/
-.scripts/**
-scripts/
+
 
 

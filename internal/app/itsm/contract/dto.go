@@ -43,6 +43,15 @@ type NodeData struct {
 	AttachedTo       string             `json:"attached_to,omitempty"`
 	Interrupting     bool               `json:"interrupting,omitempty"`
 	SubProcessDef    json.RawMessage    `json:"subprocess_def,omitempty"`
+	OutputMapping    []VariableMapping  `json:"outputMapping,omitempty"`
+}
+
+// VariableMapping maps a source path to a target variable name.
+// For action nodes: source is a dot-notated JSON path in the HTTP response body
+// (e.g. "data.id"), target is the process variable key to write.
+type VariableMapping struct {
+	Source string `json:"source"`
+	Target string `json:"target"`
 }
 
 type Participant struct {

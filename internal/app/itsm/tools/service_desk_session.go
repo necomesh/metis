@@ -306,15 +306,18 @@ func (s *ServiceDeskSession) PrepareDraft(sessionID uint, summary string, formDa
 	}
 
 	// Guard: agent retrying draft_prepare without collecting from user.
-	// If we already flagged collect_missing_fields and the new form_data is still
-	// empty/nil, the agent is looping without making progress. Return an explicit
-	// error so the LLM stops retrying and asks the user instead.
-	if pendingNextRequiredTool(state) == "collect_missing_fields" && len(formData) == 0 {
+	// Fire only when BOTH the new form_data and any previously saved partial data are
+	// empty — that means the agent is looping without making progress.
+	// When partial data exists we allow re-entry so the merge below can fill the gap.
+	if pendingNextRequiredTool(state) == "collect_missing_fields" && len(formData) == 0 && len(state.PartialFormData) == 0 {
 		return nil, fmt.Errorf("draft_prepare 已阻塞（next_required_tool=collect_missing_fields），禁止在未收到用户新信息的情况下以空 form_data 重复调用；请先向用户逐项追问 missing_required_fields 中的缺口，待用户回复后再重新调用。")
 	}
 
 	formData = normalizeFormDataKeys(formData, detail.FormFields)
 	formData = mergePrefillFormData(formData, state.PrefillFormData)
+	// Merge previously collected partial form data (lower priority than new input) so
+	// the AI only needs to supply the newly missing fields each turn.
+	formData = mergePrefillFormData(formData, state.PartialFormData)
 	validationContext := buildValidationContext(state.RequestText, summary)
 	formData = canonicalizeTimeSemanticFields(detail, validationContext, formData)
 	warnings, missingRequired, blocking := validateDraftData(detail, formData, validationContext)
@@ -326,6 +329,8 @@ func (s *ServiceDeskSession) PrepareDraft(sessionID uint, summary string, formDa
 
 	if blocking {
 		state.PendingNextRequiredTool = "collect_missing_fields"
+		// Persist the (possibly partial) form data so it can be merged on the next call.
+		state.PartialFormData = formData
 		if err := s.save(sessionID, state); err != nil {
 			return nil, fmt.Errorf("save state: %w", err)
 		}
@@ -352,6 +357,7 @@ func (s *ServiceDeskSession) PrepareDraft(sessionID uint, summary string, formDa
 	}
 	state.DraftSummary = summary
 	state.DraftFormData = formData
+	state.PartialFormData = nil // Clear partial progress now that we have a complete draft.
 	if err := state.TransitionTo("awaiting_confirmation"); err != nil {
 		return nil, err
 	}
@@ -533,9 +539,6 @@ func (s *ServiceDeskSession) SubmitDraft(sessionID uint, userID uint, req DraftS
 	detail, err := s.op.LoadService(state.LoadedServiceID)
 	if err != nil {
 		return nil, fmt.Errorf("load service for submit: %w", err)
-	}
-	if detail.EngineType != "smart" {
-		return nil, fmt.Errorf("仅支持 Agentic 服务提交")
 	}
 	if err := ensureLoadedSnapshotMatches(state, detail); err != nil {
 		return nil, err

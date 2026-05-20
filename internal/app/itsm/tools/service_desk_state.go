@@ -27,6 +27,11 @@ type ServiceDeskState struct {
 	AskedFields             []string       `json:"asked_fields,omitempty"`
 	MinDecisionReady        bool           `json:"min_decision_ready"`
 	PendingNextRequiredTool string         `json:"pending_next_required_tool,omitempty"`
+	// PartialFormData holds the last-submitted form_data from a draft_prepare call that
+	// failed validation. It is merged (lower priority) into subsequent calls so that the
+	// AI only needs to supply the newly collected fields rather than reconstructing the
+	// entire form each turn.
+	PartialFormData map[string]any `json:"partial_form_data,omitempty"`
 }
 
 var validTransitions = map[string][]string{

@@ -14,6 +14,7 @@ type NodeData = contract.NodeData
 type Participant = contract.Participant
 type Assignment = contract.Assignment
 type GatewayCondition = contract.GatewayCondition
+type VariableMapping = contract.VariableMapping
 
 // ParseWorkflowDef parses workflow JSON into a WorkflowDef.
 func ParseWorkflowDef(workflowJSON json.RawMessage) (*WorkflowDef, error) {

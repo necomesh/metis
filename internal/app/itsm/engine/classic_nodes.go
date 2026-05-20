@@ -204,11 +204,14 @@ func (e *ClassicEngine) handleAction(tx *gorm.DB, token *executionTokenModel, op
 
 	// Submit async task
 	if e.scheduler != nil && data.ActionID != 0 {
-		payload, _ := json.Marshal(map[string]any{
-			"ticket_id":   token.TicketID,
-			"activity_id": act.ID,
-			"action_id":   data.ActionID,
-		})
+		taskPayload := ActionExecutePayload{
+			TicketID:      token.TicketID,
+			ActivityID:    act.ID,
+			ActionID:      data.ActionID,
+			OutputMapping: data.OutputMapping,
+			ScopeID:       token.ScopeID,
+		}
+		payload, _ := json.Marshal(taskPayload)
 		if err := submitTaskInTx(e.scheduler, tx, "itsm-action-execute", payload); err != nil {
 			slog.Error("failed to submit action task", "error", err, "ticketID", token.TicketID)
 			// Record timeline but don't fail the workflow
