@@ -6,9 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 
+	. "metis/internal/app/itsm/domain"
+
 	"github.com/samber/do/v2"
 	"gorm.io/gorm"
-	. "metis/internal/app/itsm/domain"
 
 	"metis/internal/database"
 )
@@ -189,6 +190,14 @@ func (r *ServiceDefRepo) Update(id uint, updates map[string]any) error {
 
 func (r *ServiceDefRepo) Delete(id uint) error {
 	return r.db.Delete(&ServiceDefinition{}, id).Error
+}
+
+// PurgeSoftDeletedByCode hard-deletes any soft-deleted record with the given code,
+// freeing the unique index slot so a new record with the same code can be created.
+func (r *ServiceDefRepo) PurgeSoftDeletedByCode(code string) error {
+	return r.db.Unscoped().
+		Where("code = ? AND deleted_at IS NOT NULL", code).
+		Delete(&ServiceDefinition{}).Error
 }
 
 type ServiceDefListParams struct {

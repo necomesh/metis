@@ -4,7 +4,7 @@ import type { Edge, Node } from "@xyflow/react"
 
 // Shared types for workflow editor and viewer
 export const NODE_TYPES = [
-  "start", "end", "form", "process", "action", "exclusive", "notify", "wait",
+  "start", "end", "form", "approve", "process", "action", "exclusive", "notify", "wait",
   "timer", "signal", "parallel", "inclusive", "subprocess", "script",
 ] as const satisfies readonly EditorNodeType[]
 
@@ -114,6 +114,7 @@ export const WORKFLOW_NODE_DIMENSIONS: Record<NodeType, { width: number; height:
   timer: { width: 240, height: 76 },
   signal: { width: 240, height: 76 },
   form: { width: 240, height: 96 },
+  approve: { width: 240, height: 96 },
   process: { width: 240, height: 96 },
   action: { width: 240, height: 96 },
   script: { width: 240, height: 96 },
@@ -129,6 +130,7 @@ export const NODE_COLORS: Record<NodeType, string> = {
   start: "#2563eb",
   end: "#dc2626",
   form: "#2563eb",
+  approve: "#7c3aed",
   process: "#4f46e5",
   action: "#0891b2",
   exclusive: "#ea580c",

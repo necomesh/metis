@@ -19,6 +19,8 @@ interface NodePaletteProps {
   nodes?: Node[]
   intakeFormSchema?: unknown
   workflowCapability?: WorkflowCapability
+  selectedNodeId?: string
+  onFieldCardClick?: (field: FormField & { variable: string }) => void
 }
 
 function isFormSchema(raw: unknown): raw is FormSchema {
@@ -30,7 +32,7 @@ function fieldVariables(schema: unknown, prefix: string): Array<FormField & { va
   return schema.fields.map((field) => ({ ...field, variable: `${prefix}.${field.key}` }))
 }
 
-export function NodePalette({ serviceId, nodes = [], intakeFormSchema, workflowCapability }: NodePaletteProps) {
+export function NodePalette({ serviceId, nodes = [], intakeFormSchema, workflowCapability, selectedNodeId, onFieldCardClick }: NodePaletteProps) {
   const { t } = useTranslation("itsm")
   const { data: actions = [] } = useQuery({
     queryKey: serviceId ? itsmQueryKeys.services.actions(serviceId) : itsmQueryKeys.services.actions(0),
@@ -42,10 +44,15 @@ export function NodePalette({ serviceId, nodes = [], intakeFormSchema, workflowC
     ...fieldVariables(intakeFormSchema, "form"),
     ...nodes.flatMap((node) => {
       const data = node.data as unknown as WFNodeData
-      if (data.nodeType !== "form" && data.nodeType !== "process") return []
+      if (data.nodeType !== "form" && data.nodeType !== "approve" && data.nodeType !== "process") return []
       return fieldVariables(data.formSchema, node.id)
     }),
   ]
+
+  const selectedNodeData = selectedNodeId
+    ? (nodes.find((n) => n.id === selectedNodeId)?.data as unknown as WFNodeData | undefined)
+    : undefined
+  const canAddToNode = selectedNodeData?.nodeType === "form" || selectedNodeData?.nodeType === "process" || selectedNodeData?.nodeType === "approve"
 
   function onDragStart(event: DragEvent, nodeType: NodeType) {
     event.dataTransfer.setData("application/reactflow-nodetype", nodeType)
@@ -104,8 +111,21 @@ export function NodePalette({ serviceId, nodes = [], intakeFormSchema, workflowC
         </TabsContent>
         <TabsContent value="fields" className="min-h-0 overflow-y-auto px-3 py-3">
           <div className="space-y-2">
+            {canAddToNode && selectedNodeData && (
+              <div className="rounded-lg border border-primary/25 bg-primary/5 px-2.5 py-1.5 text-[11px] text-primary">
+                点击字段 → 添加到「{selectedNodeData.label}」
+              </div>
+            )}
+            {!canAddToNode && variables.length > 0 && (
+              <div className="px-0.5 text-[10px] text-muted-foreground">点击字段名可复制变量名</div>
+            )}
             {variables.slice(0, 12).map((field) => (
-              <div key={field.variable} className="rounded-lg border border-border/58 bg-white/58 px-2.5 py-2">
+              <div
+                key={field.variable}
+                className="cursor-pointer select-none rounded-lg border border-border/58 bg-white/58 px-2.5 py-2 transition hover:border-primary/35 hover:bg-primary/5"
+                title={canAddToNode ? `添加到「${selectedNodeData?.label}」` : `复制变量名: ${field.variable}`}
+                onClick={() => onFieldCardClick?.(field)}
+              >
                 <div className="truncate text-xs font-medium">{field.label}</div>
                 <div className="mt-1 flex items-center gap-1.5">
                   <Badge variant="outline" className="h-4 px-1.5 text-[10px]">{t(`forms.type.${field.type}`)}</Badge>

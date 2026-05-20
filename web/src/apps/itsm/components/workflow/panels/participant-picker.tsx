@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Plus, Trash2, User, Building2, Briefcase, UserCheck, Users } from "lucide-react"
+import { Plus, Trash2, User, Building2, Briefcase, UserCheck, Users, UserCircle2 } from "lucide-react"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type { Participant } from "../types"
@@ -36,6 +36,7 @@ interface DeptTreeNode {
 }
 
 const PARTICIPANT_TYPES = [
+  { value: "requester", icon: UserCircle2, label: "workflow.participant.requester" },
   { value: "user", icon: User, label: "workflow.participant.user" },
   { value: "position", icon: Briefcase, label: "workflow.participant.position" },
   { value: "department", icon: Building2, label: "workflow.participant.department" },
@@ -127,6 +128,10 @@ export function ParticipantPicker({ participants, onChange }: ParticipantPickerP
   }
 
   function handleTypeSelect(type: string) {
+    if (type === "requester") {
+      addParticipant({ type: "requester", name: t("workflow.participant.requester") })
+      return
+    }
     if (type === "requester_manager") {
       addParticipant({ type: "requester_manager", name: t("workflow.participant.requesterManager") })
       return

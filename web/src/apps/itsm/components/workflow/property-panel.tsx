@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next"
 import { useMemo } from "react"
 import type React from "react"
-import { type Node, type Edge, useReactFlow } from "@xyflow/react"
+import { type Node, type Edge, useReactFlow, useEdges } from "@xyflow/react"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -48,7 +48,8 @@ interface NodePanelProps {
 
 export function NodePropertyPanel({ node, serviceId, intakeFormSchema, onIntakeFormSchemaChange, onClose }: NodePanelProps) {
   const { t } = useTranslation("itsm")
-  const { setNodes, deleteElements, getNodes } = useReactFlow()
+  const { setNodes, setEdges, deleteElements, getNodes } = useReactFlow()
+  const allEdges = useEdges()
   const data = node.data
   const nodeType = data.nodeType as NodeType
 
@@ -59,6 +60,11 @@ export function NodePropertyPanel({ node, serviceId, intakeFormSchema, onIntakeF
       .map((n) => ({ id: n.id, label: (n.data as unknown as WFNodeData).label }))
   }, [getNodes])
 
+  const endNodeCount = useMemo(
+    () => getNodes().filter((n) => (n.data as unknown as WFNodeData).nodeType === "end").length,
+    [getNodes]
+  )
+
   function updateData(patch: Partial<WFNodeData>) {
     setNodes((nds) => nds.map((n) => n.id === node.id ? { ...n, data: { ...n.data, ...patch } } : n))
   }
@@ -68,16 +74,18 @@ export function NodePropertyPanel({ node, serviceId, intakeFormSchema, onIntakeF
     onClose()
   }
 
-  const hasParticipants = nodeType === "form" || nodeType === "process"
-  const hasFormBinding = nodeType === "form" || nodeType === "process"
+  const hasParticipants = nodeType === "form" || nodeType === "process" || nodeType === "approve"
+  const hasFormBinding = nodeType === "form" || nodeType === "process" || nodeType === "approve"
   const hasProcessMode = nodeType === "process"
   const hasAction = nodeType === "action"
   const hasScript = nodeType === "script"
   const hasNotify = nodeType === "notify"
   const hasWait = nodeType === "wait" || nodeType === "timer"
-  const hasMapping = nodeType === "form" || nodeType === "process"
+  const hasMapping = nodeType === "form" || nodeType === "process" || nodeType === "approve"
   const hasGatewayDirection = nodeType === "parallel" || nodeType === "inclusive"
-  const isProtected = nodeType === "start" || nodeType === "end"
+  const hasGatewayConditions = nodeType === "exclusive"
+  const outgoingEdges = hasGatewayConditions ? allEdges.filter((e) => e.source === node.id) : []
+  const isProtected = nodeType === "start" || (nodeType === "end" && endNodeCount <= 1)
   const accent = getNodeAccent(nodeType)
 
   if (nodeType === "start") {
@@ -142,6 +150,52 @@ export function NodePropertyPanel({ node, serviceId, intakeFormSchema, onIntakeF
             />
           )}
         </PanelSection>
+
+        {hasGatewayConditions && (
+          <PanelSection title="路由条件">
+            {outgoingEdges.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-border/65 px-3 py-4 text-center text-xs text-muted-foreground">
+                暂无出口连线，请先将网关连接到后续节点
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {outgoingEdges.map((edge) => {
+                  const edgeData = (edge.data ?? {}) as WFEdgeData
+                  const isDefaultEdge = edgeData.default ?? edgeData.isDefault ?? false
+                  const targetLabel = (getNodes().find((n) => n.id === edge.target)?.data as unknown as WFNodeData | undefined)?.label ?? edge.target
+                  return (
+                    <div key={edge.id} className="space-y-2 rounded-lg border border-border/50 bg-background/40 p-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate text-xs font-medium">→ {targetLabel}</span>
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          <Switch
+                            checked={isDefaultEdge}
+                            onCheckedChange={(v) =>
+                              setEdges((eds) =>
+                                eds.map((e) => e.id === edge.id ? { ...e, data: { ...e.data, default: v, isDefault: undefined } } : e)
+                              )
+                            }
+                          />
+                          <Label className="text-xs">{t("workflow.prop.defaultEdge")}</Label>
+                        </div>
+                      </div>
+                      {!isDefaultEdge && (
+                        <ConditionBuilder
+                          condition={edgeData.condition}
+                          onChange={(condition) =>
+                            setEdges((eds) =>
+                              eds.map((e) => e.id === edge.id ? { ...e, data: { ...e.data, condition } } : e)
+                            )
+                          }
+                        />
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </PanelSection>
+        )}
 
         {(hasProcessMode || hasWait || hasNotify || hasAction || hasScript || hasGatewayDirection) && (
           <PanelSection title={t("workflow.panel.execution")}>
@@ -251,6 +305,18 @@ export function NodePropertyPanel({ node, serviceId, intakeFormSchema, onIntakeF
                 />
               </>
             )}
+          </PanelSection>
+        )}
+
+        {hasAction && (
+          <PanelSection title={t("workflow.panel.io")}>
+            <VariableMappingEditor
+              label={t("workflow.prop.outputMapping")}
+              mappings={data.outputMapping ?? []}
+              onChange={(outputMapping) => updateData({ outputMapping })}
+              sourceLabel={t("workflow.mapping.responsePath")}
+              targetLabel={t("workflow.mapping.variable")}
+            />
           </PanelSection>
         )}
       </div>

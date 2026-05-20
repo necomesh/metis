@@ -14,10 +14,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/samber/do/v2"
-	"gorm.io/gorm"
 	ai "metis/internal/app/ai/runtime"
 	"metis/internal/database"
+
+	"github.com/samber/do/v2"
+	"gorm.io/gorm"
 
 	"metis/internal/app/itsm/engine"
 	"metis/internal/llm"
@@ -85,6 +86,9 @@ func (s *ServiceDefService) Create(svc *ServiceDefinition) (*ServiceDefinition, 
 	}
 	if _, err := s.repo.FindByCode(svc.Code); err == nil {
 		return nil, ErrServiceCodeExists
+	}
+	if err := s.repo.PurgeSoftDeletedByCode(svc.Code); err != nil {
+		return nil, err
 	}
 	if err := s.validateCatalogID(svc.CatalogID); err != nil {
 		return nil, err

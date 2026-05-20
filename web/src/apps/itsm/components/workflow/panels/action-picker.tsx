@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Button } from "@/components/ui/button"
-import { X, Zap } from "lucide-react"
+import { X, Zap, ExternalLink } from "lucide-react"
 import { fetchServiceActions } from "../../../api"
 import { itsmQueryKeys } from "../../../query-keys"
 
@@ -57,6 +57,15 @@ export function ActionPicker({ serviceId, actionId, onChange }: ActionPickerProp
           <span className="ml-1.5 text-muted-foreground break-all">{config.url}</span>
         </div>
       )}
+      <a
+        href={`/itsm/services/${serviceId}/actions`}
+        target="_blank"
+        rel="noreferrer"
+        className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline"
+      >
+        <ExternalLink size={11} />
+        {t("workflow.prop.manageActions")}
+      </a>
     </div>
   )
 }

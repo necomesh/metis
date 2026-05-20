@@ -66,7 +66,7 @@ export const WORKFLOW_NODE_TYPES = [
 ] as const
 
 export type WorkflowNodeType = (typeof WORKFLOW_NODE_TYPES)[number]
-export type EditorNodeType = Exclude<WorkflowNodeType, "approve" | "b_timer" | "b_error">
+export type EditorNodeType = Exclude<WorkflowNodeType, "b_timer" | "b_error">
 
 export const SERVICE_DESK_STAGES = [
   "idle",

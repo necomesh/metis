@@ -15,6 +15,7 @@ import (
 	"metis/internal/app/itsm/domain"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // ActionExecutor handles HTTP webhook execution for action nodes.
@@ -211,3 +212,68 @@ type actionExecutionModel struct {
 }
 
 func (actionExecutionModel) TableName() string { return "itsm_ticket_action_executions" }
+
+// applyActionOutputMapping reads each mapping entry, extracts the value at the
+// dot-notated source path from the JSON response body, and upserts it as a
+// process variable for the ticket.  Non-fatal: individual path failures are
+// logged and skipped so the rest of the mappings still apply.
+func applyActionOutputMapping(db *gorm.DB, ticketID uint, scopeID, responseBody string, mappings []VariableMapping) error {
+	if len(mappings) == 0 || responseBody == "" {
+		return nil
+	}
+
+	var respJSON map[string]any
+	if err := json.Unmarshal([]byte(responseBody), &respJSON); err != nil {
+		// Response is not JSON — skip mapping silently
+		slog.Warn("action output mapping: response is not JSON", "ticketID", ticketID)
+		return nil
+	}
+
+	for _, m := range mappings {
+		if m.Source == "" || m.Target == "" {
+			continue
+		}
+		val, ok := extractJSONPath(respJSON, m.Source)
+		if !ok {
+			slog.Warn("action output mapping: path not found", "ticketID", ticketID, "path", m.Source)
+			continue
+		}
+
+		serialized := fmt.Sprint(val)
+		valueType := inferValueType(val)
+
+		v := processVariableModel{
+			TicketID:  ticketID,
+			ScopeID:   scopeID,
+			Key:       m.Target,
+			Value:     serialized,
+			ValueType: valueType,
+			Source:    "action:output_mapping",
+		}
+		if err := db.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "ticket_id"}, {Name: "scope_id"}, {Name: "key"}},
+			DoUpdates: clause.AssignmentColumns([]string{"value", "value_type", "source", "updated_at"}),
+		}).Create(&v).Error; err != nil {
+			return fmt.Errorf("write output variable %q: %w", m.Target, err)
+		}
+	}
+	return nil
+}
+
+// extractJSONPath traverses a nested map using a dot-separated path string
+// (e.g. "data.user.id") and returns the leaf value.
+func extractJSONPath(obj map[string]any, path string) (any, bool) {
+	parts := strings.SplitN(path, ".", 2)
+	val, ok := obj[parts[0]]
+	if !ok {
+		return nil, false
+	}
+	if len(parts) == 1 {
+		return val, true
+	}
+	nested, ok := val.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	return extractJSONPath(nested, parts[1])
+}
